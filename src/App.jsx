@@ -2515,16 +2515,27 @@ function DocumentsPage({ documents, setDocuments, employees, showToast }) {
   const fileRef = React.useRef();
 
   const handleFiles = files => {
-    const newDocs = Array.from(files).map(f => ({
-      id: Date.now() + Math.random(),
-      name: f.name, size: f.size, type: f.type,
-      cat: "Invoice", supplier: "", emp_id: null,
-      quarter: BAS_QUARTERS[0], fy: FIN_YEARS[0],
-      gst: true, status: "pending", date: todayStr, notes: "",
-    }));
-    setDocuments(p => [...p, ...newDocs]);
-    if (newDocs.length === 1) { setEditDoc(newDocs[0]); setTagF({ ...newDocs[0], gst:"yes" }); }
-    showToast(`${newDocs.length} file${newDocs.length>1?"s":""} uploaded!`);
+    Array.from(files).forEach(f => {
+      const reader = new FileReader();
+      reader.onload = e => {
+        const newDoc = {
+          id: Date.now() + Math.random(),
+          name: f.name, size: f.size, type: f.type,
+          dataUrl: e.target.result,
+          cat: "Invoice", supplier: "", emp_id: null,
+          quarter: BAS_QUARTERS[0], fy: FIN_YEARS[0],
+          gst: true, status: "pending", date: todayStr, notes: "",
+        };
+        setDocuments(p => {
+          const updated = [...p, newDoc];
+          return updated;
+        });
+        setEditDoc(newDoc);
+        setTagF({ ...newDoc, gst: "yes" });
+      };
+      reader.readAsDataURL(f);
+    });
+    showToast(`${files.length} file${files.length>1?"s":""} uploaded!`);
   };
 
   const handleDrop = e => {
@@ -2726,6 +2737,26 @@ function DocumentsPage({ documents, setDocuments, employees, showToast }) {
                       <td style={{ fontSize:11.5, color:C.muted, maxWidth:140, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{d.notes||"—"}</td>
                       <td>
                         <div style={{ display:"flex", gap:4 }}>
+                          {d.dataUrl && d.type && d.type.startsWith("image/") && (
+                            <button className="btn-b" style={{ fontSize:10, padding:"3px 8px" }}
+                              onClick={() => { const w = window.open(); w.document.write(`<img src="${d.dataUrl}" style="max-width:100%"/>`); }}>
+                              👁️ View
+                            </button>
+                          )}
+                          {d.dataUrl && d.type === "application/pdf" && (
+                            <button className="btn-b" style={{ fontSize:10, padding:"3px 8px" }}
+                              onClick={() => { const w = window.open(); w.document.write(`<iframe src="${d.dataUrl}" style="width:100%;height:100vh;border:none"></iframe>`); }}>
+                              👁️ View
+                            </button>
+                          )}
+                          {d.dataUrl && (
+                            <a href={d.dataUrl} download={d.name} style={{ textDecoration:"none" }}>
+                              <button className="btn-b" style={{ fontSize:10, padding:"3px 8px" }}>⬇️ Download</button>
+                            </a>
+                          )}
+                          {!d.dataUrl && (
+                            <span style={{ fontSize:10, color:C.dim }}>Demo file</span>
+                          )}
                           <button className="btn-b" style={{ fontSize:10, padding:"3px 8px" }} onClick={() => openTag(d)}>Tag</button>
                           <button className="btn-r" style={{ fontSize:10 }} onClick={() => { setDocuments(p=>p.filter(x=>x.id!==d.id)); showToast("Document removed."); }}>✕</button>
                         </div>

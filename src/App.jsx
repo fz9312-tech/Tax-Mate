@@ -2,23 +2,23 @@ import { useState } from "react";
 import React from "react";
 
 // ════════════════════════════════════════════════════════════
-//  THEME
+//  THEME — MISE
 // ════════════════════════════════════════════════════════════
 const C = {
-  bg:         "#0D1117",
-  surface:    "#161B22",
-  surfaceAlt: "#1C2333",
-  border:     "#30363D",
-  text:       "#E6EDF3",
-  muted:      "#8B949E",
-  dim:        "#484F58",
-  green:      "#3FB950",
-  yellow:     "#E3B341",
-  red:        "#F85149",
-  blue:       "#388BFD",
-  accent:     "#F78166",
-  teal:       "#39D3BB",
-  purple:     "#A371F7",
+  bg:         "#0C0F0D",
+  surface:    "#131A14",
+  surfaceAlt: "#192110",
+  border:     "#253320",
+  text:       "#E4EDE6",
+  muted:      "#7A9A78",
+  dim:        "#435540",
+  green:      "#52C97A",
+  yellow:     "#D4A843",
+  red:        "#E06060",
+  blue:       "#5B9FD4",
+  accent:     "#8FCB72",
+  teal:       "#3DC9A0",
+  purple:     "#A882D4",
 };
 
 // ════════════════════════════════════════════════════════════
@@ -321,9 +321,9 @@ function buildAnnualData(revenue, expenses, timesheets, employees, insurance, do
 //  CSS
 // ════════════════════════════════════════════════════════════
 const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Sora:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400&family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body { background: ${C.bg}; color: ${C.text}; font-family: 'Sora', sans-serif; min-height: 100vh; }
+body { background: ${C.bg}; color: ${C.text}; font-family: 'DM Sans', sans-serif; min-height: 100vh; }
 ::-webkit-scrollbar { width: 5px; } ::-webkit-scrollbar-track { background: ${C.bg}; } ::-webkit-scrollbar-thumb { background: ${C.border}; border-radius: 3px; }
 
 /* ── Layout ── */
@@ -333,13 +333,13 @@ body { background: ${C.bg}; color: ${C.text}; font-family: 'Sora', sans-serif; m
 
 /* ── Sidebar ── */
 .logo     { display: flex; align-items: center; gap: 9px; margin-bottom: 26px; padding: 0 6px; }
-.logo-box { width: 32px; height: 32px; background: linear-gradient(135deg, ${C.accent}, #FF6B35); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 700; color: #fff; flex-shrink: 0; }
+.logo-box { width: 32px; height: 32px; background: linear-gradient(135deg, ${C.accent}, ${C.teal}); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 700; color: #0C0F0D; flex-shrink: 0; }
 .logo-name { font-size: 14px; font-weight: 700; }
 .logo-sub  { font-size: 9.5px; color: ${C.muted}; }
 .nav-sec  { font-size: 9.5px; font-weight: 700; color: ${C.dim}; text-transform: uppercase; letter-spacing: 1.2px; padding: 0 8px; margin: 12px 0 4px; }
 .nav-item { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: 7px; cursor: pointer; font-size: 12.5px; font-weight: 500; color: ${C.muted}; margin-bottom: 1px; transition: all .15s; border: 1px solid transparent; }
 .nav-item:hover { background: ${C.surfaceAlt}; color: ${C.text}; }
-.nav-item.on-a  { background: rgba(247,129,102,.12); color: ${C.accent}; border-color: rgba(247,129,102,.2); }
+.nav-item.on-a  { background: rgba(143,203,114,.12); color: ${C.accent}; border-color: rgba(143,203,114,.2); }
 .nav-item.on-t  { background: rgba(57,211,187,.10); color: ${C.teal};   border-color: rgba(57,211,187,.2); }
 .nav-ico  { font-size: 14px; width: 17px; text-align: center; flex-shrink: 0; }
 .nav-badge { margin-left: auto; background: rgba(57,211,187,.15); color: ${C.teal}; border-radius: 20px; padding: 1px 6px; font-size: 9px; font-weight: 700; }
@@ -347,7 +347,7 @@ body { background: ${C.bg}; color: ${C.text}; font-family: 'Sora', sans-serif; m
 .plan-box   { background: ${C.surfaceAlt}; border: 1px solid ${C.border}; border-radius: 10px; padding: 11px; }
 .plan-tier  { font-size: 11px; font-weight: 700; color: ${C.accent}; margin-bottom: 3px; }
 .plan-desc  { font-size: 10.5px; color: ${C.muted}; line-height: 1.5; }
-.plan-btn   { display: block; width: 100%; margin-top: 9px; padding: 6px; background: linear-gradient(135deg, ${C.accent}, #FF6B35); color: #fff; border: none; border-radius: 6px; font-size: 10.5px; font-weight: 700; cursor: pointer; font-family: 'Sora', sans-serif; text-align: center; }
+.plan-btn   { display: block; width: 100%; margin-top: 9px; padding: 6px; background: linear-gradient(135deg, ${C.accent}, ${C.teal}); color: #0C0F0D; border: none; border-radius: 6px; font-size: 10.5px; font-weight: 700; cursor: pointer; font-family: 'DM Sans', sans-serif; text-align: center; }
 
 /* ── Header ── */
 .hdr      { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; }
@@ -355,7 +355,7 @@ body { background: ${C.bg}; color: ${C.text}; font-family: 'Sora', sans-serif; m
 .hdr-left .psub   { font-size: 12.5px; color: ${C.muted}; margin-top: 2px; }
 .hdr-right { display: flex; align-items: center; gap: 9px; }
 .chip  { background: ${C.surface}; border: 1px solid ${C.border}; border-radius: 20px; padding: 5px 13px; font-size: 11.5px; color: ${C.muted}; }
-.av    { width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg, ${C.accent}, #FF6B35); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: #fff; flex-shrink: 0; }
+.av    { width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg, ${C.accent}, ${C.teal}); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: #0C0F0D; flex-shrink: 0; }
 
 /* ── Banners ── */
 .banner { padding: 11px 16px; border-radius: 11px; display: flex; align-items: center; gap: 11px; margin-bottom: 18px; border: 1px solid transparent; font-size: 13px; font-weight: 500; }
@@ -402,20 +402,20 @@ body { background: ${C.bg}; color: ${C.text}; font-family: 'Sora', sans-serif; m
 .flbl  { font-size: 11px; font-weight: 600; color: ${C.muted}; }
 .fhint { font-size: 10.5px; color: ${C.dim}; }
 .fhint.y { color: ${C.yellow}; } .fhint.r { color: ${C.red}; }
-.inp   { background: ${C.bg}; border: 1px solid ${C.border}; border-radius: 7px; padding: 8px 11px; color: ${C.text}; font-size: 13px; font-family: 'Sora', sans-serif; outline: none; width: 100%; transition: border-color .15s; }
+.inp   { background: ${C.bg}; border: 1px solid ${C.border}; border-radius: 7px; padding: 8px 11px; color: ${C.text}; font-size: 13px; font-family: 'DM Sans', sans-serif; outline: none; width: 100%; transition: border-color .15s; }
 .inp:focus { border-color: ${C.accent}; }
 .inp::placeholder { color: ${C.dim}; }
-.sel   { background: ${C.bg}; border: 1px solid ${C.border}; border-radius: 7px; padding: 8px 11px; color: ${C.text}; font-size: 13px; font-family: 'Sora', sans-serif; outline: none; width: 100%; cursor: pointer; }
+.sel   { background: ${C.bg}; border: 1px solid ${C.border}; border-radius: 7px; padding: 8px 11px; color: ${C.text}; font-size: 13px; font-family: 'DM Sans', sans-serif; outline: none; width: 100%; cursor: pointer; }
 .fbtns { display: flex; gap: 9px; margin-top: 14px; align-items: center; }
 
 /* ── Buttons ── */
-.btn    { background: linear-gradient(135deg, ${C.accent}, #FF6B35); color: #fff; border: none; border-radius: 8px; padding: 8px 17px; font-size: 12.5px; font-weight: 600; cursor: pointer; font-family: 'Sora', sans-serif; transition: opacity .15s; white-space: nowrap; }
+.btn    { background: linear-gradient(135deg, ${C.accent}, ${C.teal}); color: #fff; border: none; border-radius: 8px; padding: 8px 17px; font-size: 12.5px; font-weight: 600; cursor: pointer; font-family: 'DM Sans', sans-serif; transition: opacity .15s; white-space: nowrap; }
 .btn:hover { opacity: .87; }
-.btn-g  { background: transparent; border: 1px solid ${C.border}; border-radius: 8px; padding: 8px 17px; color: ${C.muted}; font-size: 12.5px; font-weight: 500; cursor: pointer; font-family: 'Sora', sans-serif; }
+.btn-g  { background: transparent; border: 1px solid ${C.border}; border-radius: 8px; padding: 8px 17px; color: ${C.muted}; font-size: 12.5px; font-weight: 500; cursor: pointer; font-family: 'DM Sans', sans-serif; }
 .btn-g:hover { border-color: ${C.muted}; color: ${C.text}; }
-.btn-t  { background: rgba(57,211,187,.1); border: 1px solid rgba(57,211,187,.25); color: ${C.teal}; border-radius: 7px; padding: 4px 10px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'Sora', sans-serif; }
-.btn-b  { background: rgba(56,139,253,.12); border: 1px solid rgba(56,139,253,.25); color: ${C.blue}; border-radius: 7px; padding: 4px 10px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'Sora', sans-serif; }
-.btn-r  { background: rgba(248,81,73,.12); color: ${C.red}; border: none; border-radius: 7px; padding: 4px 10px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'Sora', sans-serif; }
+.btn-t  { background: rgba(57,211,187,.1); border: 1px solid rgba(57,211,187,.25); color: ${C.teal}; border-radius: 7px; padding: 4px 10px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'DM Sans', sans-serif; }
+.btn-b  { background: rgba(56,139,253,.12); border: 1px solid rgba(56,139,253,.25); color: ${C.blue}; border-radius: 7px; padding: 4px 10px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'DM Sans', sans-serif; }
+.btn-r  { background: rgba(248,81,73,.12); color: ${C.red}; border: none; border-radius: 7px; padding: 4px 10px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'DM Sans', sans-serif; }
 .btn-ic { background: none; border: none; cursor: pointer; color: ${C.muted}; padding: 2px; font-size: 13px; }
 .btn-ic:hover { color: ${C.text}; }
 
@@ -449,7 +449,7 @@ body { background: ${C.bg}; color: ${C.text}; font-family: 'Sora', sans-serif; m
 .tab.on-t { background: ${C.surface}; color: ${C.teal};   font-weight: 600; }
 
 /* ── Reserve widget ── */
-.reserve { background: linear-gradient(135deg, rgba(247,129,102,.08), rgba(255,107,53,.03)); border: 1px solid rgba(247,129,102,.25); border-radius: 13px; padding: 20px; margin-bottom: 16px; }
+.reserve { background: linear-gradient(135deg, rgba(143,203,114,.08), rgba(61,201,160,.03)); border: 1px solid rgba(143,203,114,.2); border-radius: 13px; padding: 20px; margin-bottom: 16px; }
 .r-lbl   { font-size: 10px; font-weight: 700; color: ${C.muted}; text-transform: uppercase; letter-spacing: .8px; }
 .r-big   { font-size: 36px; font-weight: 700; font-family: 'DM Mono', monospace; color: ${C.accent}; line-height: 1; margin: 8px 0 5px; }
 .r-sub   { font-size: 12.5px; color: ${C.muted}; }
@@ -499,7 +499,7 @@ body { background: ${C.bg}; color: ${C.text}; font-family: 'Sora', sans-serif; m
 .score-lbl  { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; }
 
 /* ── Tax saver summary panel ── */
-.ts-panel { background: linear-gradient(135deg, rgba(57,211,187,.06), rgba(247,129,102,.03)); border: 1px solid rgba(57,211,187,.2); border-radius: 13px; padding: 20px; margin-bottom: 16px; }
+.ts-panel { background: linear-gradient(135deg, rgba(57,211,187,.06), rgba(143,203,114,.03)); border: 1px solid rgba(57,211,187,.2); border-radius: 13px; padding: 20px; margin-bottom: 16px; }
 .ts-sgrid { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-top: 13px; }
 .ts-sval  { font-size: 20px; font-weight: 700; font-family: 'DM Mono', monospace; }
 .ts-slbl  { font-size: 10px; color: ${C.muted}; margin-top: 3px; }
@@ -511,25 +511,25 @@ body { background: ${C.bg}; color: ${C.text}; font-family: 'Sora', sans-serif; m
 /* ── Landing ── */
 .land    { min-height: 100vh; background: ${C.bg}; }
 .lnav    { display: flex; align-items: center; justify-content: space-between; padding: 17px 40px; border-bottom: 1px solid ${C.border}; }
-.hero    { text-align: center; padding: 76px 40px 44px; max-width: 720px; margin: 0 auto; }
-.h-badge { display: inline-block; background: rgba(247,129,102,.12); border: 1px solid rgba(247,129,102,.3); border-radius: 20px; padding: 5px 13px; font-size: 11.5px; font-weight: 600; color: ${C.accent}; margin-bottom: 18px; }
-.h-ttl   { font-size: 44px; font-weight: 700; letter-spacing: -2px; line-height: 1.1; margin-bottom: 15px; }
-.h-ttl span { background: linear-gradient(135deg, ${C.accent}, #FF6B35); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-.h-sub   { font-size: 15.5px; color: ${C.muted}; line-height: 1.65; margin-bottom: 26px; }
+.hero    { text-align: center; padding: 80px 40px 36px; max-width: 760px; margin: 0 auto; }
+.h-badge { display: inline-block; background: rgba(143,203,114,.12); border: 1px solid rgba(143,203,114,.3); border-radius: 20px; padding: 5px 13px; font-size: 11.5px; font-weight: 600; color: ${C.accent}; margin-bottom: 20px; }
+.h-ttl   { font-size: 48px; font-weight: 700; letter-spacing: -2px; line-height: 1.08; margin-bottom: 18px; font-family: 'Fraunces', serif; }
+.h-ttl span { background: linear-gradient(135deg, ${C.accent}, ${C.teal}); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-style: italic; }
+.h-sub   { font-size: 15.5px; color: ${C.muted}; line-height: 1.7; margin-bottom: 28px; }
 .h-btns  { display: flex; align-items: center; justify-content: center; gap: 10px; }
-.h-btn   { background: linear-gradient(135deg, ${C.accent}, #FF6B35); color: #fff; border: none; border-radius: 11px; padding: 12px 26px; font-size: 14.5px; font-weight: 700; cursor: pointer; font-family: 'Sora', sans-serif; }
-.h-btn-g { background: transparent; color: ${C.text}; border: 1px solid ${C.border}; border-radius: 11px; padding: 12px 22px; font-size: 14.5px; font-weight: 500; cursor: pointer; font-family: 'Sora', sans-serif; }
-.feat-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 14px; padding: 28px 40px; max-width: 1020px; margin: 0 auto; }
+.h-btn   { background: linear-gradient(135deg, ${C.accent}, ${C.teal}); color: #0C0F0D; border: none; border-radius: 11px; padding: 12px 28px; font-size: 14.5px; font-weight: 700; cursor: pointer; font-family: 'DM Sans', sans-serif; }
+.h-btn-g { background: transparent; color: ${C.text}; border: 1px solid ${C.border}; border-radius: 11px; padding: 12px 22px; font-size: 14.5px; font-weight: 500; cursor: pointer; font-family: 'DM Sans', sans-serif; }
+.feat-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; padding: 0 40px 28px; max-width: 1080px; margin: 0 auto; }
 .feat-card { background: ${C.surface}; border: 1px solid ${C.border}; border-radius: 14px; padding: 18px; }
 .feat-ico  { font-size: 22px; margin-bottom: 10px; }
 .feat-ttl  { font-size: 13.5px; font-weight: 600; margin-bottom: 5px; }
 .feat-dsc  { font-size: 12px; color: ${C.muted}; line-height: 1.6; }
-.price-sec { padding: 48px 40px; text-align: center; max-width: 820px; margin: 0 auto; }
+.price-sec { padding: 48px 40px; text-align: center; max-width: 860px; margin: 0 auto; }
 .price-lbl { font-size: 10.5px; font-weight: 700; color: ${C.accent}; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
-.price-ttl { font-size: 28px; font-weight: 700; letter-spacing: -1px; margin-bottom: 28px; }
+.price-ttl { font-size: 26px; font-weight: 700; letter-spacing: -1px; margin-bottom: 28px; font-family: 'Fraunces', serif; }
 .price-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; }
 .price-card { background: ${C.surface}; border: 1px solid ${C.border}; border-radius: 14px; padding: 22px; text-align: left; }
-.price-card.hi { border-color: ${C.accent}; background: rgba(247,129,102,.04); }
+.price-card.hi { border-color: ${C.accent}; background: rgba(143,203,114,.05); }
 .p-tier { font-size: 10px; font-weight: 700; color: ${C.muted}; text-transform: uppercase; letter-spacing: .8px; margin-bottom: 7px; }
 .p-amt  { font-size: 28px; font-weight: 700; font-family: 'DM Mono', monospace; }
 .p-per  { font-size: 11.5px; color: ${C.muted}; }
@@ -563,7 +563,7 @@ body { background: ${C.bg}; color: ${C.text}; font-family: 'Sora', sans-serif; m
 .search-bar { display: flex; gap: 8px; margin-bottom: 14px; }
 .filter-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
 .drop-zone  { border: 2px dashed ${C.border}; border-radius: 13px; padding: 32px 20px; text-align: center; background: ${C.surfaceAlt}; cursor: pointer; transition: all .2s; }
-.drop-zone:hover, .drop-zone.drag { border-color: ${C.accent}; background: rgba(247,129,102,.04); }
+.drop-zone:hover, .drop-zone.drag { border-color: ${C.accent}; background: rgba(143,203,114,.04); }
 .dz-ico    { font-size: 32px; margin-bottom: 10px; }
 .dz-ttl    { font-size: 14px; font-weight: 600; margin-bottom: 5px; }
 .dz-sub    { font-size: 12px; color: ${C.muted}; }
@@ -577,11 +577,11 @@ body { background: ${C.bg}; color: ${C.text}; font-family: 'Sora', sans-serif; m
 .rep-btns  { display: flex; gap: 8px; }
 
 /* ── Print layout (screen only used for preview) ── */
-.print-preview { background: #fff; color: #111; font-family: 'Sora',sans-serif; padding: 0; }
+.print-preview { background: #fff; color: #111; font-family: 'DM Sans',sans-serif; padding: 0; }
 .pp-page   { width: 100%; max-width: 780px; margin: 0 auto; padding: 32px 36px; }
 .pp-hdr    { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 26px; padding-bottom: 16px; border-bottom: 2px solid #E5E7EB; }
 .pp-logo   { display: flex; align-items: center; gap: 10px; }
-.pp-logo-box { width: 36px; height: 36px; background: #F78166; border-radius: 8px; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700; font-size:16px; }
+.pp-logo-box { width: 36px; height: 36px; background: #8FCB72; border-radius: 8px; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700; font-size:16px; }
 .pp-title  { font-size: 11px; color: #6B7280; font-weight: 700; text-transform: uppercase; letter-spacing: .8px; }
 .pp-name   { font-size: 18px; font-weight: 700; letter-spacing: -.3px; margin-top: 3px; }
 .pp-meta   { text-align: right; font-size: 11px; color: #6B7280; line-height: 1.8; }
@@ -592,14 +592,14 @@ body { background: ${C.bg}; color: ${C.text}; font-family: 'Sora', sans-serif; m
 .pp-lbl    { color: #374151; }
 .pp-val    { font-family: 'DM Mono',monospace; font-weight: 600; color: #111; }
 .pp-tot    { display: flex; justify-content: space-between; padding: 11px 13px; background: #F9FAFB; border-radius: 8px; margin-top: 8px; font-weight: 700; }
-.pp-tot-v  { font-family: 'DM Mono',monospace; font-size: 17px; color: #F78166; }
+.pp-tot-v  { font-family: 'DM Mono',monospace; font-size: 17px; color: #8FCB72; }
 .pp-warn   { background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 8px; padding: 10px 13px; font-size: 12px; color: #92400E; margin-bottom: 8px; }
 .pp-tbl    { width: 100%; border-collapse: collapse; font-size: 12px; }
 .pp-tbl th { background: #F3F4F6; padding: 8px 10px; text-align: left; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: #6B7280; }
 .pp-tbl td { padding: 8px 10px; border-bottom: 1px solid #F3F4F6; }
 .pp-tbl tr:last-child td { border-bottom: none; }
 .pp-tbl tfoot td { font-weight: 700; border-top: 2px solid #E5E7EB; border-bottom: none; }
-.pp-disc   { background: #F9FAFB; border: 1px solid #E5E7EB; border-left: 3px solid #F78166; border-radius: 8px; padding: 12px 14px; margin-top: 22px; font-size: 11px; color: #6B7280; line-height: 1.7; }
+.pp-disc   { background: #F9FAFB; border: 1px solid #E5E7EB; border-left: 3px solid #8FCB72; border-radius: 8px; padding: 12px 14px; margin-top: 22px; font-size: 11px; color: #6B7280; line-height: 1.7; }
 .pp-quarter-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 12px; }
 .pp-q-card { background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 13px; }
 .pp-q-lbl  { font-size: 10px; font-weight: 700; color: #9CA3AF; text-transform: uppercase; margin-bottom: 6px; }
@@ -609,8 +609,8 @@ body { background: ${C.bg}; color: ${C.text}; font-family: 'Sora', sans-serif; m
 .pp-b-y  { background: #FEF3C7; color: #92400E; }
 .pp-b-r  { background: #FEE2E2; color: #991B1B; }
 .pp-modal { position: fixed; inset: 0; background: rgba(0,0,0,.75); z-index: 300; overflow-y: auto; }
-.pp-close  { position: fixed; top: 16px; right: 16px; background: #fff; border: 1px solid #E5E7EB; border-radius: 8px; padding: 7px 14px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: 'Sora',sans-serif; z-index: 301; display: flex; gap: 6px; align-items: center; }
-.pp-print  { position: fixed; top: 16px; right: 120px; background: #F78166; color: #fff; border: none; border-radius: 8px; padding: 7px 14px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: 'Sora',sans-serif; z-index: 301; }
+.pp-close  { position: fixed; top: 16px; right: 16px; background: #fff; border: 1px solid #E5E7EB; border-radius: 8px; padding: 7px 14px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: 'DM Sans',sans-serif; z-index: 301; display: flex; gap: 6px; align-items: center; }
+.pp-print  { position: fixed; top: 16px; right: 120px; background: #8FCB72; color: #fff; border: none; border-radius: 8px; padding: 7px 14px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: 'DM Sans',sans-serif; z-index: 301; }
 
 /* ── Print media query ── */
 @media print {
@@ -709,8 +709,11 @@ function LandingPage({ onGo }) {
     <div className="land">
       <nav className="lnav">
         <div className="logo" style={{ margin:0 }}>
-          <div className="logo-box">T</div>
-          <div><div className="logo-name">TaxMate</div><div className="logo-sub">FOR RESTAURANTS</div></div>
+          <div className="logo-box">M</div>
+          <div>
+            <div className="logo-name">Mise</div>
+            <div className="logo-sub">RESTAURANT FINANCE</div>
+          </div>
         </div>
         <div style={{ display:"flex", gap:9 }}>
           <button className="btn-g" onClick={onGo}>Log In</button>
@@ -720,22 +723,28 @@ function LandingPage({ onGo }) {
 
       <div className="hero">
         <div className="h-badge">🇦🇺 Built for Australian Restaurant Owners</div>
-        <h1 className="h-ttl">Know exactly what tax<br/><span>you owe. Every quarter.</span></h1>
-        <p className="h-sub">TaxMate tracks GST, manages staff records, calculates labour costs, and tells you what to set aside — so your BAS never surprises you.</p>
+        <h1 className="h-ttl">Your restaurant's finances,<br/><span>everything in its place.</span></h1>
+        <p className="h-sub">Mise tracks GST, wages, super and expenses — then builds your BAS summary and accountant pack automatically. Stop chasing receipts. Start running your restaurant.</p>
         <div className="h-btns">
           <button className="h-btn"   onClick={onGo}>Start for Free →</button>
-          <button className="h-btn-g" onClick={onGo}>See a Demo</button>
+          <button className="h-btn-g" onClick={onGo}>See How It Works</button>
         </div>
+      </div>
+
+      <div style={{ textAlign:"center", padding:"8px 0 32px", color:C.muted, fontSize:12, letterSpacing:".5px" }}>
+        GST · BAS · PAYG · Super · Wages · Leave · Insurance · Documents
       </div>
 
       <div className="feat-grid">
         {[
-          { ico:"💵", ttl:"Revenue Tracking",   dsc:"Log your daily income in one simple entry. GST collected calculated automatically." },
-          { ico:"🧾", ttl:"Expense Tracking",   dsc:"Categorise expenses, flag missing invoices, and maximise GST credits." },
-          { ico:"👤", ttl:"Staff Profiles",     dsc:"Full employee records — personal info, next of kin, hours, TFN, super." },
-          { ico:"🕐", ttl:"Timesheet & Wages",  dsc:"Log std/OT/weekend hours. Auto-calculate gross wages, PAYG and super." },
-          { ico:"🛡️", ttl:"Insurance Dashboard",dsc:"Track Workers Comp, Public Liability and Equipment as % of payroll." },
-          { ico:"📊", ttl:"BAS Estimator",      dsc:"Estimated quarterly BAS with GST and PAYG breakdown. Weekly reserve advice." },
+          { ico:"💵", ttl:"Revenue Tracking",       dsc:"Log daily income in seconds. GST collected calculated automatically, every single entry." },
+          { ico:"🧾", ttl:"Expense Management",     dsc:"Categorise every expense, flag missing invoices, and never lose a GST credit again." },
+          { ico:"👥", ttl:"Staff & Wages",           dsc:"Full employee records with automatic casual loading, OT, weekend rates, and super." },
+          { ico:"🏖️", ttl:"Leave & Entitlements",   dsc:"Track annual leave, personal leave and day in lieu. Accruals calculated from timesheets." },
+          { ico:"🛡️", ttl:"Insurance Dashboard",    dsc:"Workers Comp, Public Liability, Equipment — tracked as a percentage of your payroll." },
+          { ico:"📦", ttl:"Accountant Pack",         dsc:"Generate a complete financial year summary and BAS support pack, ready to send your accountant." },
+          { ico:"📁", ttl:"Document Hub",            dsc:"Upload invoices, bank statements and BAS notices. Tag by quarter, supplier or employee." },
+          { ico:"🔍", ttl:"Tax Saver",               dsc:"Scans your expenses for missing invoices, entertainment flags, and super compliance issues." },
         ].map((f,i) => (
           <div key={i} className="feat-card">
             <div className="feat-ico">{f.ico}</div>
@@ -746,29 +755,41 @@ function LandingPage({ onGo }) {
       </div>
 
       <div className="price-sec">
-        <div className="price-lbl">Pricing</div>
-        <div className="price-ttl">Simple, honest pricing</div>
+        <div className="price-lbl">Simple Pricing</div>
+        <div className="price-ttl">No surprises. Just like your BAS should be.</div>
         <div className="price-grid">
           {[
-            { tier:"Free",    price:"$0",  per:"/month", hi:false,
-              feats:["Revenue & expense tracking","3 employee profiles","Basic BAS estimate","Monthly summaries"] },
+            { tier:"Starter", price:"$0",  per:"/month", hi:false,
+              feats:["Revenue & expense tracking","Up to 3 staff profiles","Basic BAS estimate","Monthly summaries"] },
             { tier:"Pro",     price:"$29", per:"/month", hi:true,
-              feats:["Everything in Free","Unlimited staff profiles","Full timesheet & labour costs","Insurance dashboard","Tax Saver"] },
-            { tier:"Premium", price:"$79", per:"/month", hi:false,
-              feats:["Everything in Pro","Cash flow forecasting","Tax reserve planning","Priority support","Accountant export"] },
+              feats:["Everything in Starter","Unlimited staff profiles","Timesheets & labour costs","Insurance dashboard","Tax Saver alerts","Document Hub"] },
+            { tier:"Studio",  price:"$79", per:"/month", hi:false,
+              feats:["Everything in Pro","Annual Accountant Pack","BAS support summaries","Payroll STP pack","Priority support"] },
           ].map((p,i) => (
             <div key={i} className={`price-card${p.hi?" hi":""}`}>
               <div className="p-tier">{p.tier}</div>
               <div><span className="p-amt">{p.price}</span><span className="p-per">{p.per}</span></div>
               <ul className="p-list">{p.feats.map((f,j) => <li key={j}>{f}</li>)}</ul>
               <button className="btn" style={{ marginTop:14, width:"100%" }} onClick={onGo}>
-                {p.tier === "Free" ? "Get Started" : `Choose ${p.tier}`}
+                {p.tier === "Starter" ? "Get Started Free" : `Choose ${p.tier}`}
               </button>
             </div>
           ))}
         </div>
         <p style={{ fontSize:10.5, color:C.dim, marginTop:16 }}>
-          ⚠️ Estimates only. Not a substitute for a registered tax agent or accountant.
+          ⚠️ Mise generates management summaries only. Not a substitute for a registered tax agent or accountant.
+        </p>
+      </div>
+
+      <div style={{ textAlign:"center", padding:"32px 40px 48px", borderTop:`1px solid ${C.border}` }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:9, marginBottom:10 }}>
+          <div className="logo-box" style={{ width:28, height:28, fontSize:13 }}>M</div>
+          <span style={{ fontWeight:700, fontSize:14, letterSpacing:"-.3px" }}>Mise</span>
+          <span style={{ color:C.dim, fontSize:12 }}>· Restaurant Finance</span>
+        </div>
+        <p style={{ fontSize:11, color:C.dim }}>Built in Australia for Australian restaurant owners.</p>
+        <p style={{ fontSize:10.5, color:C.dim, marginTop:6 }}>
+          Mise is not a registered tax agent. Always consult a professional before lodging with the ATO.
         </p>
       </div>
     </div>
@@ -784,36 +805,38 @@ function AuthPage({ onLogin }) {
     <div className="auth-pg">
       <div className="auth-box">
         <div className="logo" style={{ marginBottom:20 }}>
-          <div className="logo-box">T</div>
-          <div><div className="logo-name">TaxMate</div><div className="logo-sub">FOR RESTAURANTS</div></div>
+          <div className="logo-box">M</div>
+          <div><div className="logo-name">Mise</div><div className="logo-sub">RESTAURANT FINANCE</div></div>
         </div>
         <div className="a-ttl">{mode === "login" ? "Welcome back" : "Create account"}</div>
-        <div className="a-sub">{mode === "login" ? "Log in to your dashboard" : "Start tracking today"}</div>
+        <div className="a-sub">{mode === "login" ? "Log in to your dashboard" : "Start your free trial"}</div>
         <div className="a-form">
           {mode === "signup" && (
             <div className="fg">
               <label className="flbl">Restaurant Name</label>
-              <input className="inp" placeholder="Golden Dragon Restaurant"/>
+              <input className="inp" placeholder="e.g. Golden Dragon Restaurant"/>
             </div>
           )}
-          <div className="fg"><label className="flbl">Email</label><input className="inp" type="email" defaultValue="demo@taxmate.com.au"/></div>
+          <div className="fg"><label className="flbl">Email</label><input className="inp" type="email" defaultValue="demo@mise.com.au"/></div>
           <div className="fg"><label className="flbl">Password</label><input className="inp" type="password" defaultValue="demo1234"/></div>
           <button className="btn" style={{ width:"100%", padding:11 }} onClick={onLogin}>
-            {mode === "login" ? "Log In →" : "Create Account →"}
+            {mode === "login" ? "Log In \u2192" : "Create Account \u2192"}
           </button>
         </div>
         <div className="a-sw">
           {mode === "login"
-            ? <><span>No account? </span><a onClick={() => setMode("signup")}>Sign up</a></>
+            ? <><span>No account? </span><a onClick={() => setMode("signup")}>Sign up free</a></>
             : <><span>Have account? </span><a onClick={() => setMode("login")}>Log in</a></>}
         </div>
-        <p style={{ fontSize:10, color:C.dim, textAlign:"center", marginTop:10 }}>
-          Click Log In to enter the demo
+        <p style={{ fontSize:10.5, color:C.dim, textAlign:"center", marginTop:12 }}>
+          Demo account — click Log In to explore
         </p>
       </div>
     </div>
   );
 }
+
+
 
 // ════════════════════════════════════════════════════════════
 //  SIDEBAR
@@ -842,8 +865,8 @@ function Sidebar({ page, setPage, onLogout, flagCount }) {
   return (
     <div className="sidebar">
       <div className="logo">
-        <div className="logo-box">T</div>
-        <div><div className="logo-name">TaxMate</div><div className="logo-sub">FOR RESTAURANTS</div></div>
+        <div className="logo-box">M</div>
+        <div><div className="logo-name">Mise</div><div className="logo-sub">RESTAURANT FINANCE</div></div>
       </div>
       {nav.map((n,i) => n.sec
         ? <div key={i} className="nav-sec">{n.sec}</div>
@@ -1052,6 +1075,14 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
 // ════════════════════════════════════════════════════════════
 function ExpensesPage({ expenses, setExpenses, showToast }) {
   const [f, setF] = useState({ date:todayStr, cat:"ingredients", amount:"", desc:"", gst:"yes", invoice:"yes" });
+  const [search,    setSearch]    = useState("");
+  const [filterCat, setFilterCat] = useState("all");
+  const [filterGst, setFilterGst] = useState("all");
+  const [filterInv, setFilterInv] = useState("all");
+  const [filterFrom,setFilterFrom]= useState("");
+  const [filterTo,  setFilterTo]  = useState("");
+  const [tab,       setTab]       = useState("list"); // list | charts
+  const [dismissed, setDismissed] = useState([]);
 
   const add = () => {
     if (!f.amount || !f.desc) return;
@@ -1064,23 +1095,158 @@ function ExpensesPage({ expenses, setExpenses, showToast }) {
     showToast("Expense added!");
   };
 
-  const totalExp  = expenses.reduce((s,e) => s + e.amount, 0);
-  const gstCreds  = expenses.filter(e => e.gst).reduce((s,e) => s + e.amount/11, 0);
+  // ── Stats ────────────────────────────────────────────────
+  const totalExp    = expenses.reduce((s,e) => s + e.amount, 0);
+  const gstCreds    = expenses.filter(e => e.gst && e.invoice).reduce((s,e) => s + e.amount/11, 0);
+  const missingInv  = expenses.filter(e => e.gst && !e.invoice);
+  const missingCred = missingInv.reduce((s,e) => s + e.amount/11, 0);
+  const entFlag     = expenses.filter(e => ["entertainment","meals"].includes(e.cat));
+  const largeNoInv  = expenses.filter(e => e.amount >= 82.50 && !e.invoice);
+
+  // ── Alerts ───────────────────────────────────────────────
+  const alerts = [
+    missingInv.length > 0 && {
+      id:"missing-inv", level:"red",
+      title:`${missingInv.length} expense${missingInv.length>1?"s":""} missing a tax invoice`,
+      body:`You may lose ${money(missingCred)} in GST credits. ATO requires a tax invoice for any GST claim over $82.50.`,
+      action:"Filter Missing Invoices", actionFn:() => { setFilterInv("no"); setTab("list"); }
+    },
+    largeNoInv.length > 0 && {
+      id:"large-no-inv", level:"yellow",
+      title:`${largeNoInv.length} expense${largeNoInv.length>1?"s":""} over $82.50 without invoice`,
+      body:`These expenses exceed the ATO invoice threshold. Get invoices ASAP or you cannot claim GST credits.`,
+      action:"Show These", actionFn:() => { setFilterInv("no"); setTab("list"); }
+    },
+    entFlag.length > 0 && {
+      id:"entertainment", level:"yellow",
+      title:`${entFlag.length} entertainment/meal expense${entFlag.length>1?"s":""} flagged`,
+      body:`Entertainment expenses are only 50% tax deductible. Make sure these are genuine business entertainment, not personal meals.`,
+      action:null, actionFn:null
+    },
+  ].filter(Boolean).filter(a => !dismissed.includes(a.id));
+
+  // ── Filtering ────────────────────────────────────────────
+  const filtered = expenses.filter(e => {
+    if (search    && !e.desc.toLowerCase().includes(search.toLowerCase()) && !e.cat.includes(search.toLowerCase())) return false;
+    if (filterCat !== "all" && e.cat !== filterCat) return false;
+    if (filterGst !== "all" && String(e.gst) !== filterGst) return false;
+    if (filterInv !== "all" && String(e.invoice) !== filterInv) return false;
+    if (filterFrom && e.date < filterFrom) return false;
+    if (filterTo   && e.date > filterTo)   return false;
+    return true;
+  }).slice().reverse();
+
+  const hasFilters = search || filterCat !== "all" || filterGst !== "all" || filterInv !== "all" || filterFrom || filterTo;
+  const clearFilters = () => { setSearch(""); setFilterCat("all"); setFilterGst("all"); setFilterInv("all"); setFilterFrom(""); setFilterTo(""); };
+
+  // ── Chart data ───────────────────────────────────────────
+  const byCat = EXP_CATEGORIES.map(cat => ({
+    label: cat.charAt(0).toUpperCase()+cat.slice(1),
+    v: expenses.filter(e => e.cat === cat).reduce((s,e) => s+e.amount, 0)
+  })).filter(d => d.v > 0).sort((a,b) => b.v - a.v);
+
+  // Monthly trend (last 6 months)
+  const now = new Date();
+  const months = Array.from({length:6}, (_,i) => {
+    const d = new Date(now.getFullYear(), now.getMonth()-5+i, 1);
+    return { label: d.toLocaleString('en-AU',{month:'short'}), key: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}` };
+  });
+  const monthlyData = months.map(m => ({
+    label: m.label,
+    v: expenses.filter(e => e.date.startsWith(m.key)).reduce((s,e) => s+e.amount, 0)
+  }));
+
+  // ── CSV Export ───────────────────────────────────────────
+  const exportCSV = () => {
+    const rows = [
+      ["Date","Category","Description","Amount","GST Credit","Invoice on File"],
+      ...filtered.map(e => [e.date, e.cat, `"${e.desc}"`, e.amount.toFixed(2), e.gst ? (e.amount/11).toFixed(2) : "0.00", e.invoice ? "Yes" : "No"])
+    ];
+    const csv = rows.map(r => r.join(",")).join("\n");
+    const blob = new Blob([csv], { type:"text/csv" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url; a.download = `mise-expenses-${todayStr}.csv`; a.click();
+    URL.revokeObjectURL(url);
+    showToast("CSV exported!");
+  };
+
+  // ── Print / PDF ──────────────────────────────────────────
+  const printReport = () => {
+    const rows = filtered.map(e =>
+      `<tr><td>${e.date}</td><td>${e.cat}</td><td>${e.desc}</td><td style="text-align:right">$${e.amount.toFixed(2)}</td><td style="text-align:right">${e.gst?"$"+(e.amount/11).toFixed(2):"—"}</td><td style="text-align:center">${e.invoice?"✅":"❌"}</td></tr>`
+    ).join("");
+    const win = window.open("","_blank");
+    win.document.write(`
+      <html><head><title>Mise — Expense Report</title>
+      <style>body{font-family:sans-serif;padding:30px;font-size:12px}h2{margin-bottom:4px}p{color:#666;margin-bottom:20px}
+      table{width:100%;border-collapse:collapse}th{background:#f3f4f6;text-align:left;padding:8px 10px;font-size:11px}
+      td{padding:7px 10px;border-bottom:1px solid #e5e7eb}
+      .summary{display:flex;gap:30px;margin-bottom:24px;background:#f9fafb;padding:14px 18px;border-radius:8px}
+      .s-item .lbl{font-size:10px;color:#9ca3af;text-transform:uppercase;font-weight:700}
+      .s-item .val{font-size:18px;font-weight:700;margin-top:2px}
+      @media print{button{display:none}}</style></head>
+      <body>
+      <h2>Mise — Expense Report</h2>
+      <p>Generated ${new Date().toLocaleDateString('en-AU', {day:'numeric',month:'long',year:'numeric'})}${hasFilters?" · Filtered view":""}</p>
+      <div class="summary">
+        <div class="s-item"><div class="lbl">Total Expenses</div><div class="val">$${totalExp.toFixed(2)}</div></div>
+        <div class="s-item"><div class="lbl">GST Credits (with invoice)</div><div class="val" style="color:#16a34a">$${gstCreds.toFixed(2)}</div></div>
+        <div class="s-item"><div class="lbl">Missing Invoice Credits</div><div class="val" style="color:#dc2626">$${missingCred.toFixed(2)}</div></div>
+        <div class="s-item"><div class="lbl">Entries Shown</div><div class="val">${filtered.length}</div></div>
+      </div>
+      <table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>GST Credit</th><th>Invoice</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+      <p style="margin-top:20px;font-size:10px;color:#9ca3af">⚠️ Mise generates management summaries only. Not a substitute for a registered tax agent or accountant.</p>
+      <button onclick="window.print()" style="margin-top:16px;padding:8px 20px;background:#16a34a;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">🖨️ Print / Save as PDF</button>
+      </body></html>
+    `);
+    win.document.close();
+  };
+
+  const ALERT_COLORS = { red:{ bg:"rgba(224,96,96,.1)", border:"rgba(224,96,96,.3)", dot:C.red }, yellow:{ bg:"rgba(212,168,67,.1)", border:"rgba(212,168,67,.3)", dot:C.yellow } };
 
   return (
     <>
       <div className="hdr">
-        <div className="hdr-left"><div className="ptitle">Expense Tracking</div><div className="psub">Track business expenses and GST credits</div></div>
+        <div className="hdr-left"><div className="ptitle">Expense Tracking</div><div className="psub">Track business expenses, GST credits and deductions</div></div>
+        <div style={{ display:"flex", gap:8 }}>
+          <button className="btn-g" onClick={exportCSV}>⬇️ Export CSV</button>
+          <button className="btn-g" onClick={printReport}>🖨️ Print Report</button>
+        </div>
       </div>
 
-      <div className="g3">
+      {/* ── Alerts ── */}
+      {alerts.length > 0 && (
+        <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:16 }}>
+          {alerts.map(a => {
+            const col = ALERT_COLORS[a.level];
+            return (
+              <div key={a.id} style={{ background:col.bg, border:`1px solid ${col.border}`, borderRadius:11, padding:"12px 15px", display:"flex", alignItems:"flex-start", gap:12 }}>
+                <div style={{ width:8, height:8, borderRadius:"50%", background:col.dot, marginTop:4, flexShrink:0 }}/>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontWeight:700, fontSize:13, marginBottom:3 }}>{a.title}</div>
+                  <div style={{ fontSize:12, color:C.muted, lineHeight:1.6 }}>{a.body}</div>
+                  {a.action && <button onClick={a.actionFn} style={{ marginTop:7, fontSize:11, fontWeight:700, color:col.dot, background:"none", border:`1px solid ${col.border}`, borderRadius:6, padding:"3px 10px", cursor:"pointer", fontFamily:"inherit" }}>{a.action} →</button>}
+                </div>
+                <button onClick={() => setDismissed(p => [...p, a.id])} style={{ background:"none", border:"none", color:C.dim, cursor:"pointer", fontSize:14, padding:"0 2px", lineHeight:1 }}>✕</button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── Summary cards ── */}
+      <div className="g3" style={{ gridTemplateColumns:"repeat(4,1fr)" }}>
         {[
-          { lbl:"Total Expenses", val:money(totalExp),   cls:"r" },
-          { lbl:"GST Credits",    val:money(gstCreds),   cls:"g" },
-          { lbl:"Entries",        val:expenses.length,   cls:"b" },
+          { lbl:"Total Expenses",        val:money(totalExp),      cls:"r" },
+          { lbl:"GST Credits (invoiced)",val:money(gstCreds),      cls:"g" },
+          { lbl:"Credits at Risk",       val:money(missingCred),   cls:"y" },
+          { lbl:"Entries",               val:expenses.length,      cls:"b" },
         ].map((c,i) => <div key={i} className="card"><div className="clbl">{c.lbl}</div><div className={`cval ${c.cls}`}>{c.val}</div></div>)}
       </div>
 
+      {/* ── Add form ── */}
       <div className="fsec">
         <div className="ftit">Add Expense</div>
         <div className="frow2">
@@ -1091,7 +1257,7 @@ function ExpensesPage({ expenses, setExpenses, showToast }) {
             </select>
           </div>
           <div className="fg"><label className="flbl">Amount ($)</label><input className="inp" type="number" placeholder="0.00" value={f.amount} onChange={e => setF({...f,amount:e.target.value})}/></div>
-          <div className="fg"><label className="flbl">Description</label><input className="inp" placeholder="Brief description..." value={f.desc} onChange={e => setF({...f,desc:e.target.value})}/></div>
+          <div className="fg"><label className="flbl">Description</label><input className="inp" placeholder="Brief description..." value={f.desc} onChange={e => setF({...f,desc:e.target.value})} onKeyDown={e => e.key==="Enter" && add()}/></div>
           <div className="fg"><label className="flbl">GST Applicable?</label>
             <select className="sel" value={f.gst} onChange={e => setF({...f,gst:e.target.value})}>
               <option value="yes">Yes — includes GST</option>
@@ -1112,28 +1278,164 @@ function ExpensesPage({ expenses, setExpenses, showToast }) {
         </div>
       </div>
 
-      <div className="bc">
-        <div className="bctit">Expense History</div>
-        <table className="tbl">
-          <thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>GST Credit</th><th>Invoice</th><th></th></tr></thead>
-          <tbody>
-            {expenses.length === 0
-              ? <tr><td colSpan={7}><div className="empty-state"><div className="empty-icon">🧾</div><div className="empty-txt">No expenses yet.</div></div></td></tr>
-              : expenses.slice().reverse().map(e => (
-                  <tr key={e.id}>
-                    <td className="mono">{e.date}</td>
-                    <td><span className="pill pl-p">{e.cat}</span></td>
-                    <td style={{ color:C.muted }}>{e.desc}</td>
-                    <td style={{ fontWeight:700 }}>{money(e.amount)}</td>
-                    <td style={{ color:C.green }}>{e.gst ? money(e.amount/11) : "—"}</td>
-                    <td>{e.invoice ? <span className="pill pl-g">✅ Yes</span> : <span className="pill pl-r">❌ No</span>}</td>
-                    <td><button className="btn-ic" onClick={() => setExpenses(p => p.filter(x => x.id !== e.id))}>🗑️</button></td>
-                  </tr>
-                ))
-            }
-          </tbody>
-        </table>
+      {/* ── Tabs ── */}
+      <div style={{ display:"flex", gap:6, marginBottom:14 }}>
+        {[["list","📋 List"],["charts","📊 Charts"]].map(([t,lbl]) => (
+          <button key={t} onClick={() => setTab(t)} style={{
+            padding:"7px 16px", borderRadius:8, fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit",
+            background: tab===t ? C.accent : C.surface,
+            color: tab===t ? "#0C0F0D" : C.muted,
+            border: `1px solid ${tab===t ? C.accent : C.border}`
+          }}>{lbl}</button>
+        ))}
       </div>
+
+      {tab === "list" && (
+        <div className="bc">
+          {/* Search + Filters */}
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14, alignItems:"center" }}>
+            <input className="inp" style={{ flex:"1 1 180px", minWidth:160 }} placeholder="🔍 Search description or category…" value={search} onChange={e => setSearch(e.target.value)}/>
+            <select className="sel" style={{ flex:"0 0 140px" }} value={filterCat} onChange={e => setFilterCat(e.target.value)}>
+              <option value="all">All Categories</option>
+              {EXP_CATEGORIES.map(c => <option key={c} value={c}>{c.charAt(0).toUpperCase()+c.slice(1)}</option>)}
+            </select>
+            <select className="sel" style={{ flex:"0 0 120px" }} value={filterGst} onChange={e => setFilterGst(e.target.value)}>
+              <option value="all">Any GST</option>
+              <option value="true">GST Yes</option>
+              <option value="false">GST No</option>
+            </select>
+            <select className="sel" style={{ flex:"0 0 140px" }} value={filterInv} onChange={e => setFilterInv(e.target.value)}>
+              <option value="all">Any Invoice</option>
+              <option value="true">Invoice ✅</option>
+              <option value="false">Missing ❌</option>
+            </select>
+            <input className="inp" type="date" style={{ flex:"0 0 130px" }} value={filterFrom} onChange={e => setFilterFrom(e.target.value)} title="From date"/>
+            <input className="inp" type="date" style={{ flex:"0 0 130px" }} value={filterTo}   onChange={e => setFilterTo(e.target.value)}   title="To date"/>
+            {hasFilters && <button className="btn-g" style={{ fontSize:11, padding:"6px 12px" }} onClick={clearFilters}>✕ Clear</button>}
+          </div>
+
+          {/* Results count */}
+          <div style={{ fontSize:11, color:C.dim, marginBottom:10 }}>
+            Showing {filtered.length} of {expenses.length} entries
+            {hasFilters && <span style={{ color:C.accent }}> · Filtered</span>}
+            {filtered.length > 0 && <span> · Total: <strong style={{ color:C.text }}>{money(filtered.reduce((s,e)=>s+e.amount,0))}</strong></span>}
+          </div>
+
+          <table className="tbl">
+            <thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>GST Credit</th><th>Invoice</th><th></th></tr></thead>
+            <tbody>
+              {filtered.length === 0
+                ? <tr><td colSpan={7}><div className="empty-state"><div className="empty-icon">🧾</div><div className="empty-txt">{hasFilters ? "No expenses match your filters." : "No expenses yet."}</div></div></td></tr>
+                : filtered.map(e => {
+                    const isLargeNoInv = e.amount >= 82.50 && !e.invoice && e.gst;
+                    const isEnt = ["entertainment","meals"].includes(e.cat);
+                    return (
+                      <tr key={e.id} style={{ background: isLargeNoInv ? "rgba(224,96,96,.05)" : "transparent" }}>
+                        <td className="mono">{e.date}</td>
+                        <td>
+                          <span className="pill pl-p">{e.cat}</span>
+                          {isEnt && <span style={{ marginLeft:5, fontSize:10, color:C.yellow }}>⚠️ 50%</span>}
+                        </td>
+                        <td style={{ color:C.muted }}>{e.desc}</td>
+                        <td style={{ fontWeight:700 }}>{money(e.amount)}</td>
+                        <td style={{ color: e.gst && e.invoice ? C.green : C.dim }}>
+                          {e.gst ? (e.invoice ? money(e.amount/11) : <span style={{ color:C.red }}>Need invoice</span>) : "—"}
+                        </td>
+                        <td>{e.invoice ? <span className="pill pl-g">✅ Yes</span> : <span className="pill pl-r">❌ No</span>}</td>
+                        <td><button className="btn-ic" onClick={() => { setExpenses(p => p.filter(x => x.id !== e.id)); showToast("Expense deleted"); }}>🗑️</button></td>
+                      </tr>
+                    );
+                  })
+              }
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {tab === "charts" && (
+        <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+
+          {/* Spending by category */}
+          <div className="bc">
+            <div className="bctit">Spending by Category</div>
+            {byCat.length === 0
+              ? <div className="empty-state"><div className="empty-icon">📊</div><div className="empty-txt">No data yet.</div></div>
+              : (
+                <>
+                  <div style={{ display:"flex", gap:16, flexWrap:"wrap", marginBottom:18 }}>
+                    <DonutChart data={byCat.slice(0,6).map((d,i) => ({ label:d.label, v:d.v, c:[C.accent,C.teal,C.blue,C.yellow,C.purple,C.red][i] }))}/>
+                  </div>
+                  <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                    {byCat.map((d,i) => {
+                      const pct = totalExp > 0 ? (d.v/totalExp*100) : 0;
+                      const cols = [C.accent,C.teal,C.blue,C.yellow,C.purple,C.red];
+                      return (
+                        <div key={i} style={{ display:"flex", alignItems:"center", gap:10 }}>
+                          <div style={{ width:90, fontSize:11, color:C.muted, textAlign:"right", flexShrink:0 }}>{d.label}</div>
+                          <div style={{ flex:1, height:8, background:C.border, borderRadius:4, overflow:"hidden" }}>
+                            <div style={{ height:"100%", width:`${pct}%`, background:cols[i%6], borderRadius:4, transition:"width .3s" }}/>
+                          </div>
+                          <div className="mono" style={{ fontSize:12, fontWeight:700, width:80, flexShrink:0 }}>{money(d.v)}</div>
+                          <div style={{ fontSize:11, color:C.dim, width:36, flexShrink:0 }}>{pct.toFixed(0)}%</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )
+            }
+          </div>
+
+          {/* Monthly trend */}
+          <div className="bc">
+            <div className="bctit">Monthly Spend — Last 6 Months</div>
+            {monthlyData.every(m => m.v === 0)
+              ? <div className="empty-state"><div className="empty-icon">📈</div><div className="empty-txt">Not enough data yet.</div></div>
+              : (
+                <>
+                  <BarChart data={monthlyData}/>
+                  <div style={{ display:"flex", gap:16, marginTop:14, flexWrap:"wrap" }}>
+                    {[
+                      { lbl:"Highest Month", val: money(Math.max(...monthlyData.map(m=>m.v))), col:C.red },
+                      { lbl:"Lowest Month",  val: money(Math.min(...monthlyData.filter(m=>m.v>0).map(m=>m.v)) || 0), col:C.green },
+                      { lbl:"Monthly Avg",   val: money(monthlyData.filter(m=>m.v>0).reduce((s,m)=>s+m.v,0) / (monthlyData.filter(m=>m.v>0).length||1)), col:C.blue },
+                    ].map((s,i) => (
+                      <div key={i} style={{ background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:9, padding:"10px 14px" }}>
+                        <div style={{ fontSize:10, color:C.muted, textTransform:"uppercase", letterSpacing:".7px", marginBottom:4 }}>{s.lbl}</div>
+                        <div className="mono" style={{ fontSize:17, fontWeight:700, color:s.col }}>{s.val}</div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )
+            }
+          </div>
+
+          {/* GST breakdown */}
+          <div className="bc">
+            <div className="bctit">GST Credits Breakdown</div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginBottom:16 }}>
+              {[
+                { lbl:"Claimable (with invoice)",  val:money(gstCreds),    col:C.green,  icon:"✅" },
+                { lbl:"At Risk (no invoice)",       val:money(missingCred), col:C.red,    icon:"❌" },
+                { lbl:"Not Applicable (GST-free)",  val:money(expenses.filter(e=>!e.gst).reduce((s,e)=>s+e.amount/11,0)), col:C.dim, icon:"—" },
+              ].map((s,i) => (
+                <div key={i} style={{ background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:9, padding:"12px 15px" }}>
+                  <div style={{ fontSize:18, marginBottom:6 }}>{s.icon}</div>
+                  <div className="mono" style={{ fontSize:18, fontWeight:700, color:s.col, marginBottom:3 }}>{s.val}</div>
+                  <div style={{ fontSize:10.5, color:C.muted }}>{s.lbl}</div>
+                </div>
+              ))}
+            </div>
+            {missingCred > 0 && (
+              <div style={{ background:"rgba(224,96,96,.08)", border:"1px solid rgba(224,96,96,.25)", borderRadius:9, padding:"10px 14px", fontSize:12, color:C.muted }}>
+                💡 <strong style={{ color:C.text }}>Tip:</strong> Chase up the missing invoices — you're leaving {money(missingCred)} in GST credits on the table this period.
+              </div>
+            )}
+          </div>
+
+        </div>
+      )}
     </>
   );
 }
@@ -2470,10 +2772,10 @@ function PPHeader({ title, subtitle, quarter, fy }) {
   return (
     <div className="pp-hdr">
       <div className="pp-logo">
-        <div className="pp-logo-box">T</div>
+        <div className="pp-logo-box">M</div>
         <div>
-          <div style={{ fontSize:15, fontWeight:700, letterSpacing:"-.3px" }}>TaxMate</div>
-          <div style={{ fontSize:10, color:"#6B7280" }}>FOR RESTAURANTS</div>
+          <div style={{ fontSize:15, fontWeight:700, letterSpacing:"-.3px" }}>Mise</div>
+          <div style={{ fontSize:10, color:"#6B7280" }}>RESTAURANT FINANCE</div>
         </div>
       </div>
       <div style={{ textAlign:"center", flex:1 }}>
@@ -2494,7 +2796,7 @@ function PPHeader({ title, subtitle, quarter, fy }) {
 function PPDisclaimer() {
   return (
     <div className="pp-disc">
-      <strong>⚠️ Important Disclaimer:</strong> This document is a <strong>management summary only</strong> generated by TaxMate for planning and review purposes. It does <strong>not</strong> constitute a formal BAS lodgment, tax return, or any other document lodged with the ATO. All figures are estimates based on data entered into TaxMate and have not been independently verified. This summary should be reviewed by a <strong>registered tax agent or accountant</strong> before any lodgment or financial decision is made. TaxMate accepts no liability for errors, omissions or decisions made based on this summary. For official lodgment obligations, visit <strong>ato.gov.au</strong> or contact your registered tax agent.
+      <strong>⚠️ Important Disclaimer:</strong> This document is a <strong>management summary only</strong> generated by Mise for planning and review purposes. It does <strong>not</strong> constitute a formal BAS lodgment, tax return, or any other document lodged with the ATO. All figures are estimates based on data entered into Mise and have not been independently verified. This summary should be reviewed by a <strong>registered tax agent or accountant</strong> before any lodgment or financial decision is made. Mise accepts no liability for errors, omissions or decisions made based on this summary. For official lodgment obligations, visit <strong>ato.gov.au</strong> or contact your registered tax agent.
     </div>
   );
 }
@@ -3364,7 +3666,7 @@ function ReportsPage({ revenue, expenses, timesheets, employees, insurance, docu
         <span className="al-ico">⚠️</span>
         <div>
           <div className="al-ttl">Management Reports Only</div>
-          <div className="al-msg">These reports are for planning and accountant review only. TaxMate does not lodge BAS or tax returns with the ATO. All figures must be verified by a registered tax agent before lodgment.</div>
+          <div className="al-msg">These reports are for planning and accountant review only. Mise does not lodge BAS or tax returns with the ATO. All figures must be verified by a registered tax agent before lodgment.</div>
         </div>
       </div>
 
@@ -3410,7 +3712,7 @@ function ReportsPage({ revenue, expenses, timesheets, employees, insurance, docu
 
       <div className="disc">
         <div className="d-ttl">⚖️ Report Disclaimer</div>
-        <div className="d-txt">All reports generated by TaxMate are <strong>management summaries only</strong> intended to assist restaurant owners and their accountants in preparing for BAS lodgment and annual tax returns. They do not constitute a lodged BAS, tax return, or any document formally submitted to the ATO. All figures are estimates based on data entered into TaxMate and have not been audited or independently verified. Always engage a <strong>registered tax agent</strong> before lodging. Visit <strong>ato.gov.au</strong> for official guidance and lodgment obligations.</div>
+        <div className="d-txt">All reports generated by Mise are <strong>management summaries only</strong> intended to assist restaurant owners and their accountants in preparing for BAS lodgment and annual tax returns. They do not constitute a lodged BAS, tax return, or any document formally submitted to the ATO. All figures are estimates based on data entered into Mise and have not been audited or independently verified. Always engage a <strong>registered tax agent</strong> before lodging. Visit <strong>ato.gov.au</strong> for official guidance and lodgment obligations.</div>
       </div>
     </>
   );
@@ -3419,6 +3721,7 @@ function ReportsPage({ revenue, expenses, timesheets, employees, insurance, docu
 // ════════════════════════════════════════════════════════════
 //  ROOT APP
 // ════════════════════════════════════════════════════════════
+
 export default function App() {
   const [screen,     setScreen]     = useState("landing");
   const [page,       setPage]       = useState("dashboard");
@@ -3447,18 +3750,18 @@ export default function App() {
       <div className="layout">
         <Sidebar page={page} setPage={setPage} onLogout={() => setScreen("landing")} flagCount={flagCount}/>
         <main className="main">
-          {page === "dashboard" && <DashboardPage revenue={revenue} expenses={expenses} employees={employees} timesheets={timesheets} insurance={insurance} setPage={setPage}/>}
-          {page === "revenue"   && <RevenuePage   revenue={revenue}   setRevenue={setRevenue}     showToast={showToast}/>}
-          {page === "expenses"  && <ExpensesPage  expenses={expenses} setExpenses={setExpenses}   showToast={showToast}/>}
-          {page === "wages"     && <WagesPage     employees={employees} setEmployees={setEmployees} timesheets={timesheets} setTimesheets={setTimesheets} leave={leave} setLeave={setLeave} showToast={showToast}/>}
-          {page === "insurance" && <InsurancePage insurance={insurance} setInsurance={setInsurance} employees={employees} timesheets={timesheets} showToast={showToast}/>}
-          {page === "tax"       && <TaxSummaryPage revenue={revenue} expenses={expenses} employees={employees} timesheets={timesheets}/>}
-          {page === "taxsaver"      && <TaxSaverPage  expenses={expenses} setExpenses={setExpenses} employees={employees} timesheets={timesheets} setTimesheets={setTimesheets} showToast={showToast}/>}
-          {page === "documents"     && <DocumentsPage      documents={documents} setDocuments={setDocuments} employees={employees} showToast={showToast}/>}
-          {page === "bassummary"    && <BASSummaryPage     revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} showToast={showToast}/>}
-          {page === "accountantpack"&& <AccountantPackPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} showToast={showToast}/>}
-          {page === "reports"       && <ReportsPage        revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents}/>}
-          {page === "settings"      && <SettingsPage/>}
+          {page === "dashboard"      && <DashboardPage revenue={revenue} expenses={expenses} employees={employees} timesheets={timesheets} insurance={insurance} setPage={setPage}/>}
+          {page === "revenue"        && <RevenuePage   revenue={revenue}   setRevenue={setRevenue}   showToast={showToast}/>}
+          {page === "expenses"       && <ExpensesPage  expenses={expenses} setExpenses={setExpenses} showToast={showToast}/>}
+          {page === "wages"          && <WagesPage     employees={employees} setEmployees={setEmployees} timesheets={timesheets} setTimesheets={setTimesheets} leave={leave} setLeave={setLeave} showToast={showToast}/>}
+          {page === "insurance"      && <InsurancePage insurance={insurance} setInsurance={setInsurance} employees={employees} timesheets={timesheets} showToast={showToast}/>}
+          {page === "tax"            && <TaxSummaryPage revenue={revenue} expenses={expenses} employees={employees} timesheets={timesheets}/>}
+          {page === "taxsaver"       && <TaxSaverPage  expenses={expenses} setExpenses={setExpenses} employees={employees} timesheets={timesheets} setTimesheets={setTimesheets} showToast={showToast}/>}
+          {page === "documents"      && <DocumentsPage documents={documents} setDocuments={setDocuments} employees={employees} showToast={showToast}/>}
+          {page === "bassummary"     && <BASSummaryPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} showToast={showToast}/>}
+          {page === "accountantpack" && <AccountantPackPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} showToast={showToast}/>}
+          {page === "reports"        && <ReportsPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents}/>}
+          {page === "settings"       && <SettingsPage/>}
         </main>
         {toast && <Toast msg={toast} onDone={() => setToast(null)}/>}
       </div>

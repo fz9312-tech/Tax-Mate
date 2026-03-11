@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import React from "react";
 
 // ════════════════════════════════════════════════════════════
@@ -36,17 +36,85 @@ const ENTERTAINMENT_KW = [
   "bar","party","event","celebration","function","coffee","breakfast",
 ];
 const DEDUCTION_MAP = {
-  packaging:   { kw: ["packaging","box","bag","container","wrap"],                              label: "Packaging" },
-  cleaning:    { kw: ["clean","sanitise","sanitize","mop","detergent","hygiene"],               label: "Cleaning & Hygiene" },
-  software:    { kw: ["xero","myob","software","app","subscription","saas"],                    label: "Software & Subscriptions" },
-  advertising: { kw: ["ads","advertising","marketing","facebook","google","instagram","flyer"], label: "Advertising" },
-  accounting:  { kw: ["accountant","bookkeeper","tax agent","bas agent"],                       label: "Accounting & Professional Fees" },
+  // ── Universal ─────────────────────────────────────────────
+  packaging:         { kw: ["packaging","box","bag","container","wrap"],                                    label: "Packaging" },
+  cleaning:          { kw: ["clean","sanitise","sanitize","mop","detergent","hygiene","pest"],              label: "Cleaning & Hygiene" },
+  software:          { kw: ["xero","myob","software","app","subscription","saas","pos"],                    label: "Software & Subscriptions" },
+  advertising:       { kw: ["ads","advertising","marketing","facebook","google","instagram","flyer"],       label: "Advertising" },
+  accounting:        { kw: ["accountant","bookkeeper","tax agent","bas agent"],                             label: "Accounting & Professional Fees" },
+  staff_uniforms:    { kw: ["uniform","apron","workwear","shoes","hat","cap"],                              label: "Staff Uniforms" },
+  repairs:           { kw: ["repair","maintenance","fix","service","plumber","electrician"],                label: "Repairs & Maintenance" },
+  // ── Bar / Pub / Venue ─────────────────────────────────────
+  liquor_license:    { kw: ["liquor licence","liquor license","liquor levy","dine&discover","gaming levy"], label: "Liquor License & Levies" },
+  spirit_stock:      { kw: ["spirits","whisky","whiskey","vodka","gin","rum","tequila","brandy","liqueur"], label: "Spirit Stock" },
+  beer_wine_stock:   { kw: ["beer","wine","cider","keg","tap","cellar","bottle","champagne","prosecco"],    label: "Beer & Wine Stock" },
+  glassware:         { kw: ["glass","glassware","stemware","pint","rocks glass","flute","tumbler"],         label: "Glassware" },
+  bar_equipment:     { kw: ["shaker","jigger","bar tool","ice machine","bar fridge","tap system"],         label: "Bar Equipment" },
+  rsa_training:      { kw: ["rsa","responsible service","liquor training","rwb"],                          label: "RSA Training" },
+  // ── Café / Coffee ─────────────────────────────────────────
+  coffee_supplies:   { kw: ["coffee bean","coffee beans","espresso","milk","oat milk","almond milk","soy milk","filter","portafilter","tamper","grinder"], label: "Coffee Supplies" },
+  machine_maintenance:{ kw: ["coffee machine","machine service","descale","group head","espresso machine"], label: "Machine Maintenance" },
+  eco_packaging:     { kw: ["eco","biodegradable","compostable","reusable","keep cup","eco cup","paper cup","takeaway cup"], label: "Eco-Packaging" },
+  bakery_supplies:   { kw: ["flour","sugar","butter","yeast","baking","pastry","bread","cake","muffin"],   label: "Bakery Supplies" },
+  // ── General Food & Hospitality ────────────────────────────
+  food_stock:        { kw: ["produce","meat","seafood","dairy","dry goods","grocery","food stock","pantry"], label: "Food & Produce" },
+  smallwares:        { kw: ["crockery","cutlery","plate","bowl","tray","ramekin","chopping board","knife"], label: "Smallwares & Crockery" },
+  linen:             { kw: ["linen","tablecloth","napkin","towel","cloth"],                                 label: "Linen & Napery" },
+  delivery_fees:     { kw: ["uber eats","doordash","menulog","deliveroo","delivery fee","platform fee"],    label: "Delivery Platform Fees" },
+  music_ent:         { kw: ["spotify","music license","apra","ppca","dj","band","entertainment"],           label: "Music & Entertainment" },
 };
 
-const EXP_CATEGORIES = [
-  "ingredients","rent","utilities","equipment",
-  "packaging","cleaning","software","advertising","accounting","other",
-];
+// Category display config — emoji + label + industry tag
+const CAT_CONFIG = {
+  // ── Universal ──────────────────────────────
+  ingredients:          { emoji:"🥩", label:"Ingredients",               industry:"all",  tags:["food","meat","produce","dairy","seafood","fresh"] },
+  food_stock:           { emoji:"🛒", label:"Food & Produce",            industry:"all",  tags:["grocery","pantry","dry goods","stock","tinned"] },
+  rent:                 { emoji:"🏠", label:"Rent",                      industry:"all",  tags:["lease","commercial","property","premises"] },
+  utilities:            { emoji:"⚡", label:"Utilities",                 industry:"all",  tags:["electricity","gas","water","power","agl","energy"] },
+  equipment:            { emoji:"🔧", label:"Equipment",                 industry:"all",  tags:["oven","fridge","pos","machine","tools","purchase"] },
+  packaging:            { emoji:"📦", label:"Packaging",                 industry:"all",  tags:["box","bag","container","wrap","takeaway"] },
+  eco_packaging:        { emoji:"♻️", label:"Eco-Packaging",             industry:"café", tags:["compostable","biodegradable","paper cup","reusable","keep cup"] },
+  cleaning:             { emoji:"🧹", label:"Cleaning & Hygiene",        industry:"all",  tags:["detergent","sanitiser","pest","hygiene","mop","clean"] },
+  software:             { emoji:"💻", label:"Software & Subscriptions",  industry:"all",  tags:["xero","myob","app","subscription","saas","pos","booking"] },
+  advertising:          { emoji:"📣", label:"Advertising",               industry:"all",  tags:["facebook","google","marketing","social","print","instagram"] },
+  accounting:           { emoji:"📋", label:"Accounting & Professional", industry:"all",  tags:["bookkeeper","tax agent","bas","accountant","legal"] },
+  staff_uniforms:       { emoji:"👕", label:"Staff Uniforms",            industry:"all",  tags:["apron","workwear","cap","branded","shirt","uniform"] },
+  repairs:              { emoji:"🔨", label:"Repairs & Maintenance",     industry:"all",  tags:["plumber","electrician","fix","service","maintenance"] },
+  delivery_fees:        { emoji:"🛵", label:"Delivery Platform Fees",    industry:"all",  tags:["uber eats","doordash","menulog","deliveroo","commission"] },
+  music_ent:            { emoji:"🎵", label:"Music & Entertainment",     industry:"all",  tags:["spotify","apra","ppca","dj","band","licence","music"] },
+  smallwares:           { emoji:"🍽️", label:"Smallwares & Crockery",    industry:"all",  tags:["plates","cutlery","bowl","tray","ramekin","knife"] },
+  linen:                { emoji:"🪣", label:"Linen & Napery",            industry:"all",  tags:["tablecloth","napkin","towel","cloth","linen"] },
+  // ── Bar / Pub ──────────────────────────────
+  liquor_license:       { emoji:"📜", label:"Liquor License & Levies",  industry:"bar",  tags:["liquor","licence","levy","gaming","permit","annual"] },
+  spirit_stock:         { emoji:"🥃", label:"Spirit Stock",             industry:"bar",  tags:["whisky","vodka","gin","rum","tequila","spirit","brandy"] },
+  beer_wine_stock:      { emoji:"🍺", label:"Beer & Wine Stock",        industry:"bar",  tags:["beer","wine","keg","cider","tap","cellar","bottle","champagne"] },
+  glassware:            { emoji:"🍷", label:"Glassware",                industry:"bar",  tags:["glass","pint","flute","tumbler","rocks","stemware"] },
+  bar_equipment:        { emoji:"🍸", label:"Bar Equipment",            industry:"bar",  tags:["shaker","jigger","ice machine","bar fridge","tap system"] },
+  rsa_training:         { emoji:"🪪", label:"RSA Training",             industry:"bar",  tags:["rsa","responsible service","alcohol training","liquor training"] },
+  // ── Café ───────────────────────────────────
+  coffee_supplies:      { emoji:"☕", label:"Coffee Supplies",          industry:"café", tags:["bean","milk","oat","almond","soy","filter","grind","espresso"] },
+  machine_maintenance:  { emoji:"⚙️", label:"Machine Maintenance",      industry:"café", tags:["espresso machine","descale","service","group head","coffee machine"] },
+  bakery_supplies:      { emoji:"🥐", label:"Bakery Supplies",          industry:"café", tags:["flour","sugar","butter","yeast","pastry","bread","cake","muffin"] },
+  // ── Catch-all ──────────────────────────────
+  other:                { emoji:"📎", label:"Other",                    industry:"all",  tags:["misc","other","general","sundry"] },
+};
+
+const COMMON_SUPPLIERS = {
+  ingredients:        ["Bidfood","PFD Food Services","Costco","Aldi","Local market"],
+  food_stock:         ["Bidfood","PFD Food Services","Costco","Aldi"],
+  coffee_supplies:    ["Campos","Seven Seeds","Toby's Estate","Di Bella","Allpress"],
+  spirit_stock:       ["ALM","Treasury Wine","Diageo","Pernod Ricard"],
+  beer_wine_stock:    ["Lion","CUB","Coopers","Dan Murphy's","ALM"],
+  utilities:          ["AGL","Origin Energy","EnergyAustralia","Sydney Water"],
+  advertising:        ["Meta Ads","Google Ads","Instagram","Local printer"],
+  accounting:         ["Local bookkeeper","Xero","MYOB","BAS Agent"],
+  software:           ["Xero","MYOB","Square","Lightspeed","Doshii"],
+  delivery_fees:      ["Uber Eats","DoorDash","Menulog","Deliveroo"],
+  music_ent:          ["APRA AMCOS","Spotify","PPCA"],
+  repairs:            ["Local tradesperson","Airtasker"],
+};
+
+const EXP_CATEGORIES = Object.keys(CAT_CONFIG);
 const INS_TYPES = [
   "Workers Compensation","Public Liability","Equipment & Property",
   "Business Interruption","Product Liability","Cyber Insurance","Other",
@@ -1104,7 +1172,7 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
 // ════════════════════════════════════════════════════════════
 //  EXPENSES PAGE
 // ════════════════════════════════════════════════════════════
-function ExpensesPage({ expenses, setExpenses, showToast }) {
+function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant" }) {
   const [f, setF] = useState({ date:todayStr, cat:"ingredients", amount:"", desc:"", gst:"yes", invoice:"yes" });
   const [search,    setSearch]    = useState("");
   const [filterCat, setFilterCat] = useState("all");
@@ -1112,18 +1180,75 @@ function ExpensesPage({ expenses, setExpenses, showToast }) {
   const [filterInv, setFilterInv] = useState("all");
   const [filterFrom,setFilterFrom]= useState("");
   const [filterTo,  setFilterTo]  = useState("");
-  const [tab,       setTab]       = useState("list"); // list | charts
+  const [tab,       setTab]       = useState("list");
   const [dismissed, setDismissed] = useState([]);
+
+  // ── Quick-entry search state ─────────────────────────────
+  const [catQuery,   setCatQuery]   = useState("");
+  const [showCatDrop,setShowCatDrop]= useState(false);
+  const [dropFocus,  setDropFocus]  = useState(0);
+  const [selCat,     setSelCat]     = useState(null);
+  const [supplier,   setSupplier]   = useState("");
+  const catSearchRef = useRef(null);
+
+  // ── Industry-aware category sorting ─────────────────────
+  const INDUSTRY_MAP = {
+    restaurant: ["ingredients","food_stock","packaging","cleaning","rent","utilities","equipment","repairs","staff_uniforms","delivery_fees","smallwares","linen","software","advertising","accounting","music_ent","other"],
+    café:       ["coffee_supplies","machine_maintenance","eco_packaging","bakery_supplies","food_stock","packaging","cleaning","rent","utilities","equipment","repairs","staff_uniforms","delivery_fees","smallwares","software","advertising","accounting","other"],
+    bar:        ["spirit_stock","beer_wine_stock","glassware","bar_equipment","liquor_license","rsa_training","cleaning","rent","utilities","equipment","repairs","staff_uniforms","music_ent","software","advertising","accounting","other"],
+    other:      EXP_CATEGORIES,
+  };
+  const sortedCats   = INDUSTRY_MAP[industry] || EXP_CATEGORIES;
+  // "pinned" = first N categories specific to this industry
+  const PINNED_COUNT = { restaurant:4, café:4, bar:6, other:0 }[industry] || 0;
+  const pinnedCats   = sortedCats.slice(0, PINNED_COUNT);
+
+  const catLabel = cat => {
+    const cfg = CAT_CONFIG[cat];
+    return cfg ? `${cfg.emoji} ${cfg.label}` : cat.charAt(0).toUpperCase()+cat.slice(1);
+  };
+
+  // ── Category search ──────────────────────────────────────
+  const catResults = catQuery.trim().length === 0 ? [] :
+    Object.entries(CAT_CONFIG).filter(([id, c]) => {
+      const q = catQuery.toLowerCase();
+      return c.label.toLowerCase().includes(q)
+        || id.includes(q)
+        || (c.tags || []).some(t => t.includes(q));
+    }).slice(0, 8);
+
+  const pickCat = id => {
+    setSelCat(id);
+    setF(p => ({...p, cat:id}));
+    setCatQuery("");
+    setShowCatDrop(false);
+    setDropFocus(0);
+    setSupplier("");
+  };
+
+  const catKeyDown = e => {
+    if (!showCatDrop || catResults.length === 0) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); setDropFocus(f => Math.min(f+1, catResults.length-1)); }
+    if (e.key === "ArrowUp")   { e.preventDefault(); setDropFocus(f => Math.max(f-1, 0)); }
+    if (e.key === "Enter")     { e.preventDefault(); pickCat(catResults[dropFocus][0]); }
+    if (e.key === "Escape")    { setShowCatDrop(false); setCatQuery(""); }
+  };
+
+  const catSuppliers = selCat ? (COMMON_SUPPLIERS[selCat] || []) : [];
+  const selCatCfg    = selCat ? CAT_CONFIG[selCat] : null;
 
   const add = () => {
     if (!f.amount || !f.desc) return;
     setExpenses(p => [...p, {
       id:Date.now(), date:f.date, cat:f.cat,
-      amount:parseFloat(f.amount)||0, desc:f.desc,
+      amount:parseFloat(f.amount)||0,
+      desc: f.desc + (supplier ? ` — ${supplier}` : ""),
       gst:f.gst==="yes", invoice:f.invoice==="yes"
     }]);
-    setF({ date:todayStr, cat:"ingredients", amount:"", desc:"", gst:"yes", invoice:"yes" });
+    setF({ date:todayStr, cat: sortedCats[0] || "ingredients", amount:"", desc:"", gst:"yes", invoice:"yes" });
+    setSelCat(null); setSupplier(""); setCatQuery("");
     showToast("Expense added!");
+    catSearchRef.current?.focus();
   };
 
   // ── Stats ────────────────────────────────────────────────
@@ -1172,7 +1297,7 @@ function ExpensesPage({ expenses, setExpenses, showToast }) {
 
   // ── Chart data ───────────────────────────────────────────
   const byCat = EXP_CATEGORIES.map(cat => ({
-    label: cat.charAt(0).toUpperCase()+cat.slice(1),
+    label: (CAT_CONFIG[cat]?.emoji ? CAT_CONFIG[cat].emoji + ' ' : '') + (CAT_CONFIG[cat]?.label || cat.charAt(0).toUpperCase()+cat.slice(1)),
     v: expenses.filter(e => e.cat === cat).reduce((s,e) => s+e.amount, 0)
   })).filter(d => d.v > 0).sort((a,b) => b.v - a.v);
 
@@ -1277,35 +1402,169 @@ function ExpensesPage({ expenses, setExpenses, showToast }) {
         ].map((c,i) => <div key={i} className="card"><div className="clbl">{c.lbl}</div><div className={`cval ${c.cls}`}>{c.val}</div></div>)}
       </div>
 
-      {/* ── Add form ── */}
+      {/* ── Industry mode banner ── */}
+      {industry !== "other" && (
+        <div style={{ background:"rgba(143,203,114,.08)", border:"1px solid rgba(143,203,114,.2)", borderRadius:10, padding:"10px 14px", marginBottom:14, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <div style={{ fontSize:12, color:C.muted }}>
+            <span style={{ fontWeight:700, color:C.accent }}>
+              {{ restaurant:"🍽️ Restaurant", café:"☕ Café", bar:"🍺 Bar / Pub" }[industry]} mode
+            </span>
+            {" — "}
+            {{ restaurant:"Food & kitchen categories pinned to top", café:"Coffee & bakery categories pinned to top", bar:"Liquor & bar categories pinned to top" }[industry]}
+          </div>
+          <span style={{ fontSize:10, color:C.dim }}>Change in Settings →</span>
+        </div>
+      )}
+
+      {/* ── Quick Entry Form ── */}
       <div className="fsec">
         <div className="ftit">Add Expense</div>
-        <div className="frow2">
-          <div className="fg"><label className="flbl">Date</label><input className="inp" type="date" value={f.date} onChange={e => setF({...f,date:e.target.value})}/></div>
-          <div className="fg"><label className="flbl">Category</label>
-            <select className="sel" value={f.cat} onChange={e => setF({...f,cat:e.target.value})}>
-              {EXP_CATEGORIES.map(c => <option key={c} value={c}>{c.charAt(0).toUpperCase()+c.slice(1)}</option>)}
-            </select>
+
+        {/* Category search */}
+        <div style={{ position:"relative", marginBottom: selCat ? 10 : 14 }}>
+          <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:C.muted, fontSize:14, pointerEvents:"none" }}>🔍</span>
+          <input
+            ref={catSearchRef}
+            className="inp"
+            style={{ paddingLeft:36, paddingRight: catQuery ? 36 : 14 }}
+            placeholder={`Search category… try "coffee", "keg", "uber eats", "rsa"…`}
+            value={catQuery}
+            onChange={e => { setCatQuery(e.target.value); setShowCatDrop(true); setDropFocus(0); }}
+            onFocus={() => setShowCatDrop(true)}
+            onBlur={() => setTimeout(() => setShowCatDrop(false), 150)}
+            onKeyDown={catKeyDown}
+            autoComplete="off"
+          />
+          {catQuery && (
+            <button onClick={() => { setCatQuery(""); setSelCat(null); setF(p=>({...p,cat:sortedCats[0]||"ingredients"})); }}
+              style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:15, padding:"2px 6px" }}>✕</button>
+          )}
+
+          {/* Dropdown */}
+          {showCatDrop && catResults.length > 0 && (
+            <div style={{ position:"absolute", top:"calc(100% + 4px)", left:0, right:0, background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, zIndex:50, overflow:"hidden", boxShadow:"0 8px 24px rgba(0,0,0,.5)" }}>
+              {catResults.map(([id, c], i) => (
+                <div key={id}
+                  onMouseDown={() => pickCat(id)}
+                  style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px", cursor:"pointer", borderBottom:`1px solid ${C.border}`, background: i===dropFocus ? C.surfaceAlt : selCat===id ? "rgba(143,203,114,.08)" : "transparent", transition:"background .1s" }}>
+                  <span style={{ fontSize:18, width:24, textAlign:"center" }}>{c.emoji}</span>
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontSize:13, fontWeight:600 }}>{c.label}</div>
+                    <div style={{ fontSize:10.5, color:C.dim, marginTop:1 }}>{(c.tags||[]).slice(0,4).join(" · ")}</div>
+                  </div>
+                  {pinnedCats.includes(id) && <span style={{ fontSize:9.5, fontWeight:700, padding:"2px 7px", borderRadius:10, background:"rgba(143,203,114,.15)", color:C.accent }}>★ Top</span>}
+                </div>
+              ))}
+            </div>
+          )}
+          {showCatDrop && catQuery.trim().length > 1 && catResults.length === 0 && (
+            <div style={{ position:"absolute", top:"calc(100% + 4px)", left:0, right:0, background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, zIndex:50, padding:"16px", textAlign:"center", color:C.dim, fontSize:13 }}>
+              No category found — try different keywords
+            </div>
+          )}
+        </div>
+
+        {/* Quick-pick pins */}
+        {!selCat && pinnedCats.length > 0 && (
+          <div style={{ marginBottom:14 }}>
+            <div style={{ fontSize:10, color:C.dim, textTransform:"uppercase", letterSpacing:".6px", marginBottom:7 }}>★ Quick picks for {{ restaurant:"Restaurant", café:"Café", bar:"Bar" }[industry]}</div>
+            <div style={{ display:"flex", gap:7, flexWrap:"wrap" }}>
+              {pinnedCats.map(id => {
+                const c = CAT_CONFIG[id]; if (!c) return null;
+                return (
+                  <button key={id} onClick={() => pickCat(id)}
+                    style={{ border:`1.5px solid ${C.border}`, background:C.surfaceAlt, color:C.text, borderRadius:8, padding:"7px 12px", fontSize:12, fontFamily:"inherit", cursor:"pointer", display:"flex", alignItems:"center", gap:5, transition:"all .15s" }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor=C.accent; e.currentTarget.style.color=C.accent; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor=C.border; e.currentTarget.style.color=C.text; }}>
+                    {c.emoji} {c.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          <div className="fg"><label className="flbl">Amount ($)</label><input className="inp" type="number" placeholder="0.00" value={f.amount} onChange={e => setF({...f,amount:e.target.value})}/></div>
-          <div className="fg"><label className="flbl">Description</label><input className="inp" placeholder="Brief description..." value={f.desc} onChange={e => setF({...f,desc:e.target.value})} onKeyDown={e => e.key==="Enter" && add()}/></div>
+        )}
+
+        {/* Selected category badge */}
+        {selCat && selCatCfg && (
+          <div style={{ display:"flex", alignItems:"center", gap:10, background:"rgba(143,203,114,.08)", border:"1px solid rgba(143,203,114,.25)", borderRadius:10, padding:"10px 14px", marginBottom:12 }}>
+            <span style={{ fontSize:20 }}>{selCatCfg.emoji}</span>
+            <div style={{ flex:1 }}>
+              <div style={{ fontWeight:700, fontSize:13, color:C.accent }}>{selCatCfg.label}</div>
+              <div style={{ fontSize:11, color:C.dim, marginTop:1 }}>{(selCatCfg.tags||[]).slice(0,4).join(" · ")}</div>
+            </div>
+            <button onClick={() => { setSelCat(null); setF(p=>({...p,cat:sortedCats[0]||"ingredients"})); setSupplier(""); }}
+              style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:12 }}>change ✕</button>
+          </div>
+        )}
+
+        {/* Supplier chips */}
+        {selCat && catSuppliers.length > 0 && (
+          <div style={{ marginBottom:12 }}>
+            <div style={{ fontSize:10.5, color:C.dim, marginBottom:5 }}>Common suppliers — tap to fill:</div>
+            <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+              {catSuppliers.map(s => (
+                <button key={s} onClick={() => setSupplier(s)}
+                  style={{ background: supplier===s ? "rgba(143,203,114,.12)" : C.surfaceAlt, border:`1px solid ${supplier===s ? C.accent : C.border}`, color: supplier===s ? C.accent : C.muted, borderRadius:6, padding:"3px 9px", fontSize:11.5, fontFamily:"inherit", cursor:"pointer", transition:"all .12s" }}>
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Fields — only show once category is selected */}
+        <div className="frow2">
+          <div className="fg"><label className="flbl">Amount ($)</label>
+            <input className="inp" type="number" placeholder="0.00" value={f.amount} onChange={e => setF({...f,amount:e.target.value})}/>
+          </div>
+          <div className="fg"><label className="flbl">Date</label>
+            <input className="inp" type="date" value={f.date} onChange={e => setF({...f,date:e.target.value})}/>
+          </div>
+          <div className="fg" style={{ gridColumn:"1/-1" }}><label className="flbl">Description</label>
+            <input className="inp" placeholder="Brief description…" value={f.desc} onChange={e => setF({...f,desc:e.target.value})} onKeyDown={e => e.key==="Enter" && add()}/>
+            {supplier && <span className="fhint">Supplier: {supplier}</span>}
+          </div>
           <div className="fg"><label className="flbl">GST Applicable?</label>
             <select className="sel" value={f.gst} onChange={e => setF({...f,gst:e.target.value})}>
               <option value="yes">Yes — includes GST</option>
               <option value="no">No — GST-free</option>
             </select>
+            {selCat === "liquor_license" && <span className="fhint" style={{color:C.yellow}}>⚠️ Liquor licence has no GST</span>}
+            {selCat === "ingredients"    && <span className="fhint" style={{color:C.yellow}}>⚠️ Fresh food may be GST-free</span>}
           </div>
           <div className="fg"><label className="flbl">Tax Invoice on File?</label>
             <select className="sel" value={f.invoice} onChange={e => setF({...f,invoice:e.target.value})}>
               <option value="yes">Yes — received</option>
               <option value="no">No — not yet</option>
             </select>
-            {f.gst==="yes" && f.amount && <span className="fhint">GST credit: {money((parseFloat(f.amount)||0)/11)}</span>}
+            {f.invoice==="no" && parseFloat(f.amount)>=82.5 && <span className="fhint" style={{color:C.red}}>⚠️ Over $82.50 — ATO requires invoice!</span>}
           </div>
         </div>
+
+        {/* GST live preview */}
+        {parseFloat(f.amount) > 0 && f.gst === "yes" && (
+          <div style={{ background:"rgba(61,201,160,.06)", border:"1px solid rgba(61,201,160,.2)", borderRadius:10, padding:"11px 15px", margin:"12px 0", display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10 }}>
+            <div style={{ display:"flex", gap:20, flexWrap:"wrap" }}>
+              {[
+                { lbl:"Total (incl. GST)",  val:money(parseFloat(f.amount)||0) },
+                { lbl:"GST component",       val:money((parseFloat(f.amount)||0)/11) },
+                { lbl:"Net (ex-GST)",        val:money((parseFloat(f.amount)||0)/11*10) },
+              ].map((s,i) => (
+                <div key={i}>
+                  <div style={{ fontSize:10, color:C.dim, textTransform:"uppercase", letterSpacing:".5px" }}>{s.lbl}</div>
+                  <div style={{ fontFamily:"'DM Mono',monospace", fontSize:15, fontWeight:600, color:C.teal, marginTop:2 }}>{s.val}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize:11, color: f.invoice==="yes" ? C.teal : C.yellow }}>
+              {f.invoice==="yes" ? "✅ Claimable on BAS" : "⚠️ Get invoice to claim"}
+            </div>
+          </div>
+        )}
+
         <div className="fbtns">
-          <button className="btn" onClick={add}>Add Expense</button>
-          <button className="btn-g" onClick={() => setF({date:todayStr,cat:"ingredients",amount:"",desc:"",gst:"yes",invoice:"yes"})}>Clear</button>
+          <button className="btn" onClick={add}>+ Add Expense</button>
+          <button className="btn-g" onClick={() => { setF({date:todayStr,cat:sortedCats[0]||"ingredients",amount:"",desc:"",gst:"yes",invoice:"yes"}); setSelCat(null); setSupplier(""); setCatQuery(""); }}>Clear</button>
         </div>
       </div>
 
@@ -1326,9 +1585,16 @@ function ExpensesPage({ expenses, setExpenses, showToast }) {
           {/* Search + Filters */}
           <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14, alignItems:"center" }}>
             <input className="inp" style={{ flex:"1 1 180px", minWidth:160 }} placeholder="🔍 Search description or category…" value={search} onChange={e => setSearch(e.target.value)}/>
-            <select className="sel" style={{ flex:"0 0 140px" }} value={filterCat} onChange={e => setFilterCat(e.target.value)}>
+            <select className="sel" style={{ flex:"0 0 170px" }} value={filterCat} onChange={e => setFilterCat(e.target.value)}>
               <option value="all">All Categories</option>
-              {EXP_CATEGORIES.map(c => <option key={c} value={c}>{c.charAt(0).toUpperCase()+c.slice(1)}</option>)}
+              {pinnedCats.length > 0 && (
+                <optgroup label={`── ${{ restaurant:"Restaurant", café:"Café", bar:"Bar" }[industry]} Essentials ──`}>
+                  {pinnedCats.map(c => <option key={c} value={c}>{catLabel(c)} ★</option>)}
+                </optgroup>
+              )}
+              <optgroup label="── All ──">
+                {sortedCats.slice(PINNED_COUNT).map(c => <option key={c} value={c}>{catLabel(c)}</option>)}
+              </optgroup>
             </select>
             <select className="sel" style={{ flex:"0 0 120px" }} value={filterGst} onChange={e => setFilterGst(e.target.value)}>
               <option value="all">Any GST</option>
@@ -3089,23 +3355,42 @@ function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimeshe
           <div className="bc">
             <div className="bctit">📚 Common Business Deduction Categories</div>
             <table className="tbl">
-              <thead><tr><th>Category</th><th>Examples</th><th>GST Claimable?</th><th>Notes</th></tr></thead>
+              <thead><tr><th>Category</th><th>Examples</th><th>GST Claimable?</th><th>Industry</th><th>Notes</th></tr></thead>
               <tbody>
                 {[
-                  { cat:"🥩 Ingredients", ex:"Produce, meat, dairy",   gst:"Usually yes", note:"Fresh unprocessed food may be GST-free" },
-                  { cat:"📦 Packaging",   ex:"Containers, bags, wrap",  gst:"Yes",         note:"Cost of sale — fully deductible" },
-                  { cat:"🧹 Cleaning",    ex:"Detergents, pest control",gst:"Yes",         note:"Essential operational expense" },
-                  { cat:"🏠 Rent",        ex:"Commercial lease",        gst:"Yes",         note:"Commercial rent includes GST" },
-                  { cat:"⚡ Utilities",   ex:"Electricity, gas, water", gst:"Yes",         note:"Keep quarterly bills as invoices" },
-                  { cat:"🔧 Equipment",   ex:"Fridges, ovens, POS",     gst:"Yes",         note:"Instant asset write-off may apply" },
-                  { cat:"💻 Software",    ex:"Xero, MYOB, booking apps",gst:"Yes",         note:"Fully deductible subscription" },
-                  { cat:"📣 Advertising", ex:"Facebook, Google, print", gst:"Yes",         note:"All marketing costs deductible" },
-                  { cat:"🧮 Accounting",  ex:"BAS agent, bookkeeper",   gst:"Yes",         note:"Professional fees fully deductible" },
+                  // ── Universal ──
+                  { cat:"🥩 Ingredients / Food",   ex:"Produce, meat, dairy, dry goods",       gst:"Usually yes", ind:"All",   note:"Fresh unprocessed food may be GST-free" },
+                  { cat:"📦 Packaging",             ex:"Containers, bags, wrap",                gst:"Yes",         ind:"All",   note:"Cost of sale — fully deductible" },
+                  { cat:"♻️ Eco-Packaging",         ex:"Compostable cups, biodegradable wrap",  gst:"Yes",         ind:"Café",  note:"Same treatment as standard packaging" },
+                  { cat:"🧹 Cleaning & Hygiene",    ex:"Detergents, sanitiser, pest control",   gst:"Yes",         ind:"All",   note:"Essential operational expense" },
+                  { cat:"🏠 Rent",                  ex:"Commercial lease payments",             gst:"Yes",         ind:"All",   note:"Commercial rent includes GST" },
+                  { cat:"⚡ Utilities",             ex:"Electricity, gas, water",               gst:"Yes",         ind:"All",   note:"Keep quarterly bills as invoices" },
+                  { cat:"🔧 Equipment",             ex:"Fridges, ovens, POS systems",           gst:"Yes",         ind:"All",   note:"Instant asset write-off may apply" },
+                  { cat:"🔨 Repairs & Maintenance", ex:"Plumber, electrician, general repairs", gst:"Yes",         ind:"All",   note:"Ongoing maintenance fully deductible" },
+                  { cat:"💻 Software & POS",        ex:"Xero, MYOB, booking & POS apps",       gst:"Yes",         ind:"All",   note:"Fully deductible subscription" },
+                  { cat:"📣 Advertising",           ex:"Facebook, Google, print, signage",      gst:"Yes",         ind:"All",   note:"All marketing costs deductible" },
+                  { cat:"📋 Accounting",            ex:"BAS agent, bookkeeper, tax agent",      gst:"Yes",         ind:"All",   note:"Professional fees fully deductible" },
+                  { cat:"👕 Staff Uniforms",        ex:"Aprons, caps, branded workwear",        gst:"Yes",         ind:"All",   note:"Must be distinctive/compulsory to claim" },
+                  { cat:"🛵 Delivery Platform Fees",ex:"Uber Eats, DoorDash, Menulog fees",     gst:"Yes",         ind:"All",   note:"Commission fees are a deductible expense" },
+                  { cat:"🎵 Music & Entertainment", ex:"Spotify, APRA/PPCA licence, DJ",        gst:"Yes",         ind:"All",   note:"APRA/PPCA licence required to play music" },
+                  { cat:"🍽️ Smallwares & Crockery", ex:"Plates, cutlery, trays, ramekins",      gst:"Yes",         ind:"All",   note:"Replace regularly — keep receipts" },
+                  // ── Bar / Pub ──
+                  { cat:"📜 Liquor License",        ex:"Liquor licence fee, annual levy",       gst:"No",          ind:"Bar",   note:"Government fees — no GST, still deductible" },
+                  { cat:"🥃 Spirit Stock",          ex:"Whisky, vodka, gin, rum, liqueurs",     gst:"Yes",         ind:"Bar",   note:"Stock on hand is not deductible until sold" },
+                  { cat:"🍺 Beer & Wine Stock",     ex:"Kegs, bottled beer, wine, cider",       gst:"Yes",         ind:"Bar",   note:"Stock on hand is not deductible until sold" },
+                  { cat:"🍷 Glassware",             ex:"Pint glasses, wine glasses, tumblers",  gst:"Yes",         ind:"Bar",   note:"Replace regularly — keep receipts" },
+                  { cat:"🸹 Bar Equipment",         ex:"Ice machine, shakers, bar fridges",     gst:"Yes",         ind:"Bar",   note:"Instant asset write-off may apply" },
+                  { cat:"🪪 RSA Training",          ex:"Responsible service of alcohol course", gst:"Yes",         ind:"Bar",   note:"Staff training — fully deductible" },
+                  // ── Café ──
+                  { cat:"☕ Coffee Supplies",       ex:"Beans, milk, oat milk, filters",        gst:"Yes",         ind:"Café",  note:"Milk may vary — check GST-free rules" },
+                  { cat:"⚙️ Machine Maintenance",  ex:"Espresso machine service, descaling",   gst:"Yes",         ind:"Café",  note:"Keep service records as invoices" },
+                  { cat:"🥐 Bakery Supplies",       ex:"Flour, sugar, butter, pastry items",    gst:"Usually yes", ind:"Café",  note:"Unprocessed food ingredients may be GST-free" },
                 ].map((r,i) => (
                   <tr key={i}>
                     <td style={{ fontWeight:600 }}>{r.cat}</td>
                     <td style={{ color:C.muted, fontSize:11.5 }}>{r.ex}</td>
-                    <td><span className={`pill ${r.gst==="Yes"?"pl-g":"pl-y"}`}>{r.gst}</span></td>
+                    <td><span className={`pill ${r.gst==="Yes"?"pl-g":r.gst==="No"?"pl-r":"pl-y"}`}>{r.gst}</span></td>
+                    <td><span style={{ fontSize:10, padding:"2px 7px", borderRadius:10, background:r.ind==="Bar"?"rgba(91,159,212,.12)":r.ind==="Café"?"rgba(212,168,67,.12)":"rgba(143,203,114,.1)", color:r.ind==="Bar"?C.blue:r.ind==="Café"?C.yellow:C.green, fontWeight:600 }}>{r.ind}</span></td>
                     <td style={{ color:C.muted, fontSize:11.5 }}>{r.note}</td>
                   </tr>
                 ))}
@@ -3227,12 +3512,73 @@ function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimeshe
 // ════════════════════════════════════════════════════════════
 //  SETTINGS
 // ════════════════════════════════════════════════════════════
-function SettingsPage() {
+function SettingsPage({ industry, setIndustry, showToast }) {
   const [saved, setSaved] = useState(false);
+
+  const INDUSTRIES = [
+    { id:"restaurant", emoji:"🍽️", label:"Restaurant",   desc:"Full-service dining, takeaway" },
+    { id:"café",       emoji:"☕", label:"Café",          desc:"Coffee shop, bakery, brunch" },
+    { id:"bar",        emoji:"🍺", label:"Bar / Pub",     desc:"Licensed venue, cocktail bar" },
+    { id:"other",      emoji:"🏪", label:"Other Business",desc:"Retail, beauty, services" },
+  ];
+
   return (
     <>
       <div className="hdr">
         <div className="hdr-left"><div className="ptitle">Settings</div><div className="psub">Manage your business and account</div></div>
+      </div>
+
+      {/* ── Industry Selector ── */}
+      <div className="fsec">
+        <div className="ftit">Business Type</div>
+        <div style={{ fontSize:12.5, color:C.muted, marginBottom:14, lineHeight:1.6 }}>
+          Tell Mise what kind of business you run. Your expense categories, Audit Ready tips and deduction guides will automatically adjust to match your industry.
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
+          {INDUSTRIES.map(ind => {
+            const active = industry === ind.id;
+            return (
+              <button key={ind.id} onClick={() => { setIndustry(ind.id); showToast(`Switched to ${ind.label} mode ✅`); }}
+                style={{
+                  background: active ? "rgba(143,203,114,.12)" : C.surface,
+                  border: `2px solid ${active ? C.accent : C.border}`,
+                  borderRadius: 12, padding:"16px 12px", cursor:"pointer",
+                  fontFamily:"inherit", textAlign:"center", transition:"all .2s",
+                  transform: active ? "scale(1.02)" : "scale(1)",
+                }}>
+                <div style={{ fontSize:28, marginBottom:8 }}>{ind.emoji}</div>
+                <div style={{ fontWeight:700, fontSize:13, color: active ? C.accent : C.text, marginBottom:4 }}>{ind.label}</div>
+                <div style={{ fontSize:10.5, color:C.muted, lineHeight:1.4 }}>{ind.desc}</div>
+                {active && <div style={{ marginTop:8, fontSize:10, fontWeight:700, color:C.accent }}>✓ ACTIVE</div>}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* What changes panel */}
+        <div style={{ marginTop:14, background:C.surfaceAlt, borderRadius:10, padding:"13px 15px", fontSize:12, color:C.muted, lineHeight:1.8 }}>
+          <div style={{ fontWeight:700, color:C.text, marginBottom:6 }}>
+            {INDUSTRIES.find(i=>i.id===industry)?.emoji} Currently set to: <span style={{color:C.accent}}>{INDUSTRIES.find(i=>i.id===industry)?.label}</span>
+          </div>
+          {industry === "restaurant" && <>
+            <div>✅ Expense categories show <strong style={{color:C.text}}>Ingredients, Packaging, Cleaning</strong> first</div>
+            <div>✅ Audit Ready tips focus on <strong style={{color:C.text}}>food GST rules</strong> and cash revenue</div>
+          </>}
+          {industry === "café" && <>
+            <div>✅ Expense categories show <strong style={{color:C.text}}>Coffee Supplies, Machine Maintenance, Eco-Packaging</strong> first</div>
+            <div>✅ Bakery Supplies and takeaway packaging highlighted</div>
+            <div>✅ Audit Ready tips include <strong style={{color:C.text}}>GST-free fresh food rules</strong></div>
+          </>}
+          {industry === "bar" && <>
+            <div>✅ Expense categories show <strong style={{color:C.text}}>Spirit Stock, Beer & Wine, Glassware, Liquor License</strong> first</div>
+            <div>✅ RSA Training and bar equipment highlighted</div>
+            <div>✅ Audit Ready flags <strong style={{color:C.text}}>Liquor License (no GST)</strong> automatically</div>
+          </>}
+          {industry === "other" && <>
+            <div>✅ Standard expense categories shown</div>
+            <div>✅ All hospitality categories still available</div>
+          </>}
+        </div>
       </div>
 
       <div className="fsec">
@@ -3246,7 +3592,7 @@ function SettingsPage() {
           <div className="fg"><label className="flbl">State</label><select className="sel">{["NSW","VIC","QLD","WA","SA","TAS","ACT","NT"].map(s => <option key={s}>{s}</option>)}</select></div>
         </div>
         <div className="fbtns">
-          <button className="btn" onClick={() => setSaved(true)}>Save Changes</button>
+          <button className="btn" onClick={() => { setSaved(true); showToast("Settings saved!"); }}>Save Changes</button>
           {saved && <span style={{ color:C.green, fontSize:12, fontWeight:600 }}>✅ Saved!</span>}
         </div>
       </div>
@@ -3799,7 +4145,7 @@ function AccountantPackPage({ revenue, expenses, timesheets, employees, insuranc
           <tbody>
             {EXP_CATEGORIES.filter(c => d.bycat[c] > 0).map((c,i) => (
               <tr key={i}>
-                <td>{c.charAt(0).toUpperCase()+c.slice(1)}</td>
+                <td>{(CAT_CONFIG[c]?.emoji ? CAT_CONFIG[c].emoji + ' ' : '') + (CAT_CONFIG[c]?.label || c.charAt(0).toUpperCase()+c.slice(1))}</td>
                 <td style={{ textAlign:"right", fontFamily:"DM Mono,monospace" }}>{money(d.bycat[c])}</td>
                 <td style={{ textAlign:"right", color:"#6B7280" }}>{d.totalExp > 0 ? `${((d.bycat[c]/d.totalExp)*100).toFixed(1)}%` : "—"}</td>
               </tr>
@@ -3935,7 +4281,7 @@ function AccountantPackPage({ revenue, expenses, timesheets, employees, insuranc
               const pct = d.totalExp > 0 ? (v/d.totalExp)*100 : 0;
               return (
                 <tr key={i}>
-                  <td style={{ fontWeight:600 }}>{cat.charAt(0).toUpperCase()+cat.slice(1)}</td>
+                  <td style={{ fontWeight:600 }}>{(CAT_CONFIG[cat]?.emoji ? CAT_CONFIG[cat].emoji + ' ' : '') + (CAT_CONFIG[cat]?.label || cat.charAt(0).toUpperCase()+cat.slice(1))}</td>
                   <td style={{ fontWeight:700 }}>{money(v)}</td>
                   <td style={{ color:C.muted }}>{pct.toFixed(1)}%</td>
                   <td style={{ width:140 }}>
@@ -4249,6 +4595,7 @@ function ReportsPage({ revenue, expenses, timesheets, employees, insurance, docu
 export default function App() {
   const [screen,     setScreen]     = useState("landing");
   const [page,       setPage]       = useState("dashboard");
+  const [industry,   setIndustry]   = useState("restaurant"); // restaurant | café | bar | other
   const [revenue,    setRevenue]    = useState(SEED_REVENUE);
   const [expenses,   setExpenses]   = useState(SEED_EXPENSES);
   const [employees,  setEmployees]  = useState(SEED_EMPLOYEES);
@@ -4272,11 +4619,11 @@ export default function App() {
     <>
       <style>{CSS}</style>
       <div className="layout">
-        <Sidebar page={page} setPage={setPage} onLogout={() => setScreen("landing")} flagCount={flagCount}/>
+        <Sidebar page={page} setPage={setPage} onLogout={() => setScreen("landing")} flagCount={flagCount} industry={industry}/>
         <main className="main">
           {page === "dashboard"      && <DashboardPage revenue={revenue} expenses={expenses} employees={employees} timesheets={timesheets} insurance={insurance} setPage={setPage}/>}
           {page === "revenue"        && <RevenuePage   revenue={revenue}   setRevenue={setRevenue}   showToast={showToast}/>}
-          {page === "expenses"       && <ExpensesPage  expenses={expenses} setExpenses={setExpenses} showToast={showToast}/>}
+          {page === "expenses"       && <ExpensesPage  expenses={expenses} setExpenses={setExpenses} showToast={showToast} industry={industry}/>}
           {page === "wages"          && <WagesPage     employees={employees} setEmployees={setEmployees} timesheets={timesheets} setTimesheets={setTimesheets} leave={leave} setLeave={setLeave} showToast={showToast}/>}
           {page === "insurance"      && <InsurancePage insurance={insurance} setInsurance={setInsurance} employees={employees} timesheets={timesheets} showToast={showToast}/>}
           {page === "tax"            && <TaxSummaryPage revenue={revenue} expenses={expenses} employees={employees} timesheets={timesheets}/>}
@@ -4285,7 +4632,7 @@ export default function App() {
           {page === "bassummary"     && <BASSummaryPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} showToast={showToast}/>}
           {page === "accountantpack" && <AccountantPackPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} showToast={showToast}/>}
           {page === "reports"        && <ReportsPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents}/>}
-          {page === "settings"       && <SettingsPage/>}
+          {page === "settings"       && <SettingsPage industry={industry} setIndustry={setIndustry} showToast={showToast}/>}
         </main>
         {toast && <Toast msg={toast} onDone={() => setToast(null)}/>}
       </div>

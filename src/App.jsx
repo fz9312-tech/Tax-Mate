@@ -232,7 +232,7 @@ function calcLeaveTaken(emp, leaveRecords) {
   };
 }
 
-// Analyse expenses for Tax Saver
+// Analyse expenses for Audit Ready
 const analyseExpenses = expenses =>
   expenses.map(e => {
     const d   = e.desc.toLowerCase();
@@ -712,7 +712,7 @@ function LandingPage({ onGo }) {
           <div className="logo-box">M</div>
           <div>
             <div className="logo-name">Mise</div>
-            <div className="logo-sub">RESTAURANT FINANCE</div>
+            <div className="logo-sub">HOSPITALITY FINANCE</div>
           </div>
         </div>
         <div style={{ display:"flex", gap:9 }}>
@@ -722,29 +722,35 @@ function LandingPage({ onGo }) {
       </nav>
 
       <div className="hero">
-        <div className="h-badge">🇦🇺 Built for Australian Restaurant Owners</div>
-        <h1 className="h-ttl">Your restaurant's finances,<br/><span>everything in its place.</span></h1>
-        <p className="h-sub">Mise tracks GST, wages, super and expenses — then builds your BAS summary and accountant pack automatically. Stop chasing receipts. Start running your restaurant.</p>
+        <div className="h-badge">🇦🇺 Built for Australian Hospitality & Food Business</div>
+        <h1 className="h-ttl">Your business finances,<br/><span>everything in its place.</span></h1>
+        <p className="h-sub">Mise handles GST, wages, super, expenses and BAS — built specifically for how Australian hospitality businesses actually operate. Restaurants, cafés, bars, takeaways and food businesses.</p>
         <div className="h-btns">
           <button className="h-btn"   onClick={onGo}>Start for Free →</button>
           <button className="h-btn-g" onClick={onGo}>See How It Works</button>
         </div>
       </div>
 
-      <div style={{ textAlign:"center", padding:"8px 0 32px", color:C.muted, fontSize:12, letterSpacing:".5px" }}>
-        GST · BAS · PAYG · Super · Wages · Leave · Insurance · Documents
+      {/* Industry pills */}
+      <div style={{ textAlign:"center", padding:"4px 0 28px" }}>
+        <div style={{ display:"flex", gap:8, justifyContent:"center", flexWrap:"wrap", marginBottom:12 }}>
+          {["🍽️ Restaurants","☕ Cafés","🍺 Bars & Pubs","🥡 Takeaways","🍕 Food Trucks","✂️ Hair & Beauty","🏪 Retail"].map((l,i) => (
+            <span key={i} style={{ fontSize:11.5, padding:"4px 12px", borderRadius:20, background:C.surfaceAlt, border:`1px solid ${C.border}`, color:C.muted }}>{l}</span>
+          ))}
+        </div>
+        <div style={{ fontSize:11.5, color:C.dim, letterSpacing:".4px" }}>GST · BAS · PAYG · Super · Wages · Leave · Insurance · Documents</div>
       </div>
 
       <div className="feat-grid">
         {[
-          { ico:"💵", ttl:"Revenue Tracking",       dsc:"Log daily income in seconds. GST collected calculated automatically, every single entry." },
-          { ico:"🧾", ttl:"Expense Management",     dsc:"Categorise every expense, flag missing invoices, and never lose a GST credit again." },
-          { ico:"👥", ttl:"Staff & Wages",           dsc:"Full employee records with automatic casual loading, OT, weekend rates, and super." },
-          { ico:"🏖️", ttl:"Leave & Entitlements",   dsc:"Track annual leave, personal leave and day in lieu. Accruals calculated from timesheets." },
-          { ico:"🛡️", ttl:"Insurance Dashboard",    dsc:"Workers Comp, Public Liability, Equipment — tracked as a percentage of your payroll." },
-          { ico:"📦", ttl:"Accountant Pack",         dsc:"Generate a complete financial year summary and BAS support pack, ready to send your accountant." },
-          { ico:"📁", ttl:"Document Hub",            dsc:"Upload invoices, bank statements and BAS notices. Tag by quarter, supplier or employee." },
-          { ico:"🔍", ttl:"Tax Saver",               dsc:"Scans your expenses for missing invoices, entertainment flags, and super compliance issues." },
+          { ico:"💵", ttl:"Revenue Tracking",       dsc:"Log daily takings in seconds. GST collected calculated automatically — cash, card or online orders." },
+          { ico:"🧾", ttl:"Expense Management",     dsc:"Categorise every expense, flag missing invoices, and never lose a GST credit at BAS time." },
+          { ico:"👥", ttl:"Staff & Wages",           dsc:"Full employee records with automatic casual loading, OT, weekend rates, and super calculations." },
+          { ico:"⚡", ttl:"Day Workers",             dsc:"Quick-entry for casual staff who work one or two shifts. Pay, super and PAYG calculated instantly." },
+          { ico:"🛡️", ttl:"Insurance Dashboard",    dsc:"Workers Comp, Public Liability, Equipment — tracked against your payroll with renewal reminders." },
+          { ico:"📦", ttl:"Accountant Pack",         dsc:"Generate a complete financial year summary and BAS support pack, ready to hand to your accountant." },
+          { ico:"📁", ttl:"Document Hub",            dsc:"Upload invoices, bank statements and BAS notices. Tagged by quarter, supplier or employee." },
+          { ico:"✅", ttl:"Audit Ready",             dsc:"Scans your records for missing invoices, compliance gaps and super issues — so the ATO never catches you off guard." },
         ].map((f,i) => (
           <div key={i} className="feat-card">
             <div className="feat-ico">{f.ico}</div>
@@ -754,15 +760,40 @@ function LandingPage({ onGo }) {
         ))}
       </div>
 
+      {/* Why Mise over Xero section */}
+      <div style={{ padding:"48px 40px", maxWidth:900, margin:"0 auto" }}>
+        <div style={{ textAlign:"center", marginBottom:32 }}>
+          <div style={{ fontSize:10.5, fontWeight:700, color:C.accent, textTransform:"uppercase", letterSpacing:"1px", marginBottom:8 }}>Why Mise</div>
+          <div style={{ fontSize:26, fontWeight:700, letterSpacing:"-1px", fontFamily:"'Fraunces', serif" }}>Built for hospitality. Not accountants.</div>
+          <div style={{ fontSize:13.5, color:C.muted, marginTop:10, lineHeight:1.7 }}>Xero and MYOB are powerful — but they're built for accountants, not for the person standing behind a counter at 11pm.</div>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:14 }}>
+          {[
+            { ico:"⚡", ttl:"Up in 5 minutes", dsc:"No chart of accounts. No reconciliation setup. Just open it and start entering your takings." },
+            { ico:"🇦🇺", ttl:"Australian GST & BAS", dsc:"Every calculation is built around Australian tax law — GST, PAYG, Super, BAS quarters and ATO thresholds." },
+            { ico:"👷", ttl:"Casual staff made easy", dsc:"Casual loading, weekend rates, day workers, super for one-shift staff — all handled automatically." },
+            { ico:"📊", ttl:"Know your BAS before it arrives", dsc:"See your estimated BAS liability every week. No surprises when the quarter ends." },
+            { ico:"🔍", ttl:"ATO compliance built in", dsc:"Audit Ready scans your records for the exact issues ATO looks for — missing invoices, cash discrepancies, super gaps." },
+            { ico:"💰", ttl:"A fraction of the cost", dsc:"Mise starts free. Even our Pro plan is a fraction of what you'd pay a bookkeeper to do the same work." },
+          ].map((f,i) => (
+            <div key={i} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"16px 18px" }}>
+              <div style={{ fontSize:20, marginBottom:8 }}>{f.ico}</div>
+              <div style={{ fontWeight:700, fontSize:13, marginBottom:5 }}>{f.ttl}</div>
+              <div style={{ fontSize:12, color:C.muted, lineHeight:1.65 }}>{f.dsc}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
       <div className="price-sec">
         <div className="price-lbl">Simple Pricing</div>
         <div className="price-ttl">No surprises. Just like your BAS should be.</div>
         <div className="price-grid">
           {[
             { tier:"Starter", price:"$0",  per:"/month", hi:false,
-              feats:["Revenue & expense tracking","Up to 3 staff profiles","Basic BAS estimate","Monthly summaries"] },
+              feats:["Revenue & expense tracking","Up to 3 staff profiles","Basic BAS estimate","Monthly summaries","All business types"] },
             { tier:"Pro",     price:"$29", per:"/month", hi:true,
-              feats:["Everything in Starter","Unlimited staff profiles","Timesheets & labour costs","Insurance dashboard","Tax Saver alerts","Document Hub"] },
+              feats:["Everything in Starter","Unlimited staff profiles","Timesheets & labour costs","Day Worker quick entry","Insurance dashboard","Audit Ready alerts","Document Hub"] },
             { tier:"Studio",  price:"$79", per:"/month", hi:false,
               feats:["Everything in Pro","Annual Accountant Pack","BAS support summaries","Payroll STP pack","Priority support"] },
           ].map((p,i) => (
@@ -785,9 +816,9 @@ function LandingPage({ onGo }) {
         <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:9, marginBottom:10 }}>
           <div className="logo-box" style={{ width:28, height:28, fontSize:13 }}>M</div>
           <span style={{ fontWeight:700, fontSize:14, letterSpacing:"-.3px" }}>Mise</span>
-          <span style={{ color:C.dim, fontSize:12 }}>· Restaurant Finance</span>
+          <span style={{ color:C.dim, fontSize:12 }}>· Hospitality Finance</span>
         </div>
-        <p style={{ fontSize:11, color:C.dim }}>Built in Australia for Australian restaurant owners.</p>
+        <p style={{ fontSize:11, color:C.dim }}>Built in Australia for Australian hospitality and food businesses.</p>
         <p style={{ fontSize:10.5, color:C.dim, marginTop:6 }}>
           Mise is not a registered tax agent. Always consult a professional before lodging with the ATO.
         </p>
@@ -806,15 +837,15 @@ function AuthPage({ onLogin }) {
       <div className="auth-box">
         <div className="logo" style={{ marginBottom:20 }}>
           <div className="logo-box">M</div>
-          <div><div className="logo-name">Mise</div><div className="logo-sub">RESTAURANT FINANCE</div></div>
+          <div><div className="logo-name">Mise</div><div className="logo-sub">HOSPITALITY FINANCE</div></div>
         </div>
         <div className="a-ttl">{mode === "login" ? "Welcome back" : "Create account"}</div>
         <div className="a-sub">{mode === "login" ? "Log in to your dashboard" : "Start your free trial"}</div>
         <div className="a-form">
           {mode === "signup" && (
             <div className="fg">
-              <label className="flbl">Restaurant Name</label>
-              <input className="inp" placeholder="e.g. Golden Dragon Restaurant"/>
+              <label className="flbl">Business Name</label>
+              <input className="inp" placeholder="e.g. The Local Café"/>
             </div>
           )}
           <div className="fg"><label className="flbl">Email</label><input className="inp" type="email" defaultValue="demo@mise.com.au"/></div>
@@ -853,7 +884,7 @@ function Sidebar({ page, setPage, onLogout, flagCount }) {
     { id:"insurance", ico:"🛡️", lbl:"Insurance" },
     { sec:"Tax" },
     { id:"tax",       ico:"📋", lbl:"Tax Summary" },
-    { id:"taxsaver",  ico:"🔍", lbl:"Tax Saver", badge: flagCount > 0 ? `${flagCount} flags` : "PRO" },
+    { id:"taxsaver",  ico:"🔍", lbl:"Audit Ready", badge: flagCount > 0 ? `${flagCount} flags` : "PRO" },
     { sec:"Documents & Reports" },
     { id:"documents",     ico:"📁", lbl:"Document Hub" },
     { id:"bassummary",    ico:"📋", lbl:"BAS Summary" },
@@ -866,7 +897,7 @@ function Sidebar({ page, setPage, onLogout, flagCount }) {
     <div className="sidebar">
       <div className="logo">
         <div className="logo-box">M</div>
-        <div><div className="logo-name">Mise</div><div className="logo-sub">RESTAURANT FINANCE</div></div>
+        <div><div className="logo-name">Mise</div><div className="logo-sub">HOSPITALITY FINANCE</div></div>
       </div>
       {nav.map((n,i) => n.sec
         ? <div key={i} className="nav-sec">{n.sec}</div>
@@ -883,7 +914,7 @@ function Sidebar({ page, setPage, onLogout, flagCount }) {
       <div className="sidebar-footer">
         <div className="plan-box">
           <div className="plan-tier">Free Plan</div>
-          <div className="plan-desc">Upgrade for unlimited staff, insurance & Tax Saver</div>
+          <div className="plan-desc">Upgrade for unlimited staff, insurance & Audit Ready</div>
           <button className="plan-btn">Upgrade to Pro — $29/mo</button>
         </div>
         <div className="nav-item" style={{ marginTop:8 }} onClick={onLogout}>
@@ -920,7 +951,7 @@ function DashboardPage({ revenue, expenses, employees, timesheets, insurance, se
       <div className="hdr">
         <div className="hdr-left">
           <div className="ptitle">Dashboard</div>
-          <div className="psub">Golden Dragon Restaurant · {today.toLocaleString("default",{month:"long"})} {today.getFullYear()}</div>
+          <div className="psub">My Business · {today.toLocaleString("default",{month:"long"})} {today.getFullYear()}</div>
         </div>
         <div className="hdr-right">
           <div className="chip">📅 {quarter}</div>
@@ -988,7 +1019,7 @@ function DashboardPage({ revenue, expenses, employees, timesheets, insurance, se
         <div className="alert al-y" style={{ cursor:"pointer" }} onClick={() => setPage("taxsaver")}>
           <span className="al-ico">🔍</span>
           <div>
-            <div className="al-ttl">Tax Saver found {flags} issue{flags>1?"s":""} to review</div>
+            <div className="al-ttl">Audit Ready found {flags} issue{flags>1?"s":""} to review</div>
             <div className="al-msg">Missing invoices or unpaid super detected. Click to review →</div>
           </div>
         </div>
@@ -2426,17 +2457,17 @@ function InsurancePage({ insurance, setInsurance, employees, timesheets, showToa
     "Public Liability": {
       required: false,
       emoji: "🤝",
-      what: "Covers you if a customer, supplier or member of the public is injured at your restaurant or makes a claim against you.",
+      what: "Covers you if a customer, supplier or member of the public is injured at your premises or makes a claim against you.",
       whoNeeds: "Any business with customers on-site. Landlords often require it in your lease.",
-      typicalCost: "$500–$2,500/year for a small restaurant",
+      typicalCost: "$500–$2,500/year for a small hospitality business",
       gst: true,
-      tip: "Most restaurant leases require at least $10–$20 million in Public Liability cover. Check your lease agreement.",
+      tip: "Most commercial leases require at least $10–$20 million in Public Liability cover. Check your lease agreement.",
     },
     "Equipment & Property": {
       required: false,
       emoji: "🍳",
       what: "Covers your kitchen equipment, fit-out, furniture and stock if damaged by fire, flood, theft or accident.",
-      whoNeeds: "Any restaurant with significant equipment investment.",
+      whoNeeds: "Any business with significant equipment investment.",
       typicalCost: "$800–$3,000/year depending on equipment value",
       gst: true,
       tip: "Make sure your policy covers replacement cost, not just market value. Commercial kitchen equipment depreciates quickly.",
@@ -2445,7 +2476,7 @@ function InsurancePage({ insurance, setInsurance, employees, timesheets, showToa
       required: false,
       emoji: "🚪",
       what: "Covers lost income if you have to close temporarily due to fire, flood or other insured events.",
-      whoNeeds: "Restaurants heavily dependent on a single location.",
+      whoNeeds: "Businesses heavily dependent on a single location.",
       typicalCost: "$600–$2,500/year",
       gst: true,
       tip: "COVID-19 taught many businesses this lesson the hard way. Check exactly what events are covered.",
@@ -2463,10 +2494,10 @@ function InsurancePage({ insurance, setInsurance, employees, timesheets, showToa
       required: false,
       emoji: "💻",
       what: "Covers you if customer data is stolen, your POS system is hacked, or you suffer a ransomware attack.",
-      whoNeeds: "Restaurants storing customer data, using online ordering or loyalty apps.",
+      whoNeeds: "Businesses storing customer data, using online ordering or loyalty apps.",
       typicalCost: "$500–$1,500/year",
       gst: true,
-      tip: "Increasingly important as restaurants use more digital tools. OAIC requires you to notify customers of data breaches.",
+      tip: "Increasingly important as businesses use more digital tools. OAIC requires you to notify customers of data breaches.",
     },
     "Other": {
       required: false,
@@ -2494,8 +2525,8 @@ function InsurancePage({ insurance, setInsurance, employees, timesheets, showToa
   const benchStatus  = insPct === 0 ? "none" : insPct < 3 ? "low" : insPct <= 8 ? "good" : "high";
   const benchMsg = {
     none: { label:"No data", col:C.dim,    icon:"—",  msg:"Add your payroll data in Staff & Wages to see your benchmark." },
-    low:  { label:"Below average", col:C.yellow, icon:"⚠️", msg:`Your insurance is ${insPct.toFixed(1)}% of payroll, which is below the typical 3–8% range for restaurants. You may be underinsured.` },
-    good: { label:"Healthy range", col:C.green,  icon:"✅", msg:`Your insurance is ${insPct.toFixed(1)}% of payroll — within the healthy 3–8% range for Australian restaurants.` },
+    low:  { label:"Below average", col:C.yellow, icon:"⚠️", msg:`Your insurance is ${insPct.toFixed(1)}% of payroll, which is below the typical 3–8% range for Australian hospitality businesses. You may be underinsured.` },
+    good: { label:"Healthy range", col:C.green,  icon:"✅", msg:`Your insurance is ${insPct.toFixed(1)}% of payroll — within the healthy 3–8% range for Australian hospitality businesses.` },
     high: { label:"Above average", col:C.yellow, icon:"⚠️", msg:`Your insurance is ${insPct.toFixed(1)}% of payroll, above the typical 3–8%. Consider reviewing your policies with a broker.` },
   }[benchStatus];
 
@@ -2559,7 +2590,7 @@ function InsurancePage({ insurance, setInsurance, employees, timesheets, showToa
               <div style={{ fontSize:20 }}>🤝</div>
               <div>
                 <div style={{ fontWeight:700, fontSize:13, marginBottom:3 }}>Public Liability not recorded</div>
-                <div style={{ fontSize:12, color:C.muted, lineHeight:1.6 }}>Most restaurant leases require Public Liability insurance. It protects you if a customer is injured on your premises.</div>
+                <div style={{ fontSize:12, color:C.muted, lineHeight:1.6 }}>Most commercial leases require Public Liability insurance. It protects you if a customer is injured on your premises.</div>
               </div>
             </div>
           )}
@@ -2893,7 +2924,7 @@ function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimeshe
   return (
     <>
       <div className="hdr">
-        <div className="hdr-left"><div className="ptitle">🔍 Tax Saver</div><div className="psub">Maximise legal deductions · Reduce BAS mistakes · Stay compliant</div></div>
+        <div className="hdr-left"><div className="ptitle">✅ Audit Ready</div><div className="psub">Identify compliance risks · Catch missing invoices · Be audit ready</div></div>
         <div className="hdr-right">
           <div style={{ display:"flex", alignItems:"center", gap:6, background:"rgba(57,211,187,.12)", border:"1px solid rgba(57,211,187,.3)", borderRadius:20, padding:"5px 13px", fontSize:12, fontWeight:600, color:C.teal }}>
             Health: <span className="mono" style={{ fontWeight:700 }}>{score}/100</span>
@@ -2914,7 +2945,7 @@ function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimeshe
           <div className="ts-panel">
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:16, flexWrap:"wrap" }}>
               <div style={{ flex:1 }}>
-                <div style={{ fontSize:15, fontWeight:700, marginBottom:4 }}>Tax Saver Overview</div>
+                <div style={{ fontSize:15, fontWeight:700, marginBottom:4 }}>Audit Ready Overview</div>
                 <div style={{ fontSize:12, color:C.muted }}>Snapshot of your tax health. Click each tab for details.</div>
                 <div className="ts-sgrid">
                   {[
@@ -3056,7 +3087,7 @@ function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimeshe
           )}
 
           <div className="bc">
-            <div className="bctit">📚 Common Restaurant Deduction Categories</div>
+            <div className="bctit">📚 Common Business Deduction Categories</div>
             <table className="tbl">
               <thead><tr><th>Category</th><th>Examples</th><th>GST Claimable?</th><th>Notes</th></tr></thead>
               <tbody>
@@ -3064,7 +3095,7 @@ function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimeshe
                   { cat:"🥩 Ingredients", ex:"Produce, meat, dairy",   gst:"Usually yes", note:"Fresh unprocessed food may be GST-free" },
                   { cat:"📦 Packaging",   ex:"Containers, bags, wrap",  gst:"Yes",         note:"Cost of sale — fully deductible" },
                   { cat:"🧹 Cleaning",    ex:"Detergents, pest control",gst:"Yes",         note:"Essential operational expense" },
-                  { cat:"🏠 Rent",        ex:"Restaurant lease",        gst:"Yes",         note:"Commercial rent includes GST" },
+                  { cat:"🏠 Rent",        ex:"Commercial lease",        gst:"Yes",         note:"Commercial rent includes GST" },
                   { cat:"⚡ Utilities",   ex:"Electricity, gas, water", gst:"Yes",         note:"Keep quarterly bills as invoices" },
                   { cat:"🔧 Equipment",   ex:"Fridges, ovens, POS",     gst:"Yes",         note:"Instant asset write-off may apply" },
                   { cat:"💻 Software",    ex:"Xero, MYOB, booking apps",gst:"Yes",         note:"Fully deductible subscription" },
@@ -3187,7 +3218,7 @@ function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimeshe
 
       <div className="disc">
         <div className="d-ttl">⚖️ Disclaimer</div>
-        <div className="d-txt">Tax Saver provides <strong>educational guidance only</strong> based on general ATO rules. It does not constitute financial, taxation, or legal advice. Always confirm with a <strong>registered tax agent or accountant</strong> before lodging your BAS or tax return. Visit <strong>ato.gov.au</strong> for official guidance.</div>
+        <div className="d-txt">Audit Ready provides <strong>educational guidance only</strong> based on general ATO rules. It does not constitute financial, taxation, or legal advice. Always confirm with a <strong>registered tax agent or accountant</strong> before lodging your BAS or tax return. Visit <strong>ato.gov.au</strong> for official guidance.</div>
       </div>
     </>
   );
@@ -3201,13 +3232,13 @@ function SettingsPage() {
   return (
     <>
       <div className="hdr">
-        <div className="hdr-left"><div className="ptitle">Settings</div><div className="psub">Manage your restaurant and account</div></div>
+        <div className="hdr-left"><div className="ptitle">Settings</div><div className="psub">Manage your business and account</div></div>
       </div>
 
       <div className="fsec">
-        <div className="ftit">Restaurant Details</div>
+        <div className="ftit">Business Details</div>
         <div className="frow2">
-          <div className="fg"><label className="flbl">Restaurant Name</label><input className="inp" defaultValue="Golden Dragon Restaurant"/></div>
+          <div className="fg"><label className="flbl">Business Name</label><input className="inp" defaultValue="My Business"/></div>
           <div className="fg"><label className="flbl">ABN</label><input className="inp" placeholder="12 345 678 901"/></div>
           <div className="fg"><label className="flbl">GST Registration Date</label><input className="inp" type="date" defaultValue="2022-01-01"/></div>
           <div className="fg"><label className="flbl">BAS Frequency</label><select className="sel"><option>Quarterly</option><option>Monthly</option><option>Annually</option></select></div>
@@ -3225,7 +3256,7 @@ function SettingsPage() {
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
           <div>
             <div style={{ fontWeight:600 }}>Free Plan</div>
-            <div style={{ fontSize:12.5, color:C.muted, marginTop:3 }}>Upgrade for unlimited staff, insurance dashboard & Tax Saver</div>
+            <div style={{ fontSize:12.5, color:C.muted, marginTop:3 }}>Upgrade for unlimited staff, insurance dashboard & Audit Ready</div>
           </div>
           <button className="btn">Upgrade to Pro — $29/mo</button>
         </div>
@@ -3268,7 +3299,7 @@ function PPHeader({ title, subtitle, quarter, fy }) {
         <div className="pp-logo-box">M</div>
         <div>
           <div style={{ fontSize:15, fontWeight:700, letterSpacing:"-.3px" }}>Mise</div>
-          <div style={{ fontSize:10, color:"#6B7280" }}>RESTAURANT FINANCE</div>
+          <div style={{ fontSize:10, color:"#6B7280" }}>HOSPITALITY FINANCE</div>
         </div>
       </div>
       <div style={{ textAlign:"center", flex:1 }}>
@@ -3276,7 +3307,7 @@ function PPHeader({ title, subtitle, quarter, fy }) {
         <div className="pp-name">{title}</div>
       </div>
       <div className="pp-meta">
-        <div><strong>Golden Dragon Restaurant</strong></div>
+        <div><strong>My Business</strong></div>
         {quarter && <div>Period: {quarter}</div>}
         {fy      && <div>Financial Year: {fy}</div>}
         <div>Generated: {todayStr}</div>
@@ -4205,7 +4236,7 @@ function ReportsPage({ revenue, expenses, timesheets, employees, insurance, docu
 
       <div className="disc">
         <div className="d-ttl">⚖️ Report Disclaimer</div>
-        <div className="d-txt">All reports generated by Mise are <strong>management summaries only</strong> intended to assist restaurant owners and their accountants in preparing for BAS lodgment and annual tax returns. They do not constitute a lodged BAS, tax return, or any document formally submitted to the ATO. All figures are estimates based on data entered into Mise and have not been audited or independently verified. Always engage a <strong>registered tax agent</strong> before lodging. Visit <strong>ato.gov.au</strong> for official guidance and lodgment obligations.</div>
+        <div className="d-txt">All reports generated by Mise are <strong>management summaries only</strong> intended to assist business owners and their accountants in preparing for BAS lodgment and annual tax returns. They do not constitute a lodged BAS, tax return, or any document formally submitted to the ATO. All figures are estimates based on data entered into Mise and have not been audited or independently verified. Always engage a <strong>registered tax agent</strong> before lodging. Visit <strong>ato.gov.au</strong> for official guidance and lodgment obligations.</div>
       </div>
     </>
   );

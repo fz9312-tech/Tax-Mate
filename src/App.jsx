@@ -1714,7 +1714,7 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, leave, 
       </div>
 
       <div className="tabs">
-        {[["profiles","👤 Profiles"],["timesheets","🕐 Timesheets"],["summary","📊 Wage Summary"],["leave","🏖️ Leave & Lieu"]].map(([id,lbl]) => (
+        {[["profiles","👤 Profiles"],["timesheets","🕐 Timesheets"],["summary","📊 Wage Summary"],["leave","🏖️ Leave & Lieu"],["dayworkers","⚡ Day Workers"]].map(([id,lbl]) => (
           <div key={id} className={`tab${tab===id?" on-a":""}`} onClick={() => setTab(id)}>{lbl}</div>
         ))}
       </div>
@@ -2138,6 +2138,259 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, leave, 
           </div>
         </>
       )}
+
+      {/* ════ DAY WORKERS TAB ════ */}
+      {tab === "dayworkers" && (
+        <DayWorkersTab showToast={showToast}/>
+      )}
+    </>
+  );
+}
+
+// ── Day Workers standalone component ─────────────────────────
+function DayWorkersTab({ showToast }) {
+  const blankDW = { name:"", date:todayStr, hours:"", rate:"", isWeekend:false, notes:"" };
+  const [f,        setF]        = useState(blankDW);
+  const [workers,  setWorkers]  = useState([]);
+  const [showHelp, setShowHelp] = useState(false);
+
+  // ── Calculations ─────────────────────────────────────────
+  const calc = (hours, rate, isWeekend) => {
+    const h   = parseFloat(hours) || 0;
+    const r   = parseFloat(rate)  || 0;
+    const effR= isWeekend ? r * WKND_RATE : r * (1 + CASUAL_LOADING);
+    const gross = effR * h;
+    const super_ = gross * SUPER_RATE;
+    const payg  = gross * PAYG_RATE;
+    return { gross, super:super_, payg, effR };
+  };
+
+  const preview = calc(f.hours, f.rate, f.isWeekend);
+
+  const add = () => {
+    if (!f.name.trim() || !f.hours || !f.rate) return;
+    const c = calc(f.hours, f.rate, f.isWeekend);
+    setWorkers(p => [...p, {
+      id: Date.now(),
+      name: f.name.trim(),
+      date: f.date,
+      hours: parseFloat(f.hours),
+      rate: parseFloat(f.rate),
+      isWeekend: f.isWeekend,
+      notes: f.notes,
+      ...c,
+    }]);
+    setF({ ...blankDW, date: f.date }); // keep date for fast entry
+    showToast(`${f.name} added!`);
+  };
+
+  // ── Totals ───────────────────────────────────────────────
+  const totalGross = workers.reduce((s,w) => s + w.gross, 0);
+  const totalSuper = workers.reduce((s,w) => s + w.super, 0);
+  const totalPayg  = workers.reduce((s,w) => s + w.payg,  0);
+  const totalHours = workers.reduce((s,w) => s + w.hours, 0);
+
+  // ── CSV Export ───────────────────────────────────────────
+  const exportCSV = () => {
+    const rows = [
+      ["Name","Date","Hours","Base Rate","Weekend?","Effective Rate","Gross Pay","Super","PAYG","Notes"],
+      ...workers.map(w => [
+        `"${w.name}"`, w.date, w.hours, w.rate.toFixed(2),
+        w.isWeekend?"Yes":"No", w.effR.toFixed(2),
+        w.gross.toFixed(2), w.super.toFixed(2), w.payg.toFixed(2), `"${w.notes}"`
+      ])
+    ];
+    const csv  = rows.map(r => r.join(",")).join("\n");
+    const blob = new Blob([csv], { type:"text/csv" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url; a.download = `mise-dayworkers-${todayStr}.csv`; a.click();
+    URL.revokeObjectURL(url);
+    showToast("CSV exported!");
+  };
+
+  return (
+    <>
+      {/* ── Header info ── */}
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:13, padding:"16px 20px", marginBottom:16 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:10 }}>
+          <div>
+            <div style={{ fontWeight:700, fontSize:14, marginBottom:6 }}>⚡ Day Worker Quick Entry</div>
+            <div style={{ fontSize:12, color:C.muted, lineHeight:1.7, maxWidth:560 }}>
+              For staff who work one or two shifts and don't need a full employee profile.
+              Mise calculates their pay, Super and PAYG instantly — and keeps a record for your Workers Comp audit.
+            </div>
+          </div>
+          <button onClick={() => setShowHelp(h => !h)} style={{ background:"none", border:`1px solid ${C.border}`, borderRadius:8, padding:"6px 12px", fontSize:11, color:C.muted, cursor:"pointer", fontFamily:"inherit", flexShrink:0 }}>
+            {showHelp ? "Hide" : "💡 Legal obligations"}
+          </button>
+        </div>
+
+        {showHelp && (
+          <div style={{ marginTop:14, borderTop:`1px solid ${C.border}`, paddingTop:14, display:"flex", flexDirection:"column", gap:10 }}>
+            {[
+              { icon:"🦺", title:"Workers Compensation", col:C.red, text:"Covered automatically under your existing policy. Their wages count towards your annual payroll figure used to calculate your Workers Comp premium. No separate policy needed." },
+              { icon:"💰", title:"Superannuation", col:C.blue, text:"Since 2022, there is NO minimum earnings threshold. Even $50 of wages requires Super at 11.5%. You must pay it within 28 days of the end of each quarter." },
+              { icon:"📋", title:"PAYG Withholding", col:C.yellow, text:"If the day worker has provided a TFN, withhold at their marginal rate (estimated ~19%). If no TFN, withhold at 47%. You must report this to the ATO." },
+              { icon:"📁", title:"Record Keeping", col:C.teal, text:"ATO requires you to keep all wage records for 7 years — including one-day workers. This page gives you a downloadable CSV for your records." },
+            ].map((item, i) => (
+              <div key={i} style={{ display:"flex", gap:10, alignItems:"flex-start" }}>
+                <div style={{ fontSize:18, flexShrink:0 }}>{item.icon}</div>
+                <div>
+                  <div style={{ fontWeight:700, fontSize:12.5, color:item.col, marginBottom:2 }}>{item.title}</div>
+                  <div style={{ fontSize:12, color:C.muted, lineHeight:1.6 }}>{item.text}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── Summary cards ── */}
+      {workers.length > 0 && (
+        <div className="g4">
+          {[
+            { lbl:"Day Workers Recorded", val:workers.length,       cls:"t" },
+            { lbl:"Total Hours",          val:`${totalHours.toFixed(1)}h`, cls:"" },
+            { lbl:"Total Gross Pay",      val:money(totalGross),    cls:"" },
+            { lbl:"Total Super Owed",     val:money(totalSuper),    cls:"b" },
+          ].map((c,i) => <div key={i} className="card"><div className="clbl">{c.lbl}</div><div className={`cval ${c.cls}`}>{c.val}</div></div>)}
+        </div>
+      )}
+
+      {/* ── Quick entry form ── */}
+      <div className="fsec">
+        <div className="ftit">Add Day Worker</div>
+        <div className="frow2">
+          <div className="fg">
+            <label className="flbl">Worker Name *</label>
+            <input className="inp" placeholder="e.g. Tom Chen" value={f.name} onChange={e => setF({...f,name:e.target.value})}/>
+          </div>
+          <div className="fg">
+            <label className="flbl">Date Worked *</label>
+            <input className="inp" type="date" value={f.date} onChange={e => setF({...f,date:e.target.value})}/>
+          </div>
+          <div className="fg">
+            <label className="flbl">Hours Worked *</label>
+            <input className="inp" type="number" placeholder="e.g. 6" value={f.hours} onChange={e => setF({...f,hours:e.target.value})}/>
+          </div>
+          <div className="fg">
+            <label className="flbl">Base Hourly Rate ($) *</label>
+            <input className="inp" type="number" placeholder="e.g. 24.00" value={f.rate} onChange={e => setF({...f,rate:e.target.value})}/>
+            <span className="fhint">Min. casual rate 2025: $24.10/hr (FWC)</span>
+          </div>
+          <div className="fg">
+            <label className="flbl">Shift Type</label>
+            <select className="sel" value={f.isWeekend ? "weekend" : "weekday"} onChange={e => setF({...f,isWeekend:e.target.value==="weekend"})}>
+              <option value="weekday">Weekday — Casual (+25% loading)</option>
+              <option value="weekend">Weekend / Public Holiday (×1.75)</option>
+            </select>
+          </div>
+          <div className="fg">
+            <label className="flbl">Notes (optional)</label>
+            <input className="inp" placeholder="e.g. Kitchen hand, lunch service" value={f.notes} onChange={e => setF({...f,notes:e.target.value})} onKeyDown={e => e.key==="Enter" && add()}/>
+          </div>
+        </div>
+
+        {/* Live preview */}
+        {f.hours && f.rate && (
+          <div style={{ background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:10, padding:"14px 16px", margin:"12px 0" }}>
+            <div style={{ fontSize:10, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".7px", marginBottom:10 }}>
+              Live Pay Preview
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12 }}>
+              {[
+                { lbl:"Effective Rate",  val:`${money(preview.effR)}/hr`, col:C.text,   sub: f.isWeekend ? "×1.75 weekend" : "+25% casual" },
+                { lbl:"Gross Pay",       val:money(preview.gross),        col:C.accent, sub:`${f.hours}h × ${money(preview.effR)}` },
+                { lbl:"Super (11.5%)",   val:money(preview.super),        col:C.blue,   sub:"Must be paid quarterly" },
+                { lbl:"PAYG Est. (~19%)",val:money(preview.payg),         col:C.yellow, sub:"Withhold from gross" },
+              ].map((s,i) => (
+                <div key={i}>
+                  <div className="mono" style={{ fontSize:16, fontWeight:700, color:s.col }}>{s.val}</div>
+                  <div style={{ fontSize:10, color:C.muted, marginTop:2 }}>{s.lbl}</div>
+                  <div style={{ fontSize:9.5, color:C.dim, marginTop:1 }}>{s.sub}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop:12, paddingTop:10, borderTop:`1px solid ${C.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <span style={{ fontSize:12, color:C.muted }}>Total cost to employer (gross + super)</span>
+              <span className="mono" style={{ fontSize:16, fontWeight:700, color:C.accent }}>{money(preview.gross + preview.super)}</span>
+            </div>
+          </div>
+        )}
+
+        <div className="fbtns">
+          <button className="btn" onClick={add}>Add Day Worker</button>
+          <button className="btn-g" onClick={() => setF(blankDW)}>Clear</button>
+        </div>
+      </div>
+
+      {/* ── Records table ── */}
+      <div className="bc">
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+          <div className="bctit" style={{ marginBottom:0 }}>Day Worker Records <span style={{ fontSize:11, fontWeight:400, color:C.muted }}>{workers.length} entries</span></div>
+          {workers.length > 0 && (
+            <button className="btn-g" onClick={exportCSV} style={{ fontSize:11 }}>⬇️ Export CSV</button>
+          )}
+        </div>
+
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Name</th><th>Date</th><th>Hours</th><th>Shift</th>
+              <th>Gross Pay</th><th>Super</th><th>PAYG</th><th>Notes</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {workers.length === 0
+              ? <tr><td colSpan={9}><div className="empty-state"><div className="empty-icon">⚡</div><div className="empty-txt">No day workers recorded yet. Use the form above for quick entry.</div></div></td></tr>
+              : workers.slice().sort((a,b) => b.date.localeCompare(a.date)).map(w => (
+                <tr key={w.id}>
+                  <td style={{ fontWeight:600 }}>{w.name}</td>
+                  <td className="mono">{w.date}</td>
+                  <td className="mono">{w.hours}h</td>
+                  <td>
+                    <span className={`pill ${w.isWeekend ? "pl-r" : "pl-y"}`}>
+                      {w.isWeekend ? "Weekend" : "Casual"}
+                    </span>
+                  </td>
+                  <td className="mono" style={{ fontWeight:700 }}>{money(w.gross)}</td>
+                  <td className="mono" style={{ color:C.blue }}>{money(w.super)}</td>
+                  <td className="mono" style={{ color:C.yellow }}>{money(w.payg)}</td>
+                  <td style={{ color:C.muted, fontSize:12 }}>{w.notes || "—"}</td>
+                  <td><button className="btn-ic" onClick={() => { setWorkers(p => p.filter(x => x.id !== w.id)); showToast("Record removed."); }}>🗑️</button></td>
+                </tr>
+              ))
+            }
+          </tbody>
+          {workers.length > 0 && (
+            <tfoot>
+              <tr style={{ borderTop:`2px solid ${C.border}` }}>
+                <td colSpan={2} style={{ fontWeight:700, padding:"10px 12px" }}>TOTAL</td>
+                <td className="mono" style={{ fontWeight:700 }}>{totalHours.toFixed(1)}h</td>
+                <td></td>
+                <td className="mono" style={{ fontWeight:700 }}>{money(totalGross)}</td>
+                <td className="mono" style={{ fontWeight:700, color:C.blue }}>{money(totalSuper)}</td>
+                <td className="mono" style={{ fontWeight:700, color:C.yellow }}>{money(totalPayg)}</td>
+                <td colSpan={2}></td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+
+        {workers.length > 0 && (
+          <div style={{ marginTop:14, padding:"12px 15px", background:"rgba(91,159,212,.08)", border:"1px solid rgba(91,159,212,.2)", borderRadius:9, fontSize:12, color:C.muted, lineHeight:1.7 }}>
+            💡 <strong style={{color:C.text}}>Super reminder:</strong> Total Super owed for these day workers is <strong style={{color:C.blue}}>{money(totalSuper)}</strong>. 
+            Super must be paid to each worker's fund within 28 days of the end of each quarter. 
+            Missing super payments attract a <strong style={{color:C.red}}>Super Guarantee Charge (SGC)</strong> which is not tax deductible.
+          </div>
+        )}
+      </div>
+
+      <div className="disc">
+        <div className="d-ttl">⚠️ Day Worker Disclaimer</div>
+        <div className="d-txt">Pay calculations are estimates using standard casual loading (25%) and weekend/PH rates (×1.75). Actual rates may vary under the applicable Modern Award. Super is calculated at 11.5% of ordinary time earnings. PAYG is estimated at ~19% — actual withholding depends on the worker's tax situation. Always issue a payslip and report wages to the ATO. Consult a registered payroll provider for full compliance.</div>
+      </div>
     </>
   );
 }
@@ -2156,99 +2409,365 @@ const INS_COLORS = {
 };
 
 function InsurancePage({ insurance, setInsurance, employees, timesheets, showToast }) {
-  const [f, setF]       = useState({ type:"Workers Compensation", annual:"", notes:"" });
+  const [f, setF]       = useState({ type:"Workers Compensation", annual:"", notes:"", renewal:"", hasGst:"auto" });
   const [editId, setEditId] = useState(null);
 
-  const rows   = annotateTimesheets(employees, timesheets);
-  const weeks  = new Set(timesheets.map(t => t.week)).size || 1;
-  const annualPayroll = rows.reduce((s,t) => s + t.gross, 0) / weeks * 52;
-  const totalAnnual   = insurance.reduce((s,i) => s + i.annual, 0);
+  // ── Insurance knowledge base ─────────────────────────────
+  const INS_INFO = {
+    "Workers Compensation": {
+      required: true,
+      emoji: "🦺",
+      what: "Covers your employees if they get injured or sick at work. Required by law in every Australian state.",
+      whoNeeds: "Every employer with staff — no exceptions.",
+      typicalCost: "1%–3% of annual payroll",
+      gst: false,
+      tip: "Your premium is calculated based on your total wages. As you hire more staff, this cost goes up automatically.",
+    },
+    "Public Liability": {
+      required: false,
+      emoji: "🤝",
+      what: "Covers you if a customer, supplier or member of the public is injured at your restaurant or makes a claim against you.",
+      whoNeeds: "Any business with customers on-site. Landlords often require it in your lease.",
+      typicalCost: "$500–$2,500/year for a small restaurant",
+      gst: true,
+      tip: "Most restaurant leases require at least $10–$20 million in Public Liability cover. Check your lease agreement.",
+    },
+    "Equipment & Property": {
+      required: false,
+      emoji: "🍳",
+      what: "Covers your kitchen equipment, fit-out, furniture and stock if damaged by fire, flood, theft or accident.",
+      whoNeeds: "Any restaurant with significant equipment investment.",
+      typicalCost: "$800–$3,000/year depending on equipment value",
+      gst: true,
+      tip: "Make sure your policy covers replacement cost, not just market value. Commercial kitchen equipment depreciates quickly.",
+    },
+    "Business Interruption": {
+      required: false,
+      emoji: "🚪",
+      what: "Covers lost income if you have to close temporarily due to fire, flood or other insured events.",
+      whoNeeds: "Restaurants heavily dependent on a single location.",
+      typicalCost: "$600–$2,500/year",
+      gst: true,
+      tip: "COVID-19 taught many businesses this lesson the hard way. Check exactly what events are covered.",
+    },
+    "Product Liability": {
+      required: false,
+      emoji: "🍽️",
+      what: "Covers claims from customers who get sick or injured from your food or products.",
+      whoNeeds: "All food businesses. Often bundled with Public Liability.",
+      typicalCost: "Usually bundled with Public Liability",
+      gst: true,
+      tip: "Often sold as a bundle with Public Liability. Ask your broker if it's already included.",
+    },
+    "Cyber Insurance": {
+      required: false,
+      emoji: "💻",
+      what: "Covers you if customer data is stolen, your POS system is hacked, or you suffer a ransomware attack.",
+      whoNeeds: "Restaurants storing customer data, using online ordering or loyalty apps.",
+      typicalCost: "$500–$1,500/year",
+      gst: true,
+      tip: "Increasingly important as restaurants use more digital tools. OAIC requires you to notify customers of data breaches.",
+    },
+    "Other": {
+      required: false,
+      emoji: "🛡️",
+      what: "Any other insurance policy relevant to your business.",
+      whoNeeds: "Varies by policy.",
+      typicalCost: "Varies",
+      gst: true,
+      tip: "Ask your insurance broker to review your full coverage annually.",
+    },
+  };
+
+  // ── Calculations ─────────────────────────────────────────
+  const rows         = annotateTimesheets(employees, timesheets);
+  const weeks        = new Set(timesheets.map(t => t.week)).size || 1;
+  const annualPayroll= rows.reduce((s,t) => s + t.gross, 0) / weeks * 52;
+  const totalAnnual  = insurance.reduce((s,i) => s + i.annual, 0);
+  const insGstCreds  = insurance.filter(i => {
+    const info = INS_INFO[i.type];
+    return info ? info.gst : true;
+  }).reduce((s,i) => s + i.annual/11, 0);
+
+  // Benchmark: industry healthy range 3–8% of payroll
+  const insPct       = annualPayroll > 0 ? (totalAnnual / annualPayroll) * 100 : 0;
+  const benchStatus  = insPct === 0 ? "none" : insPct < 3 ? "low" : insPct <= 8 ? "good" : "high";
+  const benchMsg = {
+    none: { label:"No data", col:C.dim,    icon:"—",  msg:"Add your payroll data in Staff & Wages to see your benchmark." },
+    low:  { label:"Below average", col:C.yellow, icon:"⚠️", msg:`Your insurance is ${insPct.toFixed(1)}% of payroll, which is below the typical 3–8% range for restaurants. You may be underinsured.` },
+    good: { label:"Healthy range", col:C.green,  icon:"✅", msg:`Your insurance is ${insPct.toFixed(1)}% of payroll — within the healthy 3–8% range for Australian restaurants.` },
+    high: { label:"Above average", col:C.yellow, icon:"⚠️", msg:`Your insurance is ${insPct.toFixed(1)}% of payroll, above the typical 3–8%. Consider reviewing your policies with a broker.` },
+  }[benchStatus];
+
+  // Check for missing required insurance
+  const hasWorkersComp = insurance.some(i => i.type === "Workers Compensation");
+  const hasPublicLiab  = insurance.some(i => i.type === "Public Liability");
 
   const save = () => {
     if (!f.annual) return;
-    const entry = { type:f.type, annual:parseFloat(f.annual)||0, notes:f.notes };
+    const entry = { type:f.type, annual:parseFloat(f.annual)||0, notes:f.notes, renewal:f.renewal };
     if (editId) {
-      setInsurance(p => p.map(i => i.id === editId ? {...i, ...entry} : i));
+      setInsurance(p => p.map(i => i.id === editId ? {...i,...entry} : i));
       showToast("Policy updated!");
     } else {
       setInsurance(p => [...p, { id:Date.now(), ...entry }]);
       showToast("Policy added!");
     }
-    setF({ type:"Workers Compensation", annual:"", notes:"" });
+    setF({ type:"Workers Compensation", annual:"", notes:"", renewal:"" });
     setEditId(null);
   };
 
-  const startEdit = ins => { setF({ type:ins.type, annual:String(ins.annual), notes:ins.notes }); setEditId(ins.id); };
-  const getCol    = type => INS_COLORS[type] || C.muted;
+  const startEdit = ins => {
+    setF({ type:ins.type, annual:String(ins.annual), notes:ins.notes||"", renewal:ins.renewal||"" });
+    setEditId(ins.id);
+  };
+
+  const getCol = type => INS_COLORS[type] || C.muted;
+  const info   = INS_INFO[f.type] || INS_INFO["Other"];
+  const [expandedId, setExpandedId] = useState(null);
+
+  // Days until renewal
+  const daysUntil = dateStr => {
+    if (!dateStr) return null;
+    const diff = Math.ceil((new Date(dateStr) - new Date()) / 86400000);
+    return diff;
+  };
 
   return (
     <>
       <div className="hdr">
-        <div className="hdr-left"><div className="ptitle">Insurance Dashboard</div><div className="psub">Track insurance policies as a cost and % of payroll</div></div>
+        <div className="hdr-left">
+          <div className="ptitle">Insurance Dashboard</div>
+          <div className="psub">Track your policies, costs and compliance</div>
+        </div>
       </div>
 
+      {/* ── Alerts for missing required insurance ── */}
+      {(!hasWorkersComp || !hasPublicLiab) && (
+        <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:16 }}>
+          {!hasWorkersComp && (
+            <div style={{ background:"rgba(224,96,96,.1)", border:"1px solid rgba(224,96,96,.3)", borderRadius:11, padding:"12px 16px", display:"flex", gap:12, alignItems:"flex-start" }}>
+              <div style={{ fontSize:20 }}>🦺</div>
+              <div>
+                <div style={{ fontWeight:700, fontSize:13, marginBottom:3 }}>Workers Compensation not recorded</div>
+                <div style={{ fontSize:12, color:C.muted, lineHeight:1.6 }}>Workers Compensation is <strong style={{color:C.text}}>legally required</strong> in every Australian state for any employer with staff. If you have employees, you must have this cover. Add it below.</div>
+              </div>
+            </div>
+          )}
+          {!hasPublicLiab && (
+            <div style={{ background:"rgba(212,168,67,.1)", border:"1px solid rgba(212,168,67,.3)", borderRadius:11, padding:"12px 16px", display:"flex", gap:12, alignItems:"flex-start" }}>
+              <div style={{ fontSize:20 }}>🤝</div>
+              <div>
+                <div style={{ fontWeight:700, fontSize:13, marginBottom:3 }}>Public Liability not recorded</div>
+                <div style={{ fontSize:12, color:C.muted, lineHeight:1.6 }}>Most restaurant leases require Public Liability insurance. It protects you if a customer is injured on your premises.</div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Summary cards ── */}
       <div className="g4">
         {[
-          { lbl:"Total Annual Premium", val:money(totalAnnual),       cls:"p" },
-          { lbl:"Weekly Cost",          val:money(totalAnnual/52),    cls:"" },
-          { lbl:"% of Payroll",         val:annualPayroll > 0 ? `${((totalAnnual/annualPayroll)*100).toFixed(1)}%` : "—", cls:"y" },
-          { lbl:"Active Policies",      val:insurance.length,         cls:"t" },
+          { lbl:"Total Annual Premium",  val:money(totalAnnual),    cls:"p" },
+          { lbl:"Monthly Cost",          val:money(totalAnnual/12), cls:"" },
+          { lbl:"Weekly Cost",           val:money(totalAnnual/52), cls:"" },
+          { lbl:"GST Credits (claimable)", val:money(insGstCreds),  cls:"g" },
         ].map((c,i) => <div key={i} className="card"><div className="clbl">{c.lbl}</div><div className={`cval ${c.cls}`}>{c.val}</div></div>)}
       </div>
 
-      <div className="g3">
-        {insurance.map(ins => {
-          const col  = getCol(ins.type);
-          const pct  = annualPayroll > 0 ? (ins.annual / annualPayroll) * 100 : 0;
-          const bar  = Math.min(pct / 10 * 100, 100); // 10% = full bar
-          return (
-            <div key={ins.id} className="ins-card">
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
-                <div>
-                  <div style={{ fontSize:9.5, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".7px", marginBottom:4 }}>{ins.type}</div>
-                  <div className="mono" style={{ fontSize:22, fontWeight:700, color:col }}>{money(ins.annual)}</div>
-                  <div style={{ fontSize:10.5, color:C.muted }}>/year</div>
-                </div>
-                <div style={{ display:"flex", gap:5 }}>
-                  <button className="btn-b" onClick={() => startEdit(ins)}>Edit</button>
-                  <button className="btn-r" onClick={() => { setInsurance(p => p.filter(x => x.id !== ins.id)); showToast("Policy removed."); }}>Remove</button>
-                </div>
+      {/* ── Benchmark panel ── */}
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:13, padding:"16px 20px", marginBottom:16 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:12 }}>
+          <div>
+            <div style={{ fontSize:10.5, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".7px", marginBottom:6 }}>Industry Benchmark</div>
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <span style={{ fontSize:22 }}>{benchMsg.icon}</span>
+              <div>
+                <div style={{ fontWeight:700, fontSize:15, color:benchMsg.col }}>{benchMsg.label}</div>
+                <div style={{ fontSize:12, color:C.muted, marginTop:2, maxWidth:500, lineHeight:1.6 }}>{benchMsg.msg}</div>
               </div>
-              <div style={{ display:"flex", gap:16, marginBottom:9 }}>
-                <div>
-                  <div style={{ fontSize:9, color:C.dim, textTransform:"uppercase" }}>Weekly</div>
-                  <div className="mono" style={{ fontWeight:700, fontSize:13, color:col, marginTop:2 }}>{money(ins.annual/52)}</div>
-                </div>
-                <div>
-                  <div style={{ fontSize:9, color:C.dim, textTransform:"uppercase" }}>% of Payroll</div>
-                  <div className="mono" style={{ fontWeight:700, fontSize:13, color:annualPayroll > 0 ? col : C.dim, marginTop:2 }}>
-                    {annualPayroll > 0 ? `${pct.toFixed(2)}%` : "—"}
-                  </div>
-                </div>
-              </div>
-              <div className="ins-bar"><div className="ins-fill" style={{ width:`${bar}%`, background:col }}/></div>
-              <div style={{ fontSize:9.5, color:C.dim }}>Bar shows % of annual payroll (10% = full)</div>
-              {ins.notes && <div style={{ marginTop:8, fontSize:11, color:C.muted, borderTop:`1px solid ${C.border}`, paddingTop:7 }}>📝 {ins.notes}</div>}
             </div>
-          );
-        })}
-        {insurance.length === 0 && (
-          <div className="empty-state" style={{ gridColumn:"1/-1" }}>
-            <div className="empty-icon">🛡️</div>
-            <div className="empty-txt">No policies yet. Add your first one below.</div>
+          </div>
+          {annualPayroll > 0 && (
+            <div style={{ textAlign:"right" }}>
+              <div style={{ fontSize:10, color:C.dim, marginBottom:4 }}>Insurance as % of payroll</div>
+              <div className="mono" style={{ fontSize:28, fontWeight:700, color:benchMsg.col }}>{insPct.toFixed(1)}%</div>
+              <div style={{ fontSize:10.5, color:C.dim }}>Healthy range: 3%–8%</div>
+            </div>
+          )}
+        </div>
+        {annualPayroll > 0 && (
+          <div style={{ marginTop:14 }}>
+            <div style={{ height:8, background:C.border, borderRadius:4, overflow:"hidden", position:"relative" }}>
+              {/* Healthy zone highlight */}
+              <div style={{ position:"absolute", left:"30%", width:"50%", height:"100%", background:"rgba(82,201,122,.15)", borderRadius:4 }}/>
+              <div style={{ height:"100%", width:`${Math.min(insPct/10*100,100)}%`, background:benchMsg.col, borderRadius:4, transition:"width .4s" }}/>
+            </div>
+            <div style={{ display:"flex", justifyContent:"space-between", fontSize:9.5, color:C.dim, marginTop:4 }}>
+              <span>0%</span><span style={{color:C.green}}>← Healthy 3–8% →</span><span>10%+</span>
+            </div>
           </div>
         )}
       </div>
 
+      {/* ── Policy cards ── */}
       {insurance.length > 0 && (
-        <div className="bc">
-          <div className="bctit">Breakdown by Type</div>
+        <div className="g3">
           {insurance.map(ins => {
-            const pct = totalAnnual > 0 ? (ins.annual / totalAnnual) * 100 : 0;
+            const col      = getCol(ins.type);
+            const insInfo  = INS_INFO[ins.type] || INS_INFO["Other"];
+            const days     = daysUntil(ins.renewal);
+            const expanded = expandedId === ins.id;
+            const renewalUrgent = days !== null && days <= 30;
+            const renewalSoon   = days !== null && days <= 60 && days > 30;
+
+            return (
+              <div key={ins.id} className="ins-card" style={{ cursor:"default" }}>
+                {/* Header */}
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+                  <div style={{ display:"flex", gap:10, alignItems:"flex-start" }}>
+                    <div style={{ fontSize:22 }}>{insInfo.emoji}</div>
+                    <div>
+                      <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:3 }}>
+                        <div style={{ fontSize:9.5, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".7px" }}>{ins.type}</div>
+                        {insInfo.required && <span style={{ fontSize:9, fontWeight:700, background:"rgba(224,96,96,.15)", color:C.red, padding:"1px 6px", borderRadius:10 }}>REQUIRED BY LAW</span>}
+                        {!insInfo.required && <span style={{ fontSize:9, fontWeight:700, background:C.surfaceAlt, color:C.dim, padding:"1px 6px", borderRadius:10 }}>OPTIONAL</span>}
+                      </div>
+                      <div className="mono" style={{ fontSize:22, fontWeight:700, color:col }}>{money(ins.annual)}<span style={{ fontSize:11, fontWeight:400, color:C.muted }}>/year</span></div>
+                      <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>{money(ins.annual/12)}/month · {money(ins.annual/52)}/week</div>
+                    </div>
+                  </div>
+                  <div style={{ display:"flex", gap:5 }}>
+                    <button className="btn-b" onClick={() => startEdit(ins)}>Edit</button>
+                    <button className="btn-r" onClick={() => { setInsurance(p => p.filter(x => x.id !== ins.id)); showToast("Policy removed."); }}>Remove</button>
+                  </div>
+                </div>
+
+                {/* Renewal date */}
+                {ins.renewal && (
+                  <div style={{ marginTop:10, padding:"7px 11px", background: renewalUrgent ? "rgba(224,96,96,.1)" : renewalSoon ? "rgba(212,168,67,.1)" : C.surfaceAlt, borderRadius:8, display:"flex", gap:8, alignItems:"center" }}>
+                    <span style={{ fontSize:14 }}>{renewalUrgent ? "🚨" : renewalSoon ? "⏰" : "📅"}</span>
+                    <div style={{ fontSize:11.5 }}>
+                      <span style={{ color:C.muted }}>Renewal: </span>
+                      <span style={{ fontWeight:700 }}>{ins.renewal}</span>
+                      {days !== null && (
+                        <span style={{ color: renewalUrgent ? C.red : renewalSoon ? C.yellow : C.muted, marginLeft:8 }}>
+                          {days < 0 ? `⚠️ Expired ${Math.abs(days)} days ago` : days === 0 ? "Due today!" : `${days} days away`}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* GST info */}
+                <div style={{ marginTop:10, display:"flex", gap:8, flexWrap:"wrap" }}>
+                  <span style={{ fontSize:10.5, padding:"2px 8px", borderRadius:10, background: insInfo.gst ? "rgba(82,201,122,.12)" : C.surfaceAlt, color: insInfo.gst ? C.green : C.dim }}>
+                    {insInfo.gst ? `✅ GST credit: ${money(ins.annual/11)}/yr` : "❌ No GST (not claimable)"}
+                  </span>
+                  {annualPayroll > 0 && (
+                    <span style={{ fontSize:10.5, padding:"2px 8px", borderRadius:10, background:C.surfaceAlt, color:C.muted }}>
+                      {((ins.annual/annualPayroll)*100).toFixed(2)}% of payroll
+                    </span>
+                  )}
+                </div>
+
+                {/* Expandable info */}
+                <button onClick={() => setExpandedId(expanded ? null : ins.id)} style={{ marginTop:10, width:"100%", background:"none", border:`1px solid ${C.border}`, borderRadius:7, padding:"6px 10px", fontSize:11, color:C.muted, cursor:"pointer", fontFamily:"inherit", textAlign:"left", display:"flex", justifyContent:"space-between" }}>
+                  <span>💡 What is this insurance for?</span>
+                  <span>{expanded ? "▲" : "▼"}</span>
+                </button>
+                {expanded && (
+                  <div style={{ marginTop:8, padding:"12px 14px", background:C.surfaceAlt, borderRadius:9, fontSize:12, lineHeight:1.7, color:C.muted }}>
+                    <div style={{ marginBottom:7 }}><strong style={{color:C.text}}>What it covers:</strong> {insInfo.what}</div>
+                    <div style={{ marginBottom:7 }}><strong style={{color:C.text}}>Who needs it:</strong> {insInfo.whoNeeds}</div>
+                    <div style={{ marginBottom:7 }}><strong style={{color:C.text}}>Typical cost:</strong> {insInfo.typicalCost}</div>
+                    <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:7, color:C.accent }}>💡 {insInfo.tip}</div>
+                  </div>
+                )}
+
+                {ins.notes && <div style={{ marginTop:8, fontSize:11, color:C.muted, borderTop:`1px solid ${C.border}`, paddingTop:7 }}>📝 {ins.notes}</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {insurance.length === 0 && (
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:13, padding:"32px 24px", textAlign:"center", marginBottom:16 }}>
+          <div style={{ fontSize:36, marginBottom:12 }}>🛡️</div>
+          <div style={{ fontWeight:700, fontSize:15, marginBottom:8 }}>No policies recorded yet</div>
+          <div style={{ fontSize:12, color:C.muted, lineHeight:1.7, maxWidth:420, margin:"0 auto" }}>
+            Add your insurance policies below. Start with <strong style={{color:C.text}}>Workers Compensation</strong> — it's required by law for any business with employees in Australia.
+          </div>
+        </div>
+      )}
+
+      {/* ── Add / Edit form ── */}
+      <div className="fsec">
+        <div className="ftit">{editId ? "Edit Policy" : "Add Insurance Policy"}</div>
+
+        {/* Info card for selected type */}
+        <div style={{ background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:10, padding:"12px 15px", marginBottom:14, display:"flex", gap:12, alignItems:"flex-start" }}>
+          <div style={{ fontSize:24, flexShrink:0 }}>{info.emoji}</div>
+          <div style={{ flex:1 }}>
+            <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:4, flexWrap:"wrap" }}>
+              <div style={{ fontWeight:700, fontSize:13 }}>{f.type}</div>
+              {info.required
+                ? <span style={{ fontSize:9.5, fontWeight:700, background:"rgba(224,96,96,.15)", color:C.red, padding:"1px 7px", borderRadius:10 }}>LEGALLY REQUIRED</span>
+                : <span style={{ fontSize:9.5, fontWeight:700, background:C.surface, color:C.dim, padding:"1px 7px", borderRadius:10 }}>OPTIONAL</span>}
+              <span style={{ fontSize:9.5, padding:"1px 7px", borderRadius:10, background: info.gst ? "rgba(82,201,122,.12)" : C.surface, color: info.gst ? C.green : C.dim }}>
+                {info.gst ? "GST applicable" : "No GST"}
+              </span>
+            </div>
+            <div style={{ fontSize:12, color:C.muted, lineHeight:1.6 }}>{info.what}</div>
+            <div style={{ fontSize:11.5, color:C.muted, marginTop:4 }}>📊 Typical cost: <strong style={{color:C.text}}>{info.typicalCost}</strong></div>
+          </div>
+        </div>
+
+        <div className="frow2">
+          <div className="fg">
+            <label className="flbl">Insurance Type</label>
+            <select className="sel" value={f.type} onChange={e => setF({...f,type:e.target.value})}>
+              {INS_TYPES.map(t => <option key={t} value={t}>{INS_INFO[t]?.emoji} {t}{INS_INFO[t]?.required ? " ★" : ""}</option>)}
+            </select>
+          </div>
+          <div className="fg">
+            <label className="flbl">Annual Premium ($)</label>
+            <input className="inp" type="number" placeholder="0.00" value={f.annual} onChange={e => setF({...f,annual:e.target.value})}/>
+            {f.annual && (
+              <span className="fhint">
+                Monthly: {money((parseFloat(f.annual)||0)/12)} · Weekly: {money((parseFloat(f.annual)||0)/52)}
+                {info.gst && ` · GST credit: ${money((parseFloat(f.annual)||0)/11)}/yr`}
+              </span>
+            )}
+          </div>
+          <div className="fg">
+            <label className="flbl">Renewal Date (optional)</label>
+            <input className="inp" type="date" value={f.renewal} onChange={e => setF({...f,renewal:e.target.value})}/>
+            {f.renewal && <span className="fhint">Mise will flag this policy when renewal is approaching.</span>}
+          </div>
+          <div className="fg">
+            <label className="flbl">Notes (optional)</label>
+            <input className="inp" placeholder="e.g. Policy #, insurer name, broker contact" value={f.notes} onChange={e => setF({...f,notes:e.target.value})}/>
+          </div>
+        </div>
+        <div className="fbtns">
+          <button className="btn" onClick={save}>{editId ? "Update Policy" : "Add Policy"}</button>
+          {editId && <button className="btn-g" onClick={() => { setEditId(null); setF({type:"Workers Compensation",annual:"",notes:"",renewal:""}); }}>Cancel</button>}
+        </div>
+      </div>
+
+      {/* ── Summary breakdown ── */}
+      {insurance.length > 1 && (
+        <div className="bc">
+          <div className="bctit">Cost Breakdown</div>
+          {insurance.map(ins => {
+            const pct = totalAnnual > 0 ? (ins.annual/totalAnnual)*100 : 0;
             return (
               <div key={ins.id} style={{ marginBottom:12 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
-                  <span style={{ fontSize:12.5, fontWeight:500 }}>{ins.type}</span>
+                  <span style={{ fontSize:12.5, fontWeight:500 }}>{INS_INFO[ins.type]?.emoji} {ins.type}</span>
                   <span className="mono" style={{ fontSize:12.5, fontWeight:700 }}>
                     {money(ins.annual)} <span style={{ color:C.muted, fontSize:10.5 }}>({pct.toFixed(1)}%)</span>
                   </span>
@@ -2260,45 +2779,19 @@ function InsurancePage({ insurance, setInsurance, employees, timesheets, showToa
             );
           })}
           <div style={{ paddingTop:12, borderTop:`1px solid ${C.border}`, display:"flex", justifyContent:"space-between", marginTop:4 }}>
-            <span style={{ fontWeight:700 }}>Total Annual Insurance</span>
+            <span style={{ fontWeight:700 }}>Total Annual</span>
             <span className="mono" style={{ fontWeight:700, fontSize:17, color:C.purple }}>{money(totalAnnual)}</span>
           </div>
-          {annualPayroll > 0 && (
-            <div style={{ fontSize:11.5, color:C.muted, marginTop:5 }}>
-              ≈ {((totalAnnual/annualPayroll)*100).toFixed(2)}% of estimated annual payroll ({money(annualPayroll)})
-            </div>
-          )}
+          <div style={{ fontSize:11.5, color:C.muted, marginTop:5 }}>
+            GST credits you can claim: <strong style={{color:C.green}}>{money(insGstCreds)}/year</strong>
+            {annualPayroll > 0 && <span> · {insPct.toFixed(1)}% of estimated annual payroll</span>}
+          </div>
         </div>
       )}
 
-      <div className="fsec">
-        <div className="ftit">{editId ? "Edit Policy" : "Add Insurance Policy"}</div>
-        <div className="frow3">
-          <div className="fg">
-            <label className="flbl">Insurance Type</label>
-            <select className="sel" value={f.type} onChange={e => setF({...f,type:e.target.value})}>
-              {INS_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </div>
-          <div className="fg">
-            <label className="flbl">Annual Premium ($)</label>
-            <input className="inp" type="number" placeholder="0.00" value={f.annual} onChange={e => setF({...f,annual:e.target.value})}/>
-            {f.annual && <span className="fhint">Weekly: {money((parseFloat(f.annual)||0)/52)} · Monthly: {money((parseFloat(f.annual)||0)/12)}</span>}
-          </div>
-          <div className="fg">
-            <label className="flbl">Notes (optional)</label>
-            <input className="inp" placeholder="e.g. Renewal due Oct 2025" value={f.notes} onChange={e => setF({...f,notes:e.target.value})}/>
-          </div>
-        </div>
-        <div className="fbtns">
-          <button className="btn" onClick={save}>{editId ? "Update Policy" : "Add Policy"}</button>
-          {editId && <button className="btn-g" onClick={() => { setEditId(null); setF({type:"Workers Compensation",annual:"",notes:""}); }}>Cancel</button>}
-        </div>
-      </div>
-
       <div className="disc">
         <div className="d-ttl">⚠️ Insurance Disclaimer</div>
-        <div className="d-txt">Insurance costs are shown for budgeting purposes only. Workers Compensation obligations are mandated by state law and vary by state, industry and payroll. Consult a licensed insurance broker to ensure adequate cover. Annual payroll shown is estimated from logged timesheets only.</div>
+        <div className="d-txt">Insurance information shown is for budgeting and awareness purposes only. Workers Compensation obligations are mandated by state law and premiums vary by state, industry and payroll. Consult a licensed insurance broker to ensure you have adequate and compliant cover. Annual payroll shown is estimated from logged timesheets only and may not reflect your actual insurable wages.</div>
       </div>
     </>
   );

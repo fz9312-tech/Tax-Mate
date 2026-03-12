@@ -657,6 +657,7 @@ body { background: ${C.bg}; color: ${C.text}; font-family: 'DM Sans', sans-serif
 .pp-sec-ttl { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #6B7280; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #E5E7EB; }
 .pp-row    { display: flex; justify-content: space-between; align-items: center; padding: 7px 0; border-bottom: 1px solid #F3F4F6; font-size: 13px; }
 .pp-row:last-child { border-bottom: none; }
+.pp-box    { background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 10px; padding: 14px 16px; }
 .pp-lbl    { color: #374151; }
 .pp-val    { font-family: 'DM Mono',monospace; font-weight: 600; color: #111; }
 .pp-tot    { display: flex; justify-content: space-between; padding: 11px 13px; background: #F9FAFB; border-radius: 8px; margin-top: 8px; font-weight: 700; }
@@ -1172,7 +1173,7 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
 // ════════════════════════════════════════════════════════════
 //  EXPENSES PAGE
 // ════════════════════════════════════════════════════════════
-function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant" }) {
+function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant", dismissed = [], setDismissed }) {
   const [f, setF] = useState({ date:todayStr, cat:"ingredients", amount:"", desc:"", gst:"yes", invoice:"yes" });
   const [search,    setSearch]    = useState("");
   const [filterCat, setFilterCat] = useState("all");
@@ -1181,7 +1182,6 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
   const [filterFrom,setFilterFrom]= useState("");
   const [filterTo,  setFilterTo]  = useState("");
   const [tab,       setTab]       = useState("list");
-  const [dismissed, setDismissed] = useState([]);
 
   // ── Quick-entry search state ─────────────────────────────
   const [catQuery,   setCatQuery]   = useState("");
@@ -1319,11 +1319,10 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
       ...filtered.map(e => [e.date, e.cat, `"${e.desc}"`, e.amount.toFixed(2), e.gst ? (e.amount/11).toFixed(2) : "0.00", e.invoice ? "Yes" : "No"])
     ];
     const csv = rows.map(r => r.join(",")).join("\n");
-    const blob = new Blob([csv], { type:"text/csv" });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement("a");
-    a.href = url; a.download = `mise-expenses-${todayStr}.csv`; a.click();
-    URL.revokeObjectURL(url);
+    const a   = document.createElement("a");
+    a.href     = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
+    a.download = `mise-expenses-${todayStr}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
     showToast("CSV exported!");
   };
 
@@ -1947,9 +1946,12 @@ function TimesheetModal({ employees, onSave, onClose }) {
 //  STAFF & WAGES PAGE
 // ════════════════════════════════════════════════════════════
 function WagesPage({ employees, setEmployees, timesheets, setTimesheets, leave, setLeave, showToast }) {
-  const [tab,      setTab]      = useState("profiles");
-  const [empModal, setEmpModal] = useState(null);
-  const [tsModal,  setTsModal]  = useState(false);
+  const [tab,        setTab]        = useState("profiles");
+  const [empModal,   setEmpModal]   = useState(null);
+  const [tsModal,    setTsModal]    = useState(false);
+  const [dayWorkers, setDayWorkers] = useState([]);
+  const [bizName,    setBizName]    = useState("My Restaurant");
+  const [bizABN,     setBizABN]     = useState("");
   // Leave form state
   const [lf, setLf] = useState({ eid:"", type:"annual", date:todayStr, hours:"", notes:"" });
 
@@ -2011,7 +2013,7 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, leave, 
       </div>
 
       <div className="tabs">
-        {[["profiles","👤 Profiles"],["timesheets","🕐 Timesheets"],["summary","📊 Wage Summary"],["leave","🏖️ Leave & Lieu"],["dayworkers","⚡ Day Workers"]].map(([id,lbl]) => (
+        {[["profiles","👤 Profiles"],["timesheets","🕐 Timesheets"],["summary","📊 Wage Summary"],["leave","🏖️ Leave & Lieu"],["dayworkers","⚡ Day Workers"],["payslip","🧾 Payslips"]].map(([id,lbl]) => (
           <div key={id} className={`tab${tab===id?" on-a":""}`} onClick={() => setTab(id)}>{lbl}</div>
         ))}
       </div>
@@ -2438,17 +2440,380 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, leave, 
 
       {/* ════ DAY WORKERS TAB ════ */}
       {tab === "dayworkers" && (
-        <DayWorkersTab showToast={showToast}/>
+        <DayWorkersTab showToast={showToast} workers={dayWorkers} setWorkers={setDayWorkers}/>
+      )}
+
+      {tab === "payslip" && (
+        <PayslipTab employees={employees} timesheets={timesheets} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN}/>
       )}
     </>
   );
 }
 
-// ── Day Workers standalone component ─────────────────────────
-function DayWorkersTab({ showToast }) {
+// ── Payslip Tab ──────────────────────────────────────────────
+function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, bizABN, setBizABN }) {
+  const [selEmp,    setSelEmp]    = useState("");
+  const [selWeek,   setSelWeek]   = useState("");
+  const [showPrint, setShowPrint] = useState(false);
+
+  // Build week options from existing timesheets
+  const weeks = [...new Set(timesheets.map(t => t.week))].sort().reverse();
+
+  // Get timesheets for selected employee (optionally filtered by week)
+  const empTs = timesheets.filter(t =>
+    t.eid === parseInt(selEmp) && (selWeek === "" || t.week === selWeek)
+  );
+  const emp = employees.find(e => e.id === parseInt(selEmp));
+
+  // ── Calculations ─────────────────────────────────────────
+  const rows = empTs.map(ts => {
+    const gross  = calcGross(emp, ts);
+    const super_ = gross * SUPER_RATE;
+    const payg   = emp?.tfn ? gross * PAYG_RATE : gross * 0.47;
+    const net    = gross - payg;
+    const effR   = effRate(emp);
+    return { ...ts, gross, super:super_, payg, net, effR };
+  });
+
+  const totals = {
+    std_hrs:  rows.reduce((s,r) => s + r.std_hrs,  0),
+    ot_hrs:   rows.reduce((s,r) => s + r.ot_hrs,   0),
+    wknd_hrs: rows.reduce((s,r) => s + r.wknd_hrs, 0),
+    gross:    rows.reduce((s,r) => s + r.gross,     0),
+    super:    rows.reduce((s,r) => s + r.super,     0),
+    payg:     rows.reduce((s,r) => s + r.payg,      0),
+    net:      rows.reduce((s,r) => s + r.net,       0),
+  };
+
+  // ── Week label helper ─────────────────────────────────────
+  const weekLabel = w => {
+    if (!w) return "";
+    const [yr, wk] = w.split("-W");
+    const d = new Date(parseInt(yr), 0, 1 + (parseInt(wk)-1)*7);
+    const mon = new Date(d.setDate(d.getDate() - d.getDay() + 1));
+    const sun = new Date(mon); sun.setDate(sun.getDate() + 6);
+    const fmt = d => d.toLocaleDateString("en-AU",{day:"2-digit",month:"short",year:"numeric"});
+    return `${fmt(mon)} – ${fmt(sun)}`;
+  };
+
+  const payPeriodLabel = selWeek
+    ? weekLabel(selWeek)
+    : weeks.length > 0
+      ? `${weekLabel(weeks[weeks.length-1])} to ${weekLabel(weeks[0])}`
+      : "All periods";
+
+  // ── Payslip print content (JSX, uses existing pp-* classes) ──
+  const PayslipPrint = () => {
+    if (!emp) return null;
+    const effR = effRate(emp);
+    const issued = new Date().toLocaleDateString("en-AU",{day:"2-digit",month:"long",year:"numeric"});
+    const infoRow = (lbl, val) => (
+      <div className="pp-row"><span>{lbl}</span><span style={{fontWeight:600,textAlign:"right"}}>{val}</span></div>
+    );
+    return (
+      <div className="pp-page">
+        {/* Header */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",paddingBottom:20,borderBottom:"2px solid #0C0F0D",marginBottom:24}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <div style={{width:40,height:40,borderRadius:10,background:"linear-gradient(135deg,#8FCB72,#3DC9A0)",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:20,color:"#0C0F0D"}}>M</div>
+            <div>
+              <div style={{fontSize:17,fontWeight:700,letterSpacing:"-.3px"}}>{bizName}</div>
+              <div style={{fontSize:10,color:"#6B7280",textTransform:"uppercase",letterSpacing:".5px"}}>{bizABN ? `ABN: ${bizABN}` : "Generated by Mise"}</div>
+            </div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:22,fontWeight:700,letterSpacing:"-.5px"}}>PAYSLIP</div>
+            <div style={{fontSize:11,color:"#6B7280",marginTop:3}}>Period: {payPeriodLabel}</div>
+            <div style={{fontSize:11,color:"#6B7280",marginTop:2}}>Issued: {issued}</div>
+          </div>
+        </div>
+
+        {/* Two-col info */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginBottom:20}}>
+          <div className="pp-box">
+            <div className="pp-sec-ttl">Employee Details</div>
+            {infoRow("Name", emp.name)}
+            {infoRow("Role", emp.role)}
+            {infoRow("Type", emp.type.charAt(0).toUpperCase()+emp.type.slice(1))}
+            {infoRow("Base Rate", `$${emp.rate.toFixed(2)}/hr`)}
+            {infoRow("Effective Rate", `$${effR.toFixed(2)}/hr`)}
+            {infoRow("Super Fund", emp.superfund || "—")}
+            {infoRow("TFN Provided", emp.tfn ? "Yes ✓" : "No — 47% withholding")}
+          </div>
+          <div className="pp-box">
+            <div className="pp-sec-ttl">Pay Period Summary</div>
+            {infoRow("Period", payPeriodLabel)}
+            {infoRow("Weeks", String(rows.length))}
+            {infoRow("Standard Hours", `${totals.std_hrs}h`)}
+            {infoRow("Overtime Hours", `${totals.ot_hrs}h`)}
+            {infoRow("Weekend/PH Hours", `${totals.wknd_hrs}h`)}
+            {infoRow("Total Hours", `${totals.std_hrs+totals.ot_hrs+totals.wknd_hrs}h`)}
+          </div>
+        </div>
+
+        {/* Hours table */}
+        <div className="pp-sec-ttl" style={{marginBottom:8}}>Hours &amp; Earnings Breakdown</div>
+        <table className="pp-tbl" style={{marginBottom:20}}>
+          <thead><tr>
+            <th>Pay Week</th><th style={{textAlign:"right"}}>Std Hrs</th><th style={{textAlign:"right"}}>OT Hrs</th><th style={{textAlign:"right"}}>Wknd Hrs</th>
+            <th style={{textAlign:"right"}}>Std Pay</th><th style={{textAlign:"right"}}>OT Pay</th><th style={{textAlign:"right"}}>Wknd Pay</th><th style={{textAlign:"right"}}>Gross</th>
+          </tr></thead>
+          <tbody>
+            {rows.map(r => (
+              <tr key={r.id}>
+                <td style={{fontSize:11}}>{r.week}</td>
+                <td style={{textAlign:"right"}}>{r.std_hrs}h</td>
+                <td style={{textAlign:"right"}}>{r.ot_hrs}h</td>
+                <td style={{textAlign:"right"}}>{r.wknd_hrs}h</td>
+                <td style={{textAlign:"right",fontFamily:"DM Mono,monospace"}}>{money(effR * r.std_hrs)}</td>
+                <td style={{textAlign:"right",fontFamily:"DM Mono,monospace"}}>{r.ot_hrs > 0 ? money(effR * OT_RATE * r.ot_hrs) : "—"}</td>
+                <td style={{textAlign:"right",fontFamily:"DM Mono,monospace"}}>{r.wknd_hrs > 0 ? money(effR * WKND_RATE * r.wknd_hrs) : "—"}</td>
+                <td style={{textAlign:"right",fontFamily:"DM Mono,monospace",fontWeight:700}}>{money(r.gross)}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr><td style={{fontWeight:700}}>TOTAL</td>
+              <td style={{textAlign:"right",fontWeight:700}}>{totals.std_hrs}h</td>
+              <td style={{textAlign:"right",fontWeight:700}}>{totals.ot_hrs}h</td>
+              <td style={{textAlign:"right",fontWeight:700}}>{totals.wknd_hrs}h</td>
+              <td colSpan={3}></td>
+              <td style={{textAlign:"right",fontFamily:"DM Mono,monospace",fontWeight:700,fontSize:14}}>{money(totals.gross)}</td>
+            </tr>
+          </tfoot>
+        </table>
+
+        {/* Pay summary */}
+        <div className="pp-sec-ttl" style={{marginBottom:8}}>Pay Summary</div>
+        <div className="pp-box" style={{marginBottom:16}}>
+          {[
+            {lbl:"Gross Pay",                                           val:money(totals.gross),        col:"#111"},
+            {lbl:`PAYG Withheld (${emp.tfn?"~19%":"47% — no TFN"})`,   val:`− ${money(totals.payg)}`,  col:"#DC2626"},
+            {lbl:"Net Pay (Take-Home)",                                  val:money(totals.net),          col:"#16A34A", bold:true},
+          ].map((r,i) => (
+            <div key={i} className="pp-row" style={{borderBottom: i<2 ? "1px solid #E5E7EB" : "none", paddingTop: r.bold ? 10 : undefined, marginTop: r.bold ? 4 : undefined}}>
+              <span style={{fontWeight:r.bold?700:500,fontSize:r.bold?15:13}}>{r.lbl}</span>
+              <span style={{fontFamily:"DM Mono,monospace",fontWeight:700,fontSize:r.bold?17:13,color:r.col}}>{r.val}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Super + net highlight */}
+        <div style={{background:"#0C0F0D",borderRadius:12,padding:"18px 22px",display:"flex",justifyContent:"space-between",alignItems:"center",color:"#fff",marginBottom:14}}>
+          <div>
+            <div style={{fontSize:10,color:"#9CA3AF",textTransform:"uppercase",letterSpacing:".5px"}}>Net Pay — Take Home</div>
+            <div style={{fontFamily:"DM Mono,monospace",fontSize:28,fontWeight:700,color:"#8FCB72",marginTop:4}}>{money(totals.net)}</div>
+            <div style={{fontSize:11,color:"#9CA3AF",marginTop:4}}>After PAYG withholding</div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:10,color:"#9CA3AF",textTransform:"uppercase",letterSpacing:".5px"}}>Super — Employer Contribution</div>
+            <div style={{fontFamily:"DM Mono,monospace",fontSize:22,fontWeight:700,color:"#3DC9A0",marginTop:4}}>{money(totals.super)}</div>
+            <div style={{fontSize:11,color:"#9CA3AF",marginTop:4}}>To {emp.superfund || "nominated fund"}</div>
+          </div>
+        </div>
+
+        {!emp.tfn && (
+          <div className="pp-warn" style={{marginBottom:10}}>⚠️ No TFN on file — PAYG withheld at 47%. Ask employee to provide their TFN.</div>
+        )}
+        <div style={{background:"#EFF6FF",border:"1px solid #BFDBFE",borderRadius:8,padding:"11px 14px",fontSize:11.5,color:"#1D4ED8",marginBottom:20}}>
+          💡 <strong>Super note:</strong> {money(totals.super)} must be paid to {emp.superfund || "the nominated fund"} within 28 days of quarter end. Late payments attract the Super Guarantee Charge (SGC) — not tax deductible.
+        </div>
+
+        <PPDisclaimer/>
+        <div style={{marginTop:20,paddingTop:14,borderTop:"1px solid #E5E7EB",display:"flex",justifyContent:"space-between",fontSize:10.5,color:"#9CA3AF"}}>
+          <span>Generated by Mise — Australian Hospitality Finance</span>
+          <span>Issued {issued} · Retain for 7 years (ATO)</span>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <>
+      <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:13, padding:"16px 20px", marginBottom:16 }}>
+        <div style={{ fontWeight:700, fontSize:14, marginBottom:6 }}>🧾 Generate Payslip</div>
+        <div style={{ fontSize:12, color:C.muted, lineHeight:1.7 }}>
+          Select an employee and pay period to generate an ATO-compliant payslip. Includes gross pay, PAYG withholding, super, and take-home breakdown.
+        </div>
+      </div>
+
+      {/* ── Config ── */}
+      <div className="fsec">
+        <div className="ftit">Business & Period</div>
+        <div className="frow2">
+          <div className="fg">
+            <label className="flbl">Business Name</label>
+            <input className="inp" value={bizName} onChange={e => setBizName(e.target.value)} placeholder="Your Restaurant Name"/>
+          </div>
+          <div className="fg">
+            <label className="flbl">ABN (optional)</label>
+            <input className="inp" value={bizABN} onChange={e => setBizABN(e.target.value)} placeholder="12 345 678 901"/>
+          </div>
+          <div className="fg">
+            <label className="flbl">Employee *</label>
+            <select className="sel" value={selEmp} onChange={e => { setSelEmp(e.target.value); setSelWeek(""); }}>
+              <option value="">— Select employee —</option>
+              {employees.map(e => (
+                <option key={e.id} value={e.id}>{e.name} · {e.role} · {e.type}</option>
+              ))}
+            </select>
+          </div>
+          <div className="fg">
+            <label className="flbl">Pay Period</label>
+            <select className="sel" value={selWeek} onChange={e => setSelWeek(e.target.value)}>
+              <option value="">All periods (YTD)</option>
+              {weeks.map(w => (
+                <option key={w} value={w}>{weekLabel(w)} ({w})</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Preview ── */}
+      {emp && rows.length > 0 && (
+        <>
+          {/* Employee header */}
+          <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:13, padding:"16px 20px", marginBottom:12, display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+              <div style={{ width:44, height:44, borderRadius:"50%", background:avatarBg(emp.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, fontWeight:700, color:"#fff" }}>
+                {initials(emp.name)}
+              </div>
+              <div>
+                <div style={{ fontWeight:700, fontSize:15 }}>{emp.name}</div>
+                <div style={{ fontSize:12, color:C.muted, marginTop:2 }}>{emp.role} · {emp.type} · {money(effRate(emp))}/hr</div>
+                <div style={{ fontSize:11.5, color:emp.tfn ? C.green : C.red, marginTop:2 }}>
+                  {emp.tfn ? "✅ TFN on file" : "⚠️ No TFN — 47% withholding applies"}
+                </div>
+              </div>
+            </div>
+            <div style={{ textAlign:"right" }}>
+              <div style={{ fontSize:11, color:C.dim, marginBottom:3 }}>Pay period</div>
+              <div style={{ fontWeight:600, fontSize:12 }}>{payPeriodLabel}</div>
+              <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>{rows.length} week{rows.length>1?"s":""} included</div>
+            </div>
+          </div>
+
+          {/* Summary cards */}
+          <div className="g4" style={{ marginBottom:12 }}>
+            {[
+              { lbl:"Gross Pay",      val:money(totals.gross), cls:"" },
+              { lbl:"PAYG Withheld",  val:money(totals.payg),  cls:"r" },
+              { lbl:"Net Pay",        val:money(totals.net),   cls:"g" },
+              { lbl:"Super (11.5%)",  val:money(totals.super), cls:"b" },
+            ].map((c,i) => <div key={i} className="card"><div className="clbl">{c.lbl}</div><div className={`cval ${c.cls}`}>{c.val}</div></div>)}
+          </div>
+
+          {/* Hours breakdown table */}
+          <div className="bc" style={{ marginBottom:12 }}>
+            <div className="bctit">Hours & Earnings Breakdown</div>
+            <table className="tbl">
+              <thead><tr>
+                <th>Pay Week</th><th>Std Hrs</th><th>OT Hrs</th><th>Wknd Hrs</th>
+                <th>Std Pay</th><th>OT Pay</th><th>Wknd Pay</th><th>Gross</th>
+              </tr></thead>
+              <tbody>
+                {rows.map(r => (
+                  <tr key={r.id}>
+                    <td className="mono" style={{ fontSize:11 }}>{r.week}</td>
+                    <td className="mono">{r.std_hrs}h</td>
+                    <td className="mono" style={{ color: r.ot_hrs > 0 ? C.yellow : C.dim }}>{r.ot_hrs}h</td>
+                    <td className="mono" style={{ color: r.wknd_hrs > 0 ? C.teal : C.dim }}>{r.wknd_hrs}h</td>
+                    <td className="mono">{money(r.effR * r.std_hrs)}</td>
+                    <td className="mono" style={{ color: r.ot_hrs > 0 ? C.yellow : C.dim }}>{r.ot_hrs > 0 ? money(r.effR * OT_RATE * r.ot_hrs) : "—"}</td>
+                    <td className="mono" style={{ color: r.wknd_hrs > 0 ? C.teal : C.dim }}>{r.wknd_hrs > 0 ? money(r.effR * WKND_RATE * r.wknd_hrs) : "—"}</td>
+                    <td className="mono" style={{ fontWeight:700 }}>{money(r.gross)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ borderTop:`2px solid ${C.border}` }}>
+                  <td style={{ fontWeight:700, padding:"10px 12px" }}>TOTAL</td>
+                  <td className="mono" style={{ fontWeight:700 }}>{totals.std_hrs}h</td>
+                  <td className="mono" style={{ fontWeight:700 }}>{totals.ot_hrs}h</td>
+                  <td className="mono" style={{ fontWeight:700 }}>{totals.wknd_hrs}h</td>
+                  <td colSpan={3}></td>
+                  <td className="mono" style={{ fontWeight:700, fontSize:14, color:C.accent }}>{money(totals.gross)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          {/* Pay summary */}
+          <div className="bc" style={{ marginBottom:14 }}>
+            <div className="bctit">Pay Summary</div>
+            {[
+              { lbl:"Gross Pay",                                      val:money(totals.gross),  col:C.text },
+              { lbl:`PAYG Withheld (${emp.tfn ? "~19%" : "47% — no TFN"})`, val:`− ${money(totals.payg)}`, col:C.red },
+              { lbl:"Net Pay (Take-Home)",                            val:money(totals.net),    col:C.green, bold:true },
+            ].map((r,i) => (
+              <div key={i} style={{ display:"flex", justifyContent:"space-between", padding:"9px 0", borderBottom:`1px solid ${C.border}`, alignItems:"center" }}>
+                <span style={{ fontSize: r.bold ? 14 : 13, fontWeight: r.bold ? 700 : 500, color:C.text }}>{r.lbl}</span>
+                <span className="mono" style={{ fontSize: r.bold ? 16 : 14, fontWeight:700, color:r.col }}>{r.val}</span>
+              </div>
+            ))}
+            <div style={{ marginTop:12, padding:"12px 14px", background:"rgba(61,201,160,.06)", border:"1px solid rgba(61,201,160,.2)", borderRadius:9, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <div>
+                <div style={{ fontSize:10, color:C.dim, textTransform:"uppercase", letterSpacing:".5px" }}>Super — Employer Contribution</div>
+                <div style={{ fontSize:11.5, color:C.muted, marginTop:2 }}>Pay to {emp.superfund || "nominated fund"} within 28 days of quarter end</div>
+              </div>
+              <span className="mono" style={{ fontSize:17, fontWeight:700, color:C.teal }}>{money(totals.super)}</span>
+            </div>
+            {!emp.tfn && (
+              <div style={{ marginTop:10, padding:"10px 14px", background:"rgba(212,168,67,.1)", border:"1px solid rgba(212,168,67,.3)", borderRadius:9, fontSize:12, color:C.yellow }}>
+                ⚠️ <strong>No TFN on file</strong> — PAYG withheld at 47%. Ask employee to provide their TFN to reduce withholding to ~19%.
+              </div>
+            )}
+          </div>
+
+          {/* Generate button */}
+          <div style={{ display:"flex", gap:10 }}>
+            <button className="btn" style={{ fontSize:14, padding:"12px 28px" }} onClick={() => { setShowPrint(true); showToast(`Payslip ready for ${emp.name} ✅`); }}>
+              🖨️ Generate & Print Payslip
+            </button>
+            <button className="btn-g" onClick={() => { setSelEmp(""); setSelWeek(""); }}>
+              Clear
+            </button>
+          </div>
+        </>
+      )}
+
+      {emp && rows.length === 0 && (
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:13, padding:"28px", textAlign:"center" }}>
+          <div style={{ fontSize:32, marginBottom:10 }}>📋</div>
+          <div style={{ fontWeight:700, fontSize:14, marginBottom:6 }}>No timesheets found</div>
+          <div style={{ fontSize:12, color:C.muted }}>No timesheet records for {emp.name} in the selected period. Log hours in the Timesheets tab first.</div>
+        </div>
+      )}
+
+      {!selEmp && (
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:13, padding:"28px", textAlign:"center" }}>
+          <div style={{ fontSize:36, marginBottom:10 }}>🧾</div>
+          <div style={{ fontWeight:700, fontSize:14, marginBottom:6 }}>Select an employee to begin</div>
+          <div style={{ fontSize:12, color:C.muted, maxWidth:400, margin:"0 auto", lineHeight:1.7 }}>
+            Choose an employee and pay period above. Mise will generate a complete payslip with PAYG, Super, and take-home breakdown — ready to print or save as PDF.
+          </div>
+        </div>
+      )}
+
+      <div className="disc">
+        <div className="d-ttl">⚠️ Payslip Disclaimer</div>
+        <div className="d-txt">Payslips are generated from timesheet data entered in Mise. PAYG withholding is estimated at ~19% for employees with a TFN and 47% without. Actual withholding depends on the employee's tax file declaration. These payslips are for internal record-keeping and employee reference only. For STP lodgement and ATO-certified payroll reporting, consult a registered BAS agent or use ATO-approved payroll software. Retain payslip records for 7 years as required by the ATO.</div>
+      </div>
+
+      {showPrint && emp && (
+        <PrintModal title={`Payslip — ${emp.name}`} onClose={() => setShowPrint(false)}>
+          <PayslipPrint/>
+        </PrintModal>
+      )}
+    </>
+  );
+}
+
+
+function DayWorkersTab({ showToast, workers, setWorkers }) {
   const blankDW = { name:"", date:todayStr, hours:"", rate:"", isWeekend:false, notes:"" };
   const [f,        setF]        = useState(blankDW);
-  const [workers,  setWorkers]  = useState([]);
   const [showHelp, setShowHelp] = useState(false);
 
   // ── Calculations ─────────────────────────────────────────
@@ -2497,12 +2862,11 @@ function DayWorkersTab({ showToast }) {
         w.gross.toFixed(2), w.super.toFixed(2), w.payg.toFixed(2), `"${w.notes}"`
       ])
     ];
-    const csv  = rows.map(r => r.join(",")).join("\n");
-    const blob = new Blob([csv], { type:"text/csv" });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement("a");
-    a.href = url; a.download = `mise-dayworkers-${todayStr}.csv`; a.click();
-    URL.revokeObjectURL(url);
+    const csv = rows.map(r => r.join(",")).join("\n");
+    const a   = document.createElement("a");
+    a.href     = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
+    a.download = `mise-dayworkers-${todayStr}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
     showToast("CSV exported!");
   };
 
@@ -4593,9 +4957,10 @@ function ReportsPage({ revenue, expenses, timesheets, employees, insurance, docu
 // ════════════════════════════════════════════════════════════
 
 export default function App() {
-  const [screen,     setScreen]     = useState("landing");
-  const [page,       setPage]       = useState("dashboard");
-  const [industry,   setIndustry]   = useState("restaurant"); // restaurant | café | bar | other
+  const [screen,          setScreen]          = useState("landing");
+  const [page,            setPage]            = useState("dashboard");
+  const [industry,        setIndustry]        = useState("restaurant"); // restaurant | café | bar | other
+  const [dismissedAlerts, setDismissedAlerts] = useState([]);
   const [revenue,    setRevenue]    = useState(SEED_REVENUE);
   const [expenses,   setExpenses]   = useState(SEED_EXPENSES);
   const [employees,  setEmployees]  = useState(SEED_EMPLOYEES);
@@ -4623,7 +4988,7 @@ export default function App() {
         <main className="main">
           {page === "dashboard"      && <DashboardPage revenue={revenue} expenses={expenses} employees={employees} timesheets={timesheets} insurance={insurance} setPage={setPage}/>}
           {page === "revenue"        && <RevenuePage   revenue={revenue}   setRevenue={setRevenue}   showToast={showToast}/>}
-          {page === "expenses"       && <ExpensesPage  expenses={expenses} setExpenses={setExpenses} showToast={showToast} industry={industry}/>}
+          {page === "expenses"       && <ExpensesPage  expenses={expenses} setExpenses={setExpenses} showToast={showToast} industry={industry} dismissed={dismissedAlerts} setDismissed={setDismissedAlerts}/>}
           {page === "wages"          && <WagesPage     employees={employees} setEmployees={setEmployees} timesheets={timesheets} setTimesheets={setTimesheets} leave={leave} setLeave={setLeave} showToast={showToast}/>}
           {page === "insurance"      && <InsurancePage insurance={insurance} setInsurance={setInsurance} employees={employees} timesheets={timesheets} showToast={showToast}/>}
           {page === "tax"            && <TaxSummaryPage revenue={revenue} expenses={expenses} employees={employees} timesheets={timesheets}/>}

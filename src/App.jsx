@@ -240,6 +240,567 @@ const quarter  = `Q${Math.ceil((today.getMonth()+1)/3)} ${today.getFullYear()}`;
 const money = n =>
   "$" + Math.abs(n).toLocaleString("en-AU",{ minimumFractionDigits:2, maximumFractionDigits:2 });
 
+// ── Pure-JS PDF Generator — no external dependencies ────────
+class MiniPDF {
+  constructor() {
+    this.W=595; this.H=842; this.M=40;
+    this.pages=[[]];
+  }
+  get ops(){ return this.pages[this.pages.length-1]; }
+  addPage(){ this.pages.push([]); return this; }
+  _py(y){ return this.H-y; }
+  _esc(s){ return String(s??'').replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)').replace(/[^\x20-\x7E]/g,'?'); }
+  _col(c,t='rg'){
+    if(!c) return `0 0 0 ${t}`;
+    if(typeof c==='string'&&c[0]==='#'){
+      const r=parseInt(c.slice(1,3),16),g=parseInt(c.slice(3,5),16),b=parseInt(c.slice(5,7),16);
+      return `${(r/255).toFixed(2)} ${(g/255).toFixed(2)} ${(b/255).toFixed(2)} ${t}`;
+    }
+    return `${c.map(v=>(v/255).toFixed(2)).join(' ')} ${t}`;
+  }
+  _tw(s,sz){ return String(s??'').length*sz*0.52; }
+
+  text(x,y,str,{size=10,bold=false,color='#111111',align='left'}={}){
+    const s=String(str??'');
+    if(align==='right') x=x-this._tw(s,size);
+    else if(align==='center') x=x-this._tw(s,size)/2;
+    const font=bold?'F2':'F1';
+    this.ops.push(`BT /${font} ${size} Tf ${this._col(color)} ${x.toFixed(1)} ${(this._py(y+size)).toFixed(1)} Td (${this._esc(s)}) Tj ET`);
+    return this;
+  }
+
+  rect(x,y,w,h,{fill,stroke,sw=0.5}={}){
+    let s='';
+    if(fill) s+=`${this._col(fill)} `;
+    if(stroke) s+=`${this._col(stroke,'RG')} ${sw} w `;
+    s+=`${x.toFixed(1)} ${(this._py(y+h)).toFixed(1)} ${w.toFixed(1)} ${h.toFixed(1)} re `;
+    s+=fill&&stroke?'B':fill?'f':'S';
+    this.ops.push(s); return this;
+  }
+
+  line(x1,y1,x2,y2,{color='#E5E7EB',w=0.5}={}){
+    this.ops.push(`${w} w ${this._col(color,'RG')} ${x1.toFixed(1)} ${this._py(y1).toFixed(1)} m ${x2.toFixed(1)} ${this._py(y2).toFixed(1)} l S`);
+    return this;
+  }
+
+  // Check if we need a new page
+  checkPage(y,needed=20){ if(y+needed>this.H-this.M){ this.addPage(); return this.M+10; } return y; }
+
+  build(){
+    const nP=this.pages.length;
+    const pIds=Array.from({length:nP},(_,i)=>3+i);
+    const sIds=Array.from({length:nP},(_,i)=>3+nP+i);
+    const f1=3+nP*2, f2=3+nP*2+1, total=f2;
+    const defs=Array(total).fill('');
+    defs[0]=`<< /Type /Catalog /Pages 2 0 R >>`;
+    defs[1]=`<< /Type /Pages /Kids [${pIds.map(id=>`${id} 0 R`).join(' ')}] /Count ${nP} >>`;
+    this.pages.forEach((ops,i)=>{
+      const s=ops.join('\n');
+      defs[pIds[i]-1]=`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${this.W} ${this.H}] /Contents ${sIds[i]} 0 R /Resources << /Font << /F1 ${f1} 0 R /F2 ${f2} 0 R >> >> >>`;
+      defs[sIds[i]-1]=`<< /Length ${s.length} >>\nstream\n${s}\nendstream`;
+    });
+    defs[f1-1]=`<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>`;
+    defs[f2-1]=`<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>`;
+    let out='%PDF-1.4\n', offs=[];
+    defs.forEach((d,i)=>{ offs.push(out.length); out+=`${i+1} 0 obj\n${d}\nendobj\n`; });
+    const xref=out.length;
+    out+=`xref\n0 ${total+1}\n0000000000 65535 f \n`;
+    offs.forEach(o=>{ out+=`${String(o).padStart(10,'0')} 00000 n \n`; });
+    out+=`trailer\n<< /Size ${total+1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+    return out;
+  }
+
+  toBlob(){
+    const s=this.build();
+    const bytes=new Uint8Array(s.length);
+    for(let i=0;i<s.length;i++) bytes[i]=s.charCodeAt(i)&0xff;
+    return new Blob([bytes],{type:'application/pdf'});
+  }
+}
+
+// ── PDF layout helpers ────────────────────────────────────────
+const pdfDownload = (pdf, filename) => {
+  // Use Blob + createObjectURL — avoids Chrome's data:application/pdf CSP block
+  const blob = pdf.toBlob();
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+};
+
+// ── PDF layout primitives matching app's pp-* classes ─────────
+
+// Header: 3-col — left(logo+Mise), centre(subtitle+title), right(meta)
+const pdfHeader = (pdf, title, subtitle, period='', bizName='My Business') => {
+  const W=pdf.W, M=pdf.M;
+  // Border-bottom line (matches pp-hdr border-bottom: 2px solid #E5E7EB)
+  pdf.line(M, 58, W-M, 58, {color:'#E5E7EB', w:1.5});
+  // Left: green M badge
+  pdf.rect(M, 10, 32, 32, {fill:'#8FCB72'});
+  pdf.text(M+8, 12, 'M', {size:18, bold:true, color:'#0C0F0D'});
+  // Left: Mise wordmark
+  pdf.text(M+40, 12, 'Mise', {size:14, bold:true, color:'#0C0F0D'});
+  pdf.text(M+40, 26, 'HOSPITALITY FINANCE', {size:7.5, color:'#6B7280'});
+  // Centre: subtitle (small caps style) + title (large bold)
+  const cx=W/2;
+  pdf.text(cx, 10, subtitle.toUpperCase(), {size:8, color:'#9CA3AF', align:'center'});
+  pdf.text(cx, 22, title, {size:17, bold:true, color:'#111111', align:'center'});
+  // Right: meta block
+  pdf.text(W-M, 10, bizName, {size:10, bold:true, color:'#111111', align:'right'});
+  if(period) pdf.text(W-M, 23, `Period: ${period}`, {size:8.5, color:'#6B7280', align:'right'});
+  pdf.text(W-M, 35, `Generated: ${todayStr}`, {size:8, color:'#9CA3AF', align:'right'});
+  pdf.text(W-M, 48, 'MANAGEMENT SUMMARY ONLY', {size:7, color:'#D1D5DB', align:'right'});
+  return 70;
+};
+
+// Section header — matches .pp-sec-ttl (uppercase, small, gray, border-bottom)
+const pdfSecTitle = (pdf, y, title) => {
+  pdf.text(pdf.M, y, title, {size:9, bold:true, color:'#6B7280'});
+  pdf.line(pdf.M, y+12, pdf.W-pdf.M, y+12, {color:'#E5E7EB', w:0.8});
+  return y+18;
+};
+
+// KV row — matches .pp-row (flex space-between, border-bottom: 1px solid #F3F4F6)
+const pdfRow = (pdf, y, label, value, {valColor='#111111', valBold=false, valSize=10, lx, rx, colW}={}) => {
+  const left  = lx ?? pdf.M;
+  const right = rx ?? pdf.W - pdf.M;
+  pdf.text(left+4, y+2, label, {size:9.5, color:'#374151'});
+  pdf.text(right-4, y+2, value, {size:valSize, bold:valBold, color:valColor, align:'right'});
+  pdf.line(left, y+14, right, y+14, {color:'#F3F4F6', w:0.5});
+  return y+16;
+};
+
+// Total row — matches .pp-tot (gray bg, rounded, bold value in green)
+const pdfTotRow = (pdf, y, label, value, {valColor='#8FCB72', lx, rw}={}) => {
+  const x  = lx ?? pdf.M;
+  const bw = rw ?? (pdf.W - pdf.M*2);
+  pdf.rect(x, y, bw, 26, {fill:'#F9FAFB', stroke:'#E5E7EB'});
+  pdf.text(x+10, y+9, label, {size:10, bold:true, color:'#111111'});
+  pdf.text(x+bw-10, y+6, value, {size:14, bold:true, color:valColor, align:'right'});
+  return y+34;
+};
+
+// Warning row — matches .pp-warn (yellow bg, border)
+const pdfWarn = (pdf, y, msg) => {
+  const bw=pdf.W-pdf.M*2;
+  pdf.rect(pdf.M, y, bw, 22, {fill:'#FEFCE8', stroke:'#FDE047'});
+  pdf.text(pdf.M+8, y+7, msg, {size:8.5, color:'#854D0E'});
+  return y+28;
+};
+
+// Two-column section (like the GST | Wages grid in app)
+// Each col gets a section header + rows + optional total row
+const pdfTwoSec = (pdf, startY, left, right) => {
+  const M=pdf.M, W=pdf.W, gap=12;
+  const colW=(W-M*2-gap)/2;
+  const lx=M, rx=M+colW+gap;
+
+  // Section titles
+  pdf.text(lx, startY, left.title, {size:9, bold:true, color:'#6B7280'});
+  pdf.line(lx, startY+12, lx+colW, startY+12, {color:'#E5E7EB', w:0.8});
+  pdf.text(rx, startY, right.title, {size:9, bold:true, color:'#6B7280'});
+  pdf.line(rx, startY+12, rx+colW, startY+12, {color:'#E5E7EB', w:0.8});
+  let ly=startY+18, ry=startY+18;
+
+  left.rows.forEach(r=>{
+    pdf.text(lx+4, ly+2, r.lbl, {size:9, color:'#374151'});
+    pdf.text(lx+colW-4, ly+2, r.val, {size:9, bold:!!r.bold, color:r.color||'#111111', align:'right'});
+    pdf.line(lx, ly+14, lx+colW, ly+14, {color:'#F3F4F6', w:0.5});
+    ly+=16;
+  });
+  right.rows.forEach(r=>{
+    pdf.text(rx+4, ry+2, r.lbl, {size:9, color:'#374151'});
+    pdf.text(rx+colW-4, ry+2, r.val, {size:9, bold:!!r.bold, color:r.color||'#111111', align:'right'});
+    pdf.line(rx, ry+14, rx+colW, ry+14, {color:'#F3F4F6', w:0.5});
+    ry+=16;
+  });
+
+  const maxY=Math.max(ly,ry)+4;
+  // Total boxes side-by-side
+  if(left.total){
+    pdf.rect(lx, maxY, colW, 28, {fill:'#F9FAFB', stroke:'#E5E7EB'});
+    pdf.text(lx+8, maxY+8, left.total.lbl, {size:9.5, bold:true, color:'#111111'});
+    pdf.text(lx+colW-8, maxY+6, left.total.val, {size:14, bold:true, color:left.total.color||'#8FCB72', align:'right'});
+  }
+  if(right.total){
+    pdf.rect(rx, maxY, colW, 28, {fill:'#F9FAFB', stroke:'#E5E7EB'});
+    pdf.text(rx+8, maxY+8, right.total.lbl, {size:9.5, bold:true, color:'#111111'});
+    pdf.text(rx+colW-8, maxY+6, right.total.val, {size:14, bold:true, color:right.total.color||'#8FCB72', align:'right'});
+  }
+  return maxY + (left.total||right.total ? 28+10 : 4);
+};
+
+// Mini stat card grid (like .pp-quarter-grid) — n cards in a row
+const pdfStatCards = (pdf, y, cards) => {
+  const M=pdf.M, W=pdf.W, n=cards.length, gap=8;
+  const cw=(W-M*2-(n-1)*gap)/n;
+  cards.forEach((c,i)=>{
+    const cx=M+i*(cw+gap);
+    pdf.rect(cx, y, cw, 42, {fill:'#F9FAFB', stroke:'#E5E7EB'});
+    pdf.text(cx+8, y+8, String(c.lbl), {size:8, color:'#9CA3AF'});
+    pdf.text(cx+8, y+20, String(c.val), {size:15, bold:true, color:c.color||'#111111'});
+    if(c.sub) pdf.text(cx+8, y+34, c.sub, {size:7.5, color:'#9CA3AF'});
+  });
+  return y+50;
+};
+
+// Table helper
+const pdfTable = (pdf, y, headers, rows, colWidths, {rowH=15,hdrH=18,fontSize=9,footerRow=null,numCols=[]}={}) => {
+  const M=pdf.M, totalW=colWidths.reduce((s,w)=>s+w,0);
+  pdf.rect(M, y, totalW, hdrH, {fill:'#111827'});
+  let cx=M;
+  headers.forEach((h,i)=>{
+    const isNum=numCols.includes(i)||(i>0&&i>=headers.length-2);
+    const align=isNum?'right':'left';
+    pdf.text(cx+(align==='right'?colWidths[i]-5:5), y+5, h, {size:fontSize-1, bold:true, color:'#FFFFFF', align});
+    cx+=colWidths[i];
+  });
+  y+=hdrH;
+
+  rows.forEach((row,ri)=>{
+    y=pdf.checkPage(y, rowH+4);
+    if(ri%2===1) pdf.rect(M, y, totalW, rowH, {fill:'#F9FAFB'});
+    cx=M;
+    row.forEach((cell,ci)=>{
+      const isNum=numCols.includes(ci)||(ci>0&&ci>=row.length-2&&typeof(cell?.text||cell)==='string'&&String(cell?.text||cell).startsWith('$'));
+      const align=isNum?'right':'left';
+      const col=cell?.color||'#374151';
+      const txt=String(cell?.text||cell||'');
+      pdf.text(cx+(align==='right'?colWidths[ci]-4:4), y+3, txt, {size:fontSize, color:col, align});
+      cx+=colWidths[ci];
+    });
+    pdf.line(M, y+rowH, M+totalW, y+rowH, {color:'#E5E7EB', w:0.5});
+    y+=rowH;
+  });
+
+  if(footerRow){
+    pdf.rect(M, y, totalW, hdrH, {fill:'#F3F4F6', stroke:'#E5E7EB'});
+    cx=M;
+    footerRow.forEach((cell,ci)=>{
+      const isNum=numCols.includes(ci)||(ci>0&&ci>=footerRow.length-2);
+      const align=isNum?'right':'left';
+      pdf.text(cx+(align==='right'?colWidths[ci]-4:4), y+5, String(cell||''), {size:fontSize, bold:true, color:'#111111', align});
+      cx+=colWidths[ci];
+    });
+    y+=hdrH;
+  }
+  return y+8;
+};
+
+// Disclaimer footer — matches .pp-disc
+const pdfDisclaimer = (pdf, y) => {
+  y=pdf.checkPage(y, 36);
+  pdf.line(pdf.M, y, pdf.W-pdf.M, y, {color:'#E5E7EB', w:0.8});
+  y+=6;
+  pdf.text(pdf.M, y, 'Important: This document is a management summary only generated by Mise for planning and review purposes.', {size:7.5, color:'#9CA3AF'});
+  y+=10;
+  pdf.text(pdf.M, y, 'Not a substitute for a registered tax agent, BAS agent or accountant. All figures are estimates based on data entered into Mise.', {size:7.5, color:'#9CA3AF'});
+  y+=10;
+  pdf.text(pdf.M, y, `Generated ${new Date().toLocaleDateString('en-AU',{day:'2-digit',month:'long',year:'numeric'})}   |   Retain records for 7 years (ATO requirement)   |   ato.gov.au`, {size:7.5, color:'#9CA3AF'});
+};
+
+// ── PDF render functions ──────────────────────────────────────
+
+const renderBASSummaryPDF = ({d, quarter}) => {
+  const pdf=new MiniPDF();
+  const W=pdf.W, M=pdf.M;
+  let y=pdfHeader(pdf, 'BAS Support Summary', 'Quarterly BAS Management Summary', quarter);
+
+  // Warnings
+  if(d.warnings.length>0){
+    y=pdfSecTitle(pdf, y, 'WARNINGS & MISSING RECORDS');
+    d.warnings.forEach(w=>{ y=pdfWarn(pdf, y, w); });
+    y+=4;
+  }
+
+  // Two-column: GST | Wages
+  y=pdfTwoSec(pdf, y,
+    { title:'GST CALCULATION',
+      rows:[
+        {lbl:'Total Sales (incl. GST)', val:`$${d.totalRev.toFixed(2)}`},
+        {lbl:'GST on Sales (÷11)',      val:`$${d.gstColl.toFixed(2)}`},
+        {lbl:'GST Credits on Purchases',val:`- $${d.gstCreds.toFixed(2)}`, color:'#16A34A'},
+      ],
+      total:{lbl:'Net GST Payable', val:`$${d.netGST.toFixed(2)}`, color:'#8FCB72'},
+    },
+    { title:'WAGES & PAYG',
+      rows:[
+        {lbl:'Total Gross Wages',          val:`$${d.totalWages.toFixed(2)}`},
+        {lbl:'Est. PAYG Withholding (~19%)',val:`$${d.totalPayg.toFixed(2)}`},
+        {lbl:'Est. Super (11.5%)',          val:`$${d.totalSuper.toFixed(2)}`},
+      ],
+      total:{lbl:'Total Employment Cost', val:`$${(d.totalWages+d.totalPayg+d.totalSuper).toFixed(2)}`, color:'#8FCB72'},
+    }
+  );
+  y+=8;
+
+  // BAS Estimate Summary
+  y=pdfSecTitle(pdf, y, 'BAS ESTIMATE SUMMARY');
+  y=pdfRow(pdf, y, 'Net GST Payable',        `$${d.netGST.toFixed(2)}`);
+  y=pdfRow(pdf, y, 'PAYG Withholding',        `$${d.totalPayg.toFixed(2)}`);
+  y=pdfRow(pdf, y, 'Est. Quarterly Insurance',`$${d.totalIns.toFixed(2)}`);
+  y+=2;
+  y=pdfTotRow(pdf, y, 'Estimated Total BAS Obligation', `$${d.estBAS.toFixed(2)}`);
+  y+=8;
+
+  // Supporting documents
+  y=pdfSecTitle(pdf, y, `SUPPORTING DOCUMENTS — ${quarter}`);
+  y=pdfStatCards(pdf, y, [
+    {lbl:'Verified Documents',  val:d.verifiedDocs, color:'#16A34A'},
+    {lbl:'Pending Review',      val:d.pendingDocs,  color:d.pendingDocs>0?'#D97706':'#16A34A'},
+    {lbl:'Missing Documents',   val:d.missingDocs,  color:d.missingDocs>0?'#DC2626':'#16A34A'},
+    {lbl:'Missing Tax Invoices',val:d.missingInv,   color:d.missingInv>0?'#DC2626':'#16A34A'},
+  ]);
+
+  pdfDisclaimer(pdf, y);
+  return pdf;
+};
+
+const renderExpenseReportPDF = ({filtered, totalExp, gstCreds, missingCred, hasFilters}) => {
+  const pdf=new MiniPDF();
+  const W=pdf.W, M=pdf.M;
+  let y=pdfHeader(pdf, 'Expense Report', hasFilters?'Filtered View — Expense Report':'All Expenses Report');
+
+  // Summary stat cards
+  y=pdfStatCards(pdf, y, [
+    {lbl:'Total Expenses',          val:`$${totalExp.toFixed(2)}`},
+    {lbl:'GST Credits (with inv.)', val:`$${gstCreds.toFixed(2)}`,   color:'#16A34A'},
+    {lbl:'Missing Invoice Credits', val:`$${missingCred.toFixed(2)}`,color: missingCred>0?'#DC2626':'#111111'},
+    {lbl:'Total Entries',           val:String(filtered.length)},
+  ]);
+
+  y=pdfSecTitle(pdf, y, 'EXPENSE DETAIL');
+  const cols=[58,75,0,64,64,42];
+  cols[2]=W-M*2-cols.filter((_,i)=>i!==2).reduce((s,c)=>s+c,0);
+  y=pdfTable(pdf, y,
+    ['Date','Category','Description','Amount','GST Credit','Invoice'],
+    filtered.map(e=>[
+      e.date, e.cat,
+      e.desc.length>26?e.desc.slice(0,26)+'…':e.desc,
+      `$${e.amount.toFixed(2)}`,
+      e.gst?`$${(e.amount/11).toFixed(2)}`:'—',
+      e.invoice?'Yes':{text:'No',color:'#DC2626'},
+    ]),
+    cols,
+    { footerRow:['TOTAL','','',`$${totalExp.toFixed(2)}`,`$${gstCreds.toFixed(2)}`,''],
+      numCols:[3,4] }
+  );
+  pdfDisclaimer(pdf, y);
+  return pdf;
+};
+
+const renderAccountantPackPDF = ({d, selFY}) => {
+  const pdf=new MiniPDF();
+  const W=pdf.W, M=pdf.M;
+  let y=pdfHeader(pdf, 'Annual Accountant Pack', 'Financial Year Summary', selFY);
+
+  if(d.warnings.length>0){
+    d.warnings.forEach(w=>{ y=pdfWarn(pdf, y, w); });
+    y+=4;
+  }
+
+  // Annual summary — two column: Revenue/Expenses | Wages/Obligations
+  y=pdfTwoSec(pdf, y,
+    { title:'REVENUE & EXPENSES',
+      rows:[
+        {lbl:'Total Revenue',   val:`$${d.totalRev.toFixed(2)}`},
+        {lbl:'Total Expenses',  val:`$${d.totalExp.toFixed(2)}`},
+        {lbl:'Insurance',       val:`$${d.totalIns.toFixed(2)}`},
+      ],
+      total:{lbl:'Gross Profit', val:`$${(d.totalRev-d.totalExp).toFixed(2)}`, color:'#8FCB72'},
+    },
+    { title:'WAGES & OBLIGATIONS',
+      rows:[
+        {lbl:'Total Wages Paid',     val:`$${d.totalWages.toFixed(2)}`},
+        {lbl:'Total PAYG Withheld',  val:`$${d.totalPayg.toFixed(2)}`},
+        {lbl:'Total Super (11.5%)',  val:`$${d.totalSuper.toFixed(2)}`},
+      ],
+      total:{lbl:'Total Labour Cost', val:`$${(d.totalWages+d.totalSuper).toFixed(2)}`, color:'#8FCB72'},
+    }
+  );
+  y+=8;
+
+  // Expenses by category
+  y=pdfSecTitle(pdf, y, 'EXPENSES BY CATEGORY');
+  const catRows=EXP_CATEGORIES.filter(c=>d.bycat[c]>0).map(c=>{
+    const cfg=CAT_CONFIG[c];
+    return [cfg?`${cfg.label}`:c, `$${d.bycat[c].toFixed(2)}`];
+  });
+  y=pdfTable(pdf, y, ['Category','Amount (AUD)'], catRows, [W-M*2-90,90],
+    { rowH:14, footerRow:['TOTAL',`$${d.totalExp.toFixed(2)}`], numCols:[1] }
+  );
+
+  pdfDisclaimer(pdf, y);
+  return pdf;
+};
+
+const renderPayrollPDF = ({employees, allRows, selFY}) => {
+  const pdf=new MiniPDF();
+  const W=pdf.W, M=pdf.M;
+  let y=pdfHeader(pdf, 'Payroll Summary', 'Wages & Super STP Support Pack', selFY);
+
+  y=pdfSecTitle(pdf, y, 'EMPLOYEE PAYROLL SUMMARY');
+  const cols=[110,80,65,55,55,55,55,0];
+  cols[7]=W-M*2-cols.slice(0,7).reduce((s,c)=>s+c,0);
+  const tableRows=employees.map(emp=>{
+    const er=allRows.filter(t=>t.eid===emp.id);
+    return [emp.name, emp.role, emp.type,
+      `$${effRate(emp).toFixed(2)}/hr`,
+      `$${er.reduce((s,t)=>s+t.gross,0).toFixed(2)}`,
+      `$${er.reduce((s,t)=>s+t.payg,0).toFixed(2)}`,
+      `$${er.reduce((s,t)=>s+t.super,0).toFixed(2)}`,
+      emp.tfn?{text:'Yes',color:'#16A34A'}:{text:'Missing',color:'#DC2626'}];
+  });
+  const tGross=allRows.reduce((s,t)=>s+t.gross,0);
+  const tPayg =allRows.reduce((s,t)=>s+t.payg,0);
+  const tSuper=allRows.reduce((s,t)=>s+t.super,0);
+  y=pdfTable(pdf, y,
+    ['Name','Role','Type','Rate','Gross','PAYG','Super','TFN'],
+    tableRows, cols,
+    { footerRow:['TOTALS','','','',`$${tGross.toFixed(2)}`,`$${tPayg.toFixed(2)}`,`$${tSuper.toFixed(2)}`,''],
+      numCols:[4,5,6] }
+  );
+  y+=8;
+
+  // Summary totals
+  y=pdfSecTitle(pdf, y, 'PAYROLL TOTALS');
+  y=pdfTwoSec(pdf, y,
+    { title:'GROSS & PAYG',
+      rows:[
+        {lbl:'Total Gross Wages',    val:`$${tGross.toFixed(2)}`},
+        {lbl:'Total PAYG Withheld',  val:`$${tPayg.toFixed(2)}`},
+      ],
+      total:{lbl:'Total Net (take-home est.)', val:`$${(tGross-tPayg).toFixed(2)}`},
+    },
+    { title:'SUPER',
+      rows:[
+        {lbl:'Total Super Obligation (11.5%)', val:`$${tSuper.toFixed(2)}`},
+        {lbl:'Total Labour Cost',              val:`$${(tGross+tSuper).toFixed(2)}`},
+      ],
+      total:{lbl:'SGC Due This Quarter', val:`$${(tSuper/4).toFixed(2)}`},
+    }
+  );
+
+  const noTFN=employees.filter(e=>!e.tfn);
+  if(noTFN.length>0){
+    y+=8;
+    y=pdfSecTitle(pdf, y, 'TFN COMPLIANCE ISSUES');
+    noTFN.forEach(e=>{ y=pdfWarn(pdf, y, `${e.name} (${e.role}) — TFN not on file. Must withhold PAYG at 47%.`); });
+  }
+  pdfDisclaimer(pdf, y);
+  return pdf;
+};
+
+const renderDocRegisterPDF = ({documents, selFY}) => {
+  const pdf=new MiniPDF();
+  const W=pdf.W, M=pdf.M;
+  let y=pdfHeader(pdf, 'Document Register', 'Supporting Records Register', selFY);
+
+  y=pdfStatCards(pdf, y, [
+    {lbl:'Total Documents', val:documents.length},
+    {lbl:'Verified',        val:documents.filter(d=>d.status==='verified').length, color:'#16A34A'},
+    {lbl:'Pending Review',  val:documents.filter(d=>d.status==='pending').length,  color:'#D97706'},
+    {lbl:'Missing',         val:documents.filter(d=>d.status==='missing').length,  color:'#DC2626'},
+  ]);
+
+  y=pdfSecTitle(pdf, y, 'FULL DOCUMENT REGISTER');
+  const cols=[0,70,65,55,50,50];
+  cols[0]=W-M*2-cols.slice(1).reduce((s,c)=>s+c,0);
+  y=pdfTable(pdf, y,
+    ['Document Name','Category','Supplier','Quarter','FY','Status'],
+    documents.map(d=>[
+      d.name.length>30?d.name.slice(0,30)+'…':d.name,
+      d.cat||'—', d.supplier||'—', d.quarter||'—', d.fy||'—',
+      {text:(d.status||'').charAt(0).toUpperCase()+(d.status||'').slice(1),
+       color:d.status==='verified'?'#16A34A':d.status==='missing'?'#DC2626':'#D97706'},
+    ]),
+    cols
+  );
+  pdfDisclaimer(pdf, y);
+  return pdf;
+};
+
+const renderPayslipPDF = ({emp, rows, totals, payPeriodLabel, bizName, bizABN}) => {
+  const pdf=new MiniPDF();
+  const W=pdf.W, M=pdf.M;
+  let y=pdfHeader(pdf, 'Employee Payslip', 'Payslip & Wage Summary', payPeriodLabel, bizName||'My Restaurant');
+
+  if(bizABN) {
+    pdf.text(W-M, 35, `ABN: ${bizABN}`, {size:8, color:'#6B7280', align:'right'});
+  }
+
+  // Employee info + period side-by-side
+  const effR=effRate(emp);
+  y=pdfTwoSec(pdf, y,
+    { title:'EMPLOYEE DETAILS',
+      rows:[
+        {lbl:'Name',            val:emp.name},
+        {lbl:'Role',            val:emp.role||'—'},
+        {lbl:'Employment Type', val:emp.type?emp.type.charAt(0).toUpperCase()+emp.type.slice(1):'—'},
+        {lbl:'Base Rate',       val:`$${parseFloat(emp.rate).toFixed(2)}/hr`},
+        {lbl:'Effective Rate',  val:`$${effR.toFixed(2)}/hr`},
+        {lbl:'Super Fund',      val:emp.superfund||'Not specified'},
+        {lbl:'TFN Provided',    val:emp.tfn?'Yes':'No', color:emp.tfn?'#16A34A':'#DC2626'},
+      ],
+      total:null
+    },
+    { title:'PAY PERIOD',
+      rows:[
+        {lbl:'Period',            val:payPeriodLabel},
+        {lbl:'Standard Hours',    val:`${totals.std_hrs}h`},
+        {lbl:'Overtime Hours',    val:`${totals.ot_hrs}h`},
+        {lbl:'Weekend / PH Hrs',  val:`${totals.wknd_hrs}h`},
+        {lbl:'Total Hours',       val:`${(totals.std_hrs+totals.ot_hrs+totals.wknd_hrs)}h`, bold:true},
+        {lbl:'Gross Pay',         val:`$${totals.gross.toFixed(2)}`, bold:true},
+      ],
+      total:null
+    }
+  );
+  y+=4;
+
+  // Hours breakdown table
+  y=pdfSecTitle(pdf, y, 'HOURS & EARNINGS BREAKDOWN');
+  const cols=[100,50,50,50,75,75,75,0];
+  cols[7]=W-M*2-cols.slice(0,7).reduce((s,c)=>s+c,0);
+  y=pdfTable(pdf, y,
+    ['Pay Week','Std Hrs','OT Hrs','Wknd Hrs','Std Pay','OT Pay','Wknd Pay','Gross'],
+    rows.map(r=>[
+      r.week, `${r.std_hrs}h`, `${r.ot_hrs}h`, `${r.wknd_hrs}h`,
+      `$${(effR*r.std_hrs).toFixed(2)}`,
+      r.ot_hrs>0?`$${(effR*OT_RATE*r.ot_hrs).toFixed(2)}`:'—',
+      r.wknd_hrs>0?`$${(effR*WKND_RATE*r.wknd_hrs).toFixed(2)}`:'—',
+      `$${r.gross.toFixed(2)}`,
+    ]),
+    cols,
+    { footerRow:['TOTAL',`${totals.std_hrs}h`,`${totals.ot_hrs}h`,`${totals.wknd_hrs}h`,'','','',`$${totals.gross.toFixed(2)}`],
+      numCols:[4,5,6,7] }
+  );
+  y+=4;
+
+  // Pay summary
+  y=pdfSecTitle(pdf, y, 'PAY SUMMARY');
+  y=pdfRow(pdf, y, 'Gross Pay',                           `$${totals.gross.toFixed(2)}`);
+  y=pdfRow(pdf, y, `PAYG Withheld (${emp.tfn?'~19%':'47% — no TFN'})`, `- $${totals.payg.toFixed(2)}`, {valColor:'#DC2626'});
+  y+=2;
+  y=pdfTotRow(pdf, y, 'Net Pay (Take-Home)', `$${totals.net.toFixed(2)}`);
+  y+=4;
+
+  // Super info box
+  pdf.rect(M, y, W-M*2, 26, {fill:'#EFF6FF', stroke:'#BFDBFE'});
+  pdf.text(M+10, y+8, `Super (11.5%): $${totals.super.toFixed(2)} to be paid to ${emp.superfund||'nominated fund'} within 28 days of quarter end.`, {size:8.5, color:'#1D4ED8'});
+  pdf.text(M+10, y+18, 'Late super payments attract the SGC — not tax deductible.', {size:8, color:'#3B82F6'});
+  y+=32;
+
+  if(!emp.tfn){
+    y=pdfWarn(pdf, y, `No TFN on file — PAYG withheld at 47%. Ask ${emp.name} to provide their TFN.`);
+  }
+
+  pdfDisclaimer(pdf, y);
+  return pdf;
+};
+
 const calcAge = dob => {
   if (!dob) return null;
   const b = new Date(dob), now = new Date();
@@ -680,6 +1241,7 @@ body { background: ${C.bg}; color: ${C.text}; font-family: 'DM Sans', sans-serif
 .pp-modal { position: fixed; inset: 0; background: rgba(0,0,0,.75); z-index: 300; overflow-y: auto; }
 .pp-close  { position: fixed; top: 16px; right: 16px; background: #fff; border: 1px solid #E5E7EB; border-radius: 8px; padding: 7px 14px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: 'DM Sans',sans-serif; z-index: 301; display: flex; gap: 6px; align-items: center; }
 .pp-print  { position: fixed; top: 16px; right: 120px; background: #8FCB72; color: #fff; border: none; border-radius: 8px; padding: 7px 14px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: 'DM Sans',sans-serif; z-index: 301; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* ── Print media query ── */
 @media print {
@@ -1326,38 +1888,42 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
     showToast("CSV exported!");
   };
 
-  // ── Print / PDF ──────────────────────────────────────────
-  const printReport = () => {
-    const rows = filtered.map(e =>
-      `<tr><td>${e.date}</td><td>${e.cat}</td><td>${e.desc}</td><td style="text-align:right">$${e.amount.toFixed(2)}</td><td style="text-align:right">${e.gst?"$"+(e.amount/11).toFixed(2):"—"}</td><td style="text-align:center">${e.invoice?"✅":"❌"}</td></tr>`
-    ).join("");
-    const win = window.open("","_blank");
-    win.document.write(`
-      <html><head><title>Mise — Expense Report</title>
-      <style>body{font-family:sans-serif;padding:30px;font-size:12px}h2{margin-bottom:4px}p{color:#666;margin-bottom:20px}
-      table{width:100%;border-collapse:collapse}th{background:#f3f4f6;text-align:left;padding:8px 10px;font-size:11px}
-      td{padding:7px 10px;border-bottom:1px solid #e5e7eb}
-      .summary{display:flex;gap:30px;margin-bottom:24px;background:#f9fafb;padding:14px 18px;border-radius:8px}
-      .s-item .lbl{font-size:10px;color:#9ca3af;text-transform:uppercase;font-weight:700}
-      .s-item .val{font-size:18px;font-weight:700;margin-top:2px}
-      @media print{button{display:none}}</style></head>
-      <body>
-      <h2>Mise — Expense Report</h2>
-      <p>Generated ${new Date().toLocaleDateString('en-AU', {day:'numeric',month:'long',year:'numeric'})}${hasFilters?" · Filtered view":""}</p>
-      <div class="summary">
-        <div class="s-item"><div class="lbl">Total Expenses</div><div class="val">$${totalExp.toFixed(2)}</div></div>
-        <div class="s-item"><div class="lbl">GST Credits (with invoice)</div><div class="val" style="color:#16a34a">$${gstCreds.toFixed(2)}</div></div>
-        <div class="s-item"><div class="lbl">Missing Invoice Credits</div><div class="val" style="color:#dc2626">$${missingCred.toFixed(2)}</div></div>
-        <div class="s-item"><div class="lbl">Entries Shown</div><div class="val">${filtered.length}</div></div>
+  // ── Export PDF ───────────────────────────────────────────
+  const [showExpPrint, setShowExpPrint] = useState(false);
+  const ExpensePrintContent = () => (
+    <div className="pp-page">
+      <PPHeader title="Expense Report" subtitle={hasFilters ? "Filtered View" : "All Expenses"}/>
+      <div style={{ display:"flex", gap:20, flexWrap:"wrap", marginBottom:20 }}>
+        {[
+          { lbl:"Total Expenses",           val:money(totalExp),    col:"#111" },
+          { lbl:"GST Credits (with invoice)",val:money(gstCreds),   col:"#16A34A" },
+          { lbl:"Missing Invoice Credits",   val:money(missingCred),col:"#DC2626" },
+          { lbl:"Entries",                   val:String(filtered.length), col:"#111" },
+        ].map((s,i) => (
+          <div key={i} style={{ background:"#F9FAFB", border:"1px solid #E5E7EB", borderRadius:8, padding:"10px 16px", minWidth:130 }}>
+            <div style={{ fontSize:9.5, color:"#9CA3AF", textTransform:"uppercase", fontWeight:700, letterSpacing:".5px" }}>{s.lbl}</div>
+            <div style={{ fontFamily:"DM Mono,monospace", fontSize:17, fontWeight:700, color:s.col, marginTop:3 }}>{s.val}</div>
+          </div>
+        ))}
       </div>
-      <table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>GST Credit</th><th>Invoice</th></tr></thead>
-      <tbody>${rows}</tbody></table>
-      <p style="margin-top:20px;font-size:10px;color:#9ca3af">⚠️ Mise generates management summaries only. Not a substitute for a registered tax agent or accountant.</p>
-      <button onclick="window.print()" style="margin-top:16px;padding:8px 20px;background:#16a34a;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">🖨️ Print / Save as PDF</button>
-      </body></html>
-    `);
-    win.document.close();
-  };
+      <table className="pp-tbl">
+        <thead><tr><th>Date</th><th>Category</th><th>Description</th><th style={{textAlign:"right"}}>Amount</th><th style={{textAlign:"right"}}>GST Credit</th><th>Invoice</th></tr></thead>
+        <tbody>
+          {filtered.map(e => (
+            <tr key={e.id}>
+              <td style={{fontSize:11}}>{e.date}</td>
+              <td>{e.cat}</td>
+              <td style={{color:"#6B7280"}}>{e.desc}</td>
+              <td style={{textAlign:"right",fontFamily:"DM Mono,monospace",fontWeight:600}}>{money(e.amount)}</td>
+              <td style={{textAlign:"right",fontFamily:"DM Mono,monospace",color: e.gst && e.invoice ? "#16A34A" : "#9CA3AF"}}>{e.gst ? money(e.amount/11) : "—"}</td>
+              <td>{e.invoice ? "✅ Yes" : "❌ No"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <PPDisclaimer/>
+    </div>
+  );
 
   const ALERT_COLORS = { red:{ bg:"rgba(224,96,96,.1)", border:"rgba(224,96,96,.3)", dot:C.red }, yellow:{ bg:"rgba(212,168,67,.1)", border:"rgba(212,168,67,.3)", dot:C.yellow } };
 
@@ -1367,7 +1933,7 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
         <div className="hdr-left"><div className="ptitle">Expense Tracking</div><div className="psub">Track business expenses, GST credits and deductions</div></div>
         <div style={{ display:"flex", gap:8 }}>
           <button className="btn-g" onClick={exportCSV}>⬇️ Export CSV</button>
-          <button className="btn-g" onClick={printReport}>🖨️ Print Report</button>
+          <button className="btn-g" onClick={() => setShowExpPrint(true)}>⬇️ Export PDF</button>
         </div>
       </div>
 
@@ -1732,12 +2298,16 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
 
         </div>
       )}
+
+      {showExpPrint && (
+        <PrintModal title="Expense Report" onClose={() => setShowExpPrint(false)}
+          onExport={() => renderExpenseReportPDF({filtered, totalExp, gstCreds, missingCred, hasFilters})}>
+          <ExpensePrintContent/>
+        </PrintModal>
+      )}
     </>
   );
 }
-
-// ════════════════════════════════════════════════════════════
-//  EMPLOYEE MODAL
 // ════════════════════════════════════════════════════════════
 const BLANK_EMP = {
   name:"", email:"", phone:"", dob:"", nok_name:"", nok_phone:"",
@@ -2802,7 +3372,8 @@ function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, biz
       </div>
 
       {showPrint && emp && (
-        <PrintModal title={`Payslip — ${emp.name}`} onClose={() => setShowPrint(false)}>
+        <PrintModal title={`Payslip — ${emp.name}`} onClose={() => setShowPrint(false)}
+          onExport={() => renderPayslipPDF({emp, rows, totals, payPeriodLabel, bizName, bizABN})}>
           <PayslipPrint/>
         </PrintModal>
       )}
@@ -3989,11 +4560,47 @@ function SettingsPage({ industry, setIndustry, showToast }) {
 // ════════════════════════════════════════════════════════════
 //  PRINT PREVIEW MODAL
 // ════════════════════════════════════════════════════════════
-function PrintModal({ title, children, onClose }) {
+function PrintModal({ title, children, onExport, onClose }) {
+  const [status, setStatus] = useState("idle"); // idle | busy | done | error
+  const safeTitle = (title || "mise-export").replace(/[^a-z0-9\-_ ]/gi,"").replace(/\s+/g,"-").toLowerCase();
+  const filename  = `${safeTitle}-${todayStr}.pdf`;
+
+  const handleExport = () => {
+    if (status === "busy") return;
+    setStatus("busy");
+    try {
+      const pdf = onExport();           // returns MiniPDF instance
+      pdfDownload(pdf, filename);       // Blob + createObjectURL — no CSP issues
+      setStatus("done");
+      setTimeout(() => setStatus("idle"), 3000);
+    } catch(err) {
+      console.error("PDF export:", err);
+      setStatus("error");
+      setTimeout(() => setStatus("idle"), 3000);
+    }
+  };
+
+  const btnLabel = { idle:"⬇️ Download PDF", busy:"⏳ Generating…", done:"✅ Downloaded!", error:"❌ Try again" }[status];
+  const btnBg    = { idle:C.accent, busy:C.accent, done:"#16A34A", error:"#DC2626" }[status];
+
   return (
     <div className="pp-modal">
-      <button className="pp-close" onClick={onClose}>✕ Close</button>
-      <button className="pp-print" onClick={() => window.print()}>🖨️ Print / Save PDF</button>
+      <div style={{ position:"fixed", top:12, right:12, display:"flex", gap:8, zIndex:302 }}>
+        {onExport && (
+          <button onClick={handleExport} disabled={status==="busy"}
+            style={{ background:btnBg, color:"#0C0F0D", border:"none", borderRadius:8,
+              padding:"8px 16px", fontSize:13, fontWeight:700, cursor:status==="busy"?"wait":"pointer",
+              fontFamily:"'DM Sans',sans-serif", display:"flex", alignItems:"center", gap:6 }}>
+            {status==="busy" && <span style={{ width:11,height:11,border:"2px solid #0C0F0D",borderTopColor:"transparent",borderRadius:"50%",display:"inline-block",animation:"spin .7s linear infinite" }}/>}
+            {btnLabel}
+          </button>
+        )}
+        <button onClick={onClose}
+          style={{ background:"#fff", border:"1px solid #E5E7EB", borderRadius:8, padding:"8px 14px",
+            fontSize:13, fontWeight:600, cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>
+          ✕ Close
+        </button>
+      </div>
       <div className="print-preview">
         {children}
       </div>
@@ -4400,7 +5007,8 @@ function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, d
 
   return (
     <>
-      {print && <PrintModal title="BAS Support Summary" onClose={() => setPrint(false)}><PrintContent/></PrintModal>}
+      {print && <PrintModal title="BAS Support Summary" onClose={() => setPrint(false)}
+        onExport={() => renderBASSummaryPDF({d, quarter:selQ})}><PrintContent/></PrintModal>}
 
       <div className="hdr">
         <div className="hdr-left"><div className="ptitle">📋 BAS Summary Generator</div><div className="psub">Quarterly BAS support summary — for review before lodgment</div></div>
@@ -4408,7 +5016,7 @@ function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, d
           <select className="sel" value={selQ} onChange={e => setSelQ(e.target.value)} style={{ width:140 }}>
             {BAS_QUARTERS.map(q => <option key={q}>{q}</option>)}
           </select>
-          <button className="btn" onClick={() => setPrint(true)}>🖨️ Print / PDF</button>
+          <button className="btn" onClick={() => setPrint(true)}>⬇️ Export PDF</button>
         </div>
       </div>
 
@@ -4608,7 +5216,8 @@ function AccountantPackPage({ revenue, expenses, timesheets, employees, insuranc
 
   return (
     <>
-      {print && <PrintModal title="Annual Accountant Pack" onClose={() => setPrint(false)}><PrintContent/></PrintModal>}
+      {print && <PrintModal title="Annual Accountant Pack" onClose={() => setPrint(false)}
+        onExport={() => renderAccountantPackPDF({d, selFY})}><PrintContent/></PrintModal>}
 
       <div className="hdr">
         <div className="hdr-left"><div className="ptitle">📦 Annual Accountant Pack</div><div className="psub">Full financial year summary — accountant-ready for review</div></div>
@@ -4616,7 +5225,7 @@ function AccountantPackPage({ revenue, expenses, timesheets, employees, insuranc
           <select className="sel" value={selFY} onChange={e => setSelFY(e.target.value)} style={{ width:120 }}>
             {FIN_YEARS.map(y => <option key={y}>{y}</option>)}
           </select>
-          <button className="btn" onClick={() => setPrint(true)}>🖨️ Print / PDF</button>
+          <button className="btn" onClick={() => setPrint(true)}>⬇️ Export PDF</button>
         </div>
       </div>
 
@@ -4887,10 +5496,14 @@ function ReportsPage({ revenue, expenses, timesheets, employees, insurance, docu
 
   return (
     <>
-      {print === "bas"         && <PrintModal onClose={()=>setPrint(null)}><BASPrint/></PrintModal>}
-      {print === "annual"      && <PrintModal onClose={()=>setPrint(null)}><div className="pp-page"><PPHeader title="Annual Accountant Pack" subtitle="Financial Year Summary" fy={selFY}/>{annual.warnings.map((w,i)=><div key={i} className="pp-warn">⚠️ {w}</div>)}<div className="pp-sec"><div className="pp-sec-ttl">Expenses by Category</div><table className="pp-tbl"><thead><tr><th>Category</th><th style={{textAlign:"right"}}>Amount</th></tr></thead><tbody>{EXP_CATEGORIES.filter(c=>annual.bycat[c]>0).map((c,i)=><tr key={i}><td>{c}</td><td style={{textAlign:"right",fontFamily:"DM Mono,monospace"}}>{money(annual.bycat[c])}</td></tr>)}</tbody><tfoot><tr><td>Total</td><td style={{textAlign:"right",fontFamily:"DM Mono,monospace"}}>{money(annual.totalExp)}</td></tr></tfoot></table></div><PPDisclaimer/></div></PrintModal>}
-      {print === "payroll"     && <PrintModal onClose={()=>setPrint(null)}><PayrollPrint/></PrintModal>}
-      {print === "docregister" && <PrintModal onClose={()=>setPrint(null)}><DocRegPrint/></PrintModal>}
+      {print === "bas"         && <PrintModal title="BAS Support Summary"    onClose={()=>setPrint(null)}
+        onExport={() => renderBASSummaryPDF({d:bas, quarter:selQ})}><BASPrint/></PrintModal>}
+      {print === "annual"      && <PrintModal title="Annual Accountant Pack"  onClose={()=>setPrint(null)}
+        onExport={() => renderAccountantPackPDF({d:annual, selFY})}><div className="pp-page"><PPHeader title="Annual Accountant Pack" subtitle="Financial Year Summary" fy={selFY}/>{annual.warnings.map((w,i)=><div key={i} className="pp-warn">⚠️ {w}</div>)}<div className="pp-sec"><div className="pp-sec-ttl">Expenses by Category</div><table className="pp-tbl"><thead><tr><th>Category</th><th style={{textAlign:"right"}}>Amount</th></tr></thead><tbody>{EXP_CATEGORIES.filter(c=>annual.bycat[c]>0).map((c,i)=><tr key={i}><td>{c}</td><td style={{textAlign:"right",fontFamily:"DM Mono,monospace"}}>{money(annual.bycat[c])}</td></tr>)}</tbody><tfoot><tr><td>Total</td><td style={{textAlign:"right",fontFamily:"DM Mono,monospace"}}>{money(annual.totalExp)}</td></tr></tfoot></table></div><PPDisclaimer/></div></PrintModal>}
+      {print === "payroll"     && <PrintModal title="Payroll Summary"         onClose={()=>setPrint(null)}
+        onExport={() => renderPayrollPDF({employees, allRows:rows, selFY})}><PayrollPrint/></PrintModal>}
+      {print === "docregister" && <PrintModal title="Document Register"       onClose={()=>setPrint(null)}
+        onExport={() => renderDocRegisterPDF({documents, selFY})}><DocRegPrint/></PrintModal>}
 
       <div className="hdr">
         <div className="hdr-left"><div className="ptitle">🖨️ Reports & Exports</div><div className="psub">Generate and print accountant-ready reports — for review, not lodgment</div></div>
@@ -4915,8 +5528,8 @@ function ReportsPage({ revenue, expenses, timesheets, employees, insurance, docu
               {r.ctrl}
             </div>}
             <div className="rep-btns">
-              <button className="btn" onClick={() => setPrint(r.id)}>🖨️ Preview &amp; Print</button>
-              <button className="btn-g" onClick={() => setPrint(r.id)}>Generate PDF</button>
+              <button className="btn" onClick={() => setPrint(r.id)}>⬇️ Export PDF</button>
+              <button className="btn-g" onClick={() => setPrint(r.id)}>⬇️ Export PDF</button>
             </div>
           </div>
         ))}

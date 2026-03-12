@@ -24,12 +24,62 @@ const C = {
 // ════════════════════════════════════════════════════════════
 //  CONSTANTS
 // ════════════════════════════════════════════════════════════
-const SUPER_RATE      = 0.115;
-const PAYG_RATE       = 0.19;
+const SUPER_RATE      = 0.115;   // pre-1 Jul 2025; budget/summary estimate only
+const PAYG_RATE       = 0.19;    // flat estimate used in budget/summary views only
 const CASUAL_LOADING  = 0.25;
 const OT_RATE         = 1.5;
 const WKND_RATE       = 1.75;
 const GST_THRESHOLD   = 82.50;
+
+// ── ATO Superannuation rate — date-aware (SGC schedule) ──────
+// 11.5% to 30 Jun 2025 → 12.0% from 1 Jul 2025
+const getSuperRate = (weekStr) => {
+  if (!weekStr) return 0.12;
+  const [yr, wk] = weekStr.split('-W').map(Number);
+  // ISO week: Jan 4 is always in week 1
+  const jan4 = new Date(Date.UTC(yr, 0, 4));
+  const monday = new Date(jan4);
+  monday.setUTCDate(jan4.getUTCDate() - ((jan4.getUTCDay() + 6) % 7) + (wk - 1) * 7);
+  return monday >= new Date(Date.UTC(2025, 6, 1)) ? 0.12 : 0.115;
+};
+
+// ── ATO 2024-25 Progressive PAYG Withholding ─────────────────
+// "Calculated" method: annualise → brackets → LITO → Medicare → divide by 52
+// Ref: NAT 3539 / ATO Tax Withheld Calculator 2024-25
+
+// Tax brackets 2024-25 (Stage 3 cuts applied)
+const _annualTax = (income) => {
+  if (income <= 18200)   return 0;
+  if (income <= 45000)   return (income - 18200) * 0.19;
+  if (income <= 135000)  return 5092 + (income - 45000) * 0.325;
+  if (income <= 190000)  return 34162 + (income - 135000) * 0.37;
+  return 54532 + (income - 190000) * 0.45;
+};
+
+// Low Income Tax Offset (LITO) 2024-25
+const _lito = (income) => {
+  if (income <= 37500)  return 700;
+  if (income <= 45000)  return 700 - (income - 37500) * 0.05;
+  if (income <= 66667)  return 325 - (income - 45000) * 0.015;
+  return 0;
+};
+
+// Medicare Levy 2% — shade-in $26,000–$33,333, full 2% above
+const _medicare = (income) => {
+  if (income <= 26000)  return 0;
+  if (income <= 33333)  return (income - 26000) * 0.1;
+  return income * 0.02;
+};
+
+// Weekly PAYG — Scale 2 (resident with TFN + tax-free threshold)
+// hasTFN=false → 47% flat (ATO no-TFN rule)
+// Returns whole dollars (ATO: truncate, not round)
+const calcWeeklyPAYG = (weeklyGross, hasTFN) => {
+  if (!hasTFN) return Math.floor(weeklyGross * 0.47);
+  const annual = weeklyGross * 52;
+  const tax = Math.max(0, _annualTax(annual) - _lito(annual) + _medicare(annual));
+  return Math.floor(tax / 52);
+};
 
 const ENTERTAINMENT_KW = [
   "lunch","dinner","drinks","meal","cafe","café","restaurant",
@@ -67,23 +117,43 @@ const DEDUCTION_MAP = {
 // Category display config — emoji + label + industry tag
 const CAT_CONFIG = {
   // ── Universal ──────────────────────────────
-  ingredients:          { emoji:"🥩", label:"Ingredients",               industry:"all",  tags:["food","meat","produce","dairy","seafood","fresh"] },
-  food_stock:           { emoji:"🛒", label:"Food & Produce",            industry:"all",  tags:["grocery","pantry","dry goods","stock","tinned"] },
-  rent:                 { emoji:"🏠", label:"Rent",                      industry:"all",  tags:["lease","commercial","property","premises"] },
-  utilities:            { emoji:"⚡", label:"Utilities",                 industry:"all",  tags:["electricity","gas","water","power","agl","energy"] },
-  equipment:            { emoji:"🔧", label:"Equipment",                 industry:"all",  tags:["oven","fridge","pos","machine","tools","purchase"] },
+  ingredients:          { emoji:"🥩", label:"Raw Ingredients",           industry:"all",  tags:["food","meat","produce","dairy","seafood","fresh","raw material","cogs","cost of goods"] },
+  food_stock:           { emoji:"🛒", label:"Food & Produce",            industry:"all",  tags:["grocery","pantry","dry goods","stock","tinned","cost of goods","cogs"] },
+  rent:                 { emoji:"🏠", label:"Rent",                      industry:"all",  tags:["lease","commercial","property","premises","shop rent"] },
+  utilities:            { emoji:"⚡", label:"Utilities",                 industry:"all",  tags:["electricity","gas","water","power","agl","energy","light","heating","hot water"] },
+  equipment:            { emoji:"🔧", label:"Equipment",                 industry:"all",  tags:["oven","fridge","pos","machine","tools","purchase","appliance"] },
   packaging:            { emoji:"📦", label:"Packaging",                 industry:"all",  tags:["box","bag","container","wrap","takeaway"] },
   eco_packaging:        { emoji:"♻️", label:"Eco-Packaging",             industry:"café", tags:["compostable","biodegradable","paper cup","reusable","keep cup"] },
   cleaning:             { emoji:"🧹", label:"Cleaning & Hygiene",        industry:"all",  tags:["detergent","sanitiser","pest","hygiene","mop","clean"] },
   software:             { emoji:"💻", label:"Software & Subscriptions",  industry:"all",  tags:["xero","myob","app","subscription","saas","pos","booking"] },
-  advertising:          { emoji:"📣", label:"Advertising",               industry:"all",  tags:["facebook","google","marketing","social","print","instagram"] },
-  accounting:           { emoji:"📋", label:"Accounting & Professional", industry:"all",  tags:["bookkeeper","tax agent","bas","accountant","legal"] },
+  advertising:          { emoji:"📣", label:"Advertising",               industry:"all",  tags:["facebook","google","marketing","social","print","instagram","promotion","campaign"] },
+  accounting:           { emoji:"📋", label:"Accounting & Consulting",   industry:"all",  tags:["bookkeeper","tax agent","bas","accountant","consulting","adviser","professional"] },
   staff_uniforms:       { emoji:"👕", label:"Staff Uniforms",            industry:"all",  tags:["apron","workwear","cap","branded","shirt","uniform"] },
-  repairs:              { emoji:"🔨", label:"Repairs & Maintenance",     industry:"all",  tags:["plumber","electrician","fix","service","maintenance"] },
+  repairs:              { emoji:"🔨", label:"Repairs & Maintenance",     industry:"all",  tags:["plumber","electrician","fix","service","maintenance","repair"] },
   delivery_fees:        { emoji:"🛵", label:"Delivery Platform Fees",    industry:"all",  tags:["uber eats","doordash","menulog","deliveroo","commission"] },
   music_ent:            { emoji:"🎵", label:"Music & Entertainment",     industry:"all",  tags:["spotify","apra","ppca","dj","band","licence","music"] },
   smallwares:           { emoji:"🍽️", label:"Smallwares & Crockery",    industry:"all",  tags:["plates","cutlery","bowl","tray","ramekin","knife"] },
   linen:                { emoji:"🪣", label:"Linen & Napery",            industry:"all",  tags:["tablecloth","napkin","towel","cloth","linen"] },
+  // ── Finance & Admin (ATO-aligned) ─────────
+  bank_fees:            { emoji:"🏦", label:"Bank Fees & Charges",       industry:"all",  tags:["bank","bank charge","account fee","transaction fee","monthly fee","bsb"] },
+  merchant_fees:        { emoji:"💳", label:"Merchant & EFTPOS Fees",    industry:"all",  tags:["merchant","eftpos","card fee","stripe","tyro","square fee","surcharge","terminal"] },
+  interest_expense:     { emoji:"💸", label:"Interest Expense",          industry:"all",  tags:["interest","loan interest","overdraft","finance charge","bank interest","credit"] },
+  loan_repayment:       { emoji:"💰", label:"Loan Repayment",            industry:"all",  tags:["loan","repayment","principal","finance","borrowing","line of credit","lump sum"] },
+  motor_vehicle:        { emoji:"🚗", label:"Motor Vehicle Expenses",    industry:"all",  tags:["car","vehicle","petrol","fuel","rego","registration","car loan","car repayment","toll","parking","logbook"] },
+  insurance_expense:    { emoji:"🛡️", label:"Insurance Premium",         industry:"all",  tags:["insurance","premium","public liability","workers comp","policy","cover","indemnity"] },
+  legal:                { emoji:"⚖️", label:"Legal Expenses",            industry:"all",  tags:["legal","lawyer","solicitor","barrister","legal fee","contract","dispute","conveyancing"] },
+  license_fees:         { emoji:"📜", label:"License & Permit Fees",     industry:"all",  tags:["licence","license","permit","registration fee","government fee","certification","annual fee","council permit"] },
+  council_rates:        { emoji:"🏛️", label:"Council Rates",             industry:"all",  tags:["council","rates","local government","municipal","land rates","shire","strata"] },
+  freight:              { emoji:"📮", label:"Freight & Courier",         industry:"all",  tags:["freight","courier","postage","delivery","shipping","dhl","auspost","toll ipec","startrack"] },
+  telephone_internet:   { emoji:"📱", label:"Telephone & Internet",      industry:"all",  tags:["phone","telephone","mobile","internet","broadband","nbn","telstra","optus","iinet","vodafone","data"] },
+  travel:               { emoji:"✈️", label:"Travel & Accommodation",    industry:"all",  tags:["travel","flight","hotel","accommodation","airbnb","uber","taxi","cab","conference","motel","train"] },
+  printing:             { emoji:"🖨️", label:"Printing & Stationery",     industry:"all",  tags:["printing","print","stationery","paper","ink","toner","photocopying","office supplies","pens"] },
+  office_expenses:      { emoji:"🖥️", label:"Office Expenses",           industry:"all",  tags:["office","desk","chair","filing","postage","office supply","calculator","whiteboard"] },
+  supplies:             { emoji:"🧰", label:"Supplies",                  industry:"all",  tags:["supplies","consumables","materials","items","hardware","stock","raw","general supply"] },
+  fees_charges:         { emoji:"🔖", label:"Fees & Charges",            industry:"all",  tags:["fee","charge","service fee","one-off","admin fee","application fee","membership"] },
+  depreciation:         { emoji:"📉", label:"Depreciation (< $20k)",     industry:"all",  tags:["depreciation","write off","instant asset write-off","small business","shopfitting","fit-out","fitout","deduction"] },
+  fixed_assets:         { emoji:"🏗️", label:"Fixed Assets (> $20k)",     industry:"all",  tags:["fixed asset","capital","major purchase","building","fitout","renovation","construction","property improvement"] },
+  general_expenses:     { emoji:"🗂️", label:"General Expenses",          industry:"all",  tags:["general","miscellaneous","misc","sundry","general expense","catch-all"] },
   // ── Bar / Pub ──────────────────────────────
   liquor_license:       { emoji:"📜", label:"Liquor License & Levies",  industry:"bar",  tags:["liquor","licence","levy","gaming","permit","annual"] },
   spirit_stock:         { emoji:"🥃", label:"Spirit Stock",             industry:"bar",  tags:["whisky","vodka","gin","rum","tequila","spirit","brandy"] },
@@ -106,12 +176,354 @@ const COMMON_SUPPLIERS = {
   spirit_stock:       ["ALM","Treasury Wine","Diageo","Pernod Ricard"],
   beer_wine_stock:    ["Lion","CUB","Coopers","Dan Murphy's","ALM"],
   utilities:          ["AGL","Origin Energy","EnergyAustralia","Sydney Water"],
+  telephone_internet: ["Telstra","Optus","Vodafone","iiNet","TPG","Aussie Broadband"],
   advertising:        ["Meta Ads","Google Ads","Instagram","Local printer"],
   accounting:         ["Local bookkeeper","Xero","MYOB","BAS Agent"],
   software:           ["Xero","MYOB","Square","Lightspeed","Doshii"],
   delivery_fees:      ["Uber Eats","DoorDash","Menulog","Deliveroo"],
   music_ent:          ["APRA AMCOS","Spotify","PPCA"],
   repairs:            ["Local tradesperson","Airtasker"],
+  bank_fees:          ["ANZ","Commonwealth Bank","Westpac","NAB","Bendigo Bank"],
+  merchant_fees:      ["Tyro","Square","Stripe","Commonwealth Bank","ANZ eBusiness"],
+  insurance_expense:  ["QBE","Allianz","CGU","Suncorp","Steadfast"],
+  legal:              ["Local solicitor","Maurice Blackburn","Slater & Gordon"],
+  freight:            ["AusPost","DHL","TNT","Startrack","Toll IPEC","Sendle"],
+  motor_vehicle:      ["BP","Shell","Caltex","7-Eleven","Ampol"],
+  printing:           ["Officeworks","Vistaprint","Snap Printing","Kwik Kopy"],
+  office_expenses:    ["Officeworks","Staples","Harvey Norman","JB Hi-Fi"],
+  travel:             ["Qantas","Virgin Australia","Airbnb","Booking.com","Uber"],
+};
+
+// ── Smart Auto-Categorisation keyword dictionary ──────────────
+// Each entry: keyword (lowercase) → category id.
+// Longer/more-specific phrases take priority over short ones.
+const SMART_KEYWORDS = {
+  // ── Ingredients / fresh produce ──────────────────────────
+  beef:         "ingredients", lamb:         "ingredients", pork:         "ingredients",
+  chicken:      "ingredients", veal:         "ingredients", duck:         "ingredients",
+  turkey:       "ingredients", venison:      "ingredients", brisket:      "ingredients",
+  tenderloin:   "ingredients", sirloin:      "ingredients", rump:         "ingredients",
+  mince:        "ingredients", salmon:       "ingredients", tuna:         "ingredients",
+  barramundi:   "ingredients", snapper:      "ingredients", prawn:        "ingredients",
+  lobster:      "ingredients", crab:         "ingredients", scallop:      "ingredients",
+  squid:        "ingredients", octopus:      "ingredients", oyster:       "ingredients",
+  mussel:       "ingredients", fish:         "ingredients", seafood:      "ingredients",
+  tomato:       "ingredients", onion:        "ingredients", potato:       "ingredients",
+  carrot:       "ingredients", broccoli:     "ingredients", spinach:      "ingredients",
+  lettuce:      "ingredients", capsicum:     "ingredients", zucchini:     "ingredients",
+  mushroom:     "ingredients", eggplant:     "ingredients", corn:         "ingredients",
+  avocado:      "ingredients", cucumber:     "ingredients", celery:       "ingredients",
+  leek:         "ingredients", garlic:       "ingredients", ginger:       "ingredients",
+  lemon:        "ingredients", lime:         "ingredients", orange:       "ingredients",
+  apple:        "ingredients", herbs:        "ingredients", basil:        "ingredients",
+  parsley:      "ingredients", coriander:    "ingredients", thyme:        "ingredients",
+  rosemary:     "ingredients", cheese:       "ingredients", milk:         "ingredients",
+  cream:        "ingredients", butter:       "ingredients", egg:          "ingredients",
+  eggs:         "ingredients", produce:      "ingredients", butcher:      "ingredients",
+  bidfood:      "ingredients", pfd:          "ingredients", vegies:       "ingredients",
+
+  // ── Food & Pantry stock ───────────────────────────────────
+  rice:         "food_stock",  pasta:        "food_stock",  noodle:       "food_stock",
+  noodles:      "food_stock",  oil:          "food_stock",  olive:        "food_stock",
+  vinegar:      "food_stock",  soy:          "food_stock",  sauce:        "food_stock",
+  condiment:    "food_stock",  spice:        "food_stock",  salt:         "food_stock",
+  pepper:       "food_stock",  stock:        "food_stock",  tinned:       "food_stock",
+  canned:       "food_stock",  grocery:      "food_stock",  pantry:       "food_stock",
+  costco:       "food_stock",  aldi:         "food_stock",  "dry goods":  "food_stock",
+  "food stock": "food_stock",
+
+  // ── Coffee supplies ───────────────────────────────────────
+  coffee:       "coffee_supplies", bean:     "coffee_supplies", espresso:  "coffee_supplies",
+  latte:        "coffee_supplies", cappuccino:"coffee_supplies", flat:     "coffee_supplies",
+  "oat milk":   "coffee_supplies", barista:  "coffee_supplies", grind:    "coffee_supplies",
+  grounds:      "coffee_supplies", decaf:    "coffee_supplies", campos:   "coffee_supplies",
+  "seven seeds":"coffee_supplies", "di bella":"coffee_supplies", allpress:"coffee_supplies",
+  "toby's estate":"coffee_supplies",
+
+  // ── Bakery ───────────────────────────────────────────────
+  flour:        "bakery_supplies", bread:    "bakery_supplies", yeast:    "bakery_supplies",
+  croissant:    "bakery_supplies", pastry:   "bakery_supplies", cake:     "bakery_supplies",
+  muffin:       "bakery_supplies", scone:    "bakery_supplies", baking:   "bakery_supplies",
+  dough:        "bakery_supplies", icing:    "bakery_supplies", frosting: "bakery_supplies",
+  sugar:        "bakery_supplies", vanilla:  "bakery_supplies",
+
+  // ── Beer & Wine ───────────────────────────────────────────
+  beer:         "beer_wine_stock", wine:     "beer_wine_stock", keg:      "beer_wine_stock",
+  cider:        "beer_wine_stock", champagne:"beer_wine_stock", prosecco: "beer_wine_stock",
+  sparkling:    "beer_wine_stock", ale:      "beer_wine_stock", lager:    "beer_wine_stock",
+  ipa:          "beer_wine_stock", stout:    "beer_wine_stock", sauvignon:"beer_wine_stock",
+  chardonnay:   "beer_wine_stock", shiraz:   "beer_wine_stock", pinot:    "beer_wine_stock",
+  "dan murphy": "beer_wine_stock", lion:     "beer_wine_stock", cub:      "beer_wine_stock",
+  coopers:      "beer_wine_stock", alm:      "beer_wine_stock", cellar:   "beer_wine_stock",
+
+  // ── Spirits ──────────────────────────────────────────────
+  whisky:       "spirit_stock",    whiskey:  "spirit_stock",    bourbon:  "spirit_stock",
+  vodka:        "spirit_stock",    gin:      "spirit_stock",    rum:      "spirit_stock",
+  tequila:      "spirit_stock",    brandy:   "spirit_stock",    kahlua:   "spirit_stock",
+  baileys:      "spirit_stock",    cointreau:"spirit_stock",    aperol:   "spirit_stock",
+  campari:      "spirit_stock",    midori:   "spirit_stock",    spirit:   "spirit_stock",
+  spirits:      "spirit_stock",    liqueur:  "spirit_stock",
+
+  // ── Delivery platforms ───────────────────────────────────
+  "uber eats":  "delivery_fees",   ubereats: "delivery_fees",   doordash: "delivery_fees",
+  menulog:      "delivery_fees",   deliveroo:"delivery_fees",   "door dash":"delivery_fees",
+  commission:   "delivery_fees",   "delivery commission":"delivery_fees",
+  "platform fee":"delivery_fees",  eatnow:   "delivery_fees",
+
+  // ── Utilities ────────────────────────────────────────────
+  electricity:  "utilities",       electric: "utilities",       gas:      "utilities",
+  "gas bill":   "utilities",       water:    "utilities",       "water bill":"utilities",
+  power:        "utilities",       internet: "utilities",       broadband:"utilities",
+  wifi:         "utilities",       agl:      "utilities",       origin:   "utilities",
+  "energy australia":"utilities",  "sydney water":"utilities",  telstra:  "utilities",
+  optus:        "utilities",       "nbn":    "utilities",
+
+  // ── Rent ─────────────────────────────────────────────────
+  rent:         "rent",            lease:    "rent",            "commercial rent":"rent",
+  landlord:     "rent",            "shop rent":"rent",          premises: "rent",
+  "office rent":"rent",            "monthly rent":"rent",
+
+  // ── Cleaning ─────────────────────────────────────────────
+  cleaning:     "cleaning",        sanitiser:"cleaning",        detergent:"cleaning",
+  bleach:       "cleaning",        "hand wash":"cleaning",      soap:     "cleaning",
+  mop:          "cleaning",        broom:    "cleaning",        hygiene:  "cleaning",
+  pest:         "cleaning",        "pest control":"cleaning",   disinfect:"cleaning",
+  gloves:       "cleaning",        "paper towel":"cleaning",
+
+  // ── Packaging ─────────────────────────────────────────────
+  container:    "packaging",       takeaway: "packaging",       "takeaway box":"packaging",
+  "takeaway bag":"packaging",      "brown bag":"packaging",     "paper bag":"packaging",
+  napkin:       "packaging",       straw:    "packaging",       lid:      "packaging",
+  foil:         "packaging",       "glad wrap":"packaging",     wrap:     "packaging",
+  "cling wrap": "packaging",
+
+  // ── Eco packaging ─────────────────────────────────────────
+  compostable:  "eco_packaging",   biodegradable:"eco_packaging", "paper cup":"eco_packaging",
+  "keep cup":   "eco_packaging",   "reusable cup":"eco_packaging", bamboo:  "eco_packaging",
+  "eco bag":    "eco_packaging",   "sugarcane":  "eco_packaging",
+
+  // ── Equipment ─────────────────────────────────────────────
+  oven:         "equipment",       fridge:   "equipment",       freezer:  "equipment",
+  dishwasher:   "equipment",       blender:  "equipment",       mixer:    "equipment",
+  printer:      "equipment",       screen:   "equipment",       display:  "equipment",
+  "pos system": "equipment",       "cash register":"equipment", tablet:   "equipment",
+  ipad:         "equipment",       laptop:   "equipment",       computer: "equipment",
+  "coffee machine":"machine_maintenance", grinder: "coffee_supplies",
+
+  // ── Repairs & maintenance ─────────────────────────────────
+  repair:       "repairs",         service:  "repairs",         plumber:  "repairs",
+  electrician:  "repairs",         "air con":"repairs",         aircon:   "repairs",
+  hvac:         "repairs",         maintenance:"repairs",       fix:      "repairs",
+  airtasker:    "repairs",
+
+  // ── Machine maintenance (café) ────────────────────────────
+  descale:      "machine_maintenance", "group head":"machine_maintenance",
+  "espresso machine":"machine_maintenance", "coffee service":"machine_maintenance",
+
+  // ── Software ─────────────────────────────────────────────
+  xero:         "software",        myob:     "software",        square:   "software",
+  lightspeed:   "software",        doshii:   "software",        kounta:   "software",
+  deputy:       "software",        tanda:    "software",        "google workspace":"software",
+  microsoft:    "software",        adobe:    "software",        dropbox:  "software",
+  canva:        "software",        slack:    "software",        zoom:     "software",
+  shopify:      "software",        "point of sale":"software",
+
+  // ── Advertising ──────────────────────────────────────────
+  facebook:     "advertising",     instagram:"advertising",     "google ads":"advertising",
+  "meta ads":   "advertising",     tiktok:   "advertising",     flyer:    "advertising",
+  "flyer print":"advertising",     letterbox:"advertising",     signage:  "advertising",
+  banner:       "advertising",     brochure: "advertising",     "social media":"advertising",
+
+  // ── Accounting / professional ─────────────────────────────
+  accountant:   "accounting",      bookkeeper:"accounting",     "bas agent":"accounting",
+  "tax agent":  "accounting",      "tax return":"accounting",   bas:      "accounting",
+  "legal fee":  "accounting",      lawyer:   "accounting",      solicitor:"accounting",
+  "financial advisor":"accounting",
+
+  // ── Staff uniforms ────────────────────────────────────────
+  uniform:      "staff_uniforms",  apron:    "staff_uniforms",  shirt:    "staff_uniforms",
+  "work shirt": "staff_uniforms",  polo:     "staff_uniforms",  cap:      "staff_uniforms",
+  hat:          "staff_uniforms",  "work pants":"staff_uniforms", "non-slip":"staff_uniforms",
+  workwear:     "staff_uniforms",  "staff shirt":"staff_uniforms",
+
+  // ── Smallwares & crockery ─────────────────────────────────
+  plate:        "smallwares",      plates:   "smallwares",      bowl:     "smallwares",
+  cutlery:      "smallwares",      fork:     "smallwares",      knife:    "smallwares",
+  spoon:        "smallwares",      tray:     "smallwares",      ramekin:  "smallwares",
+  "salt shaker":"smallwares",      pepper:   "smallwares",      crockery: "smallwares",
+
+  // ── Glassware ─────────────────────────────────────────────
+  glass:        "glassware",       pint:     "glassware",       flute:    "glassware",
+  tumbler:      "glassware",       stemware: "glassware",       decanter: "glassware",
+
+  // ── Bar equipment ─────────────────────────────────────────
+  shaker:       "bar_equipment",   jigger:   "bar_equipment",   "ice machine":"bar_equipment",
+  "bar fridge": "bar_equipment",   "tap system":"bar_equipment", strainer: "bar_equipment",
+  "bar tool":   "bar_equipment",   "cocktail":"bar_equipment",
+
+  // ── Linen ─────────────────────────────────────────────────
+  tablecloth:   "linen",           "table cloth":"linen",        towel:   "linen",
+  "cloth napkin":"linen",          "tea towel":  "linen",        linen:   "linen",
+
+  // ── Liquor licence ────────────────────────────────────────
+  "liquor licence":"liquor_license","liquor license":"liquor_license",
+  "gaming permit":"liquor_license", "permit":     "liquor_license",
+  "annual licence":"liquor_license",
+
+  // ── RSA ───────────────────────────────────────────────────
+  rsa:          "rsa_training",    "responsible service":"rsa_training",
+  "alcohol training":"rsa_training","liquor training":"rsa_training",
+
+  // ── Music & entertainment ─────────────────────────────────
+  apra:         "music_ent",       ppca:     "music_ent",       "apra amcos":"music_ent",
+  spotify:      "music_ent",       dj:       "music_ent",       band:     "music_ent",
+  "live music": "music_ent",       "music licence":"music_ent",
+
+  // ── Bank fees ─────────────────────────────────────────────
+  "bank fee":   "bank_fees",       "bank charge":"bank_fees",   "account fee":"bank_fees",
+  "monthly fee":"bank_fees",       "bank charges":"bank_fees",  "account keeping":"bank_fees",
+  "transaction fee":"bank_fees",   anz:      "bank_fees",       westpac:  "bank_fees",
+  nab:          "bank_fees",       "commonwealth bank":"bank_fees",
+
+  // ── Merchant / EFTPOS fees ────────────────────────────────
+  eftpos:       "merchant_fees",   tyro:     "merchant_fees",   "merchant fee":"merchant_fees",
+  "card fee":   "merchant_fees",   "stripe fee":"merchant_fees","terminal fee":"merchant_fees",
+  surcharge:    "merchant_fees",   "pos fee":    "merchant_fees",
+
+  // ── Interest expense ──────────────────────────────────────
+  interest:     "interest_expense","loan interest":"interest_expense",
+  overdraft:    "interest_expense","finance charge":"interest_expense",
+  "credit interest":"interest_expense",
+
+  // ── Loan repayment ────────────────────────────────────────
+  "loan repayment":"loan_repayment","loan payment":"loan_repayment",
+  "line of credit":"loan_repayment","principal repayment":"loan_repayment",
+  borrowing:    "loan_repayment",
+
+  // ── Motor vehicle ─────────────────────────────────────────
+  petrol:       "motor_vehicle",   fuel:     "motor_vehicle",   rego:     "motor_vehicle",
+  "car rego":   "motor_vehicle",   "car loan":"motor_vehicle",  "vehicle loan":"motor_vehicle",
+  "car repayment":"motor_vehicle", toll:     "motor_vehicle",   "e-toll": "motor_vehicle",
+  parking:      "motor_vehicle",   "logbook":"motor_vehicle",   "vehicle expense":"motor_vehicle",
+  "motor vehicle":"motor_vehicle",
+
+  // ── Insurance ─────────────────────────────────────────────
+  "insurance premium":"insurance_expense", "public liability":"insurance_expense",
+  "workers comp":"insurance_expense",      "workers compensation":"insurance_expense",
+  "business insurance":"insurance_expense","professional indemnity":"insurance_expense",
+  qbe:          "insurance_expense",       allianz:  "insurance_expense",
+  suncorp:      "insurance_expense",
+
+  // ── Legal ─────────────────────────────────────────────────
+  "legal fee":  "legal",           lawyer:   "legal",           solicitor:"legal",
+  barrister:    "legal",           "legal expense":"legal",     litigation:"legal",
+  conveyancing: "legal",           contract: "legal",
+
+  // ── License & permit fees ─────────────────────────────────
+  "license fee":  "license_fees",  "licence fee": "license_fees",
+  "government fee":"license_fees", "council permit":"license_fees",
+  "registration fee":"license_fees","certification fee":"license_fees",
+  "annual registration":"license_fees","food safety":"license_fees",
+  "trade license":"license_fees",
+
+  // ── Council rates ─────────────────────────────────────────
+  "council rates":"council_rates", "council rate":"council_rates",
+  rates:        "council_rates",   "land rates":  "council_rates",
+  "strata levy":"council_rates",   strata:       "council_rates",
+  municipal:    "council_rates",   "local government":"council_rates",
+
+  // ── Freight & courier ─────────────────────────────────────
+  freight:      "freight",         courier:  "freight",         postage:  "freight",
+  shipping:     "freight",         dhl:      "freight",         auspost:  "freight",
+  startrack:    "freight",         sendle:   "freight",         "toll ipec":"freight",
+  "express post":"freight",
+
+  // ── Telephone & internet ──────────────────────────────────
+  "phone bill":     "telephone_internet", "mobile bill":"telephone_internet",
+  "internet bill":  "telephone_internet", "broadband bill":"telephone_internet",
+  "nbn bill":       "telephone_internet", "telstra bill":"telephone_internet",
+  "optus bill":     "telephone_internet", "phone plan":  "telephone_internet",
+  "mobile plan":    "telephone_internet", "data plan":   "telephone_internet",
+  "telephone":      "telephone_internet",
+
+  // ── Travel ───────────────────────────────────────────────
+  flight:       "travel",          flights:  "travel",          hotel:    "travel",
+  accommodation:"travel",          airbnb:   "travel",          "booking.com":"travel",
+  conference:   "travel",          motel:    "travel",          "travel expense":"travel",
+  qantas:       "travel",          "virgin australia":"travel", "business travel":"travel",
+
+  // ── Printing & stationery ─────────────────────────────────
+  "printing cost":"printing",      "print job": "printing",
+  stationery:   "printing",        "office paper":"printing",   toner:    "printing",
+  "ink cartridge":"printing",      photocopying:"printing",     officeworks:"printing",
+  vistaprint:   "printing",
+
+  // ── Office expenses ───────────────────────────────────────
+  "office expense":"office_expenses","office supply":"office_expenses",
+  "desk supplies":"office_expenses","whiteboard":  "office_expenses",
+  "office furniture":"office_expenses","calculator":"office_expenses",
+
+  // ── Supplies ─────────────────────────────────────────────
+  consumables:  "supplies",        "general supplies":"supplies",
+  "kitchen supplies":"supplies",   hardware:     "supplies",
+  "bar supplies":   "supplies",    "cleaning supplies":"cleaning",
+
+  // ── Fees & charges ────────────────────────────────────────
+  "service charge":"fees_charges", "one-off fee": "fees_charges",
+  "admin fee":  "fees_charges",    "application fee":"fees_charges",
+  "membership fee":"fees_charges", "subscription fee":"software",
+
+  // ── Depreciation ─────────────────────────────────────────
+  depreciation: "depreciation",    "instant asset":"depreciation",
+  "write-off":  "depreciation",    "write off":   "depreciation",
+  "asset write":"depreciation",    shopfitting:   "depreciation",
+  "small business deduction":"depreciation",
+
+  // ── Fixed assets ─────────────────────────────────────────
+  "fixed asset": "fixed_assets",   "capital purchase":"fixed_assets",
+  renovation:   "fixed_assets",    "major renovation":"fixed_assets",
+  "fitout":     "fixed_assets",    "fit out":    "fixed_assets",
+  "leasehold improvement":"fixed_assets","construction":"fixed_assets",
+
+  // ── General expenses ─────────────────────────────────────
+  "general expense":"general_expenses","sundry expense":"general_expenses",
+  miscellaneous:"general_expenses","misc expense": "general_expenses",
+};
+
+// ── Smart category detection ──────────────────────────────────
+// Returns { cat, keyword, confidence } or null
+const detectCategory = (text, customMappings = {}) => {
+  if (!text || text.trim().length < 2) return null;
+  const lower = text.toLowerCase().trim();
+
+  // 1. Check custom mappings first (user-taught, highest priority)
+  for (const [kw, cat] of Object.entries(customMappings)) {
+    if (lower.includes(kw.toLowerCase())) {
+      return { cat, keyword: kw, confidence: "custom" };
+    }
+  }
+
+  // 2. Multi-word phrases (longer match wins)
+  const phrases = Object.entries(SMART_KEYWORDS)
+    .filter(([kw]) => kw.includes(" "))
+    .sort((a, b) => b[0].length - a[0].length);
+  for (const [kw, cat] of phrases) {
+    if (lower.includes(kw)) return { cat, keyword: kw, confidence: "high" };
+  }
+
+  // 3. Single-word exact match
+  const words = lower.split(/[\s\-,./]+/).filter(w => w.length > 2);
+  for (const word of words) {
+    if (SMART_KEYWORDS[word]) return { cat: SMART_KEYWORDS[word], keyword: word, confidence: "high" };
+  }
+
+  // 4. Partial / fuzzy (word starts-with match)
+  for (const word of words) {
+    const match = Object.entries(SMART_KEYWORDS).find(([kw]) => !kw.includes(" ") && kw.startsWith(word) && word.length >= 4);
+    if (match) return { cat: match[1], keyword: match[0], confidence: "medium" };
+  }
+
+  return null;
 };
 
 const EXP_CATEGORIES = Object.keys(CAT_CONFIG);
@@ -213,6 +625,24 @@ const SEED_LEAVE = [
   { id:2, eid:2, type:"personal", date:"2025-06-20", hours:8,  notes:"Sick day" },
   { id:3, eid:1, type:"lieu",     date:"2025-07-01", hours:7.6,notes:"Lieu for Australia Day shift" },
   { id:4, eid:4, type:"annual",   date:"2025-07-05", hours:19, notes:"2.5 days leave" },
+];
+
+// Roster shifts: one shift per employee per day
+// { id, eid, date:"YYYY-MM-DD", start:"HH:MM", end:"HH:MM", break_mins, note }
+const SEED_ROSTER = [
+  { id:1, eid:1, date:"2025-07-07", start:"07:00", end:"15:30", break_mins:30, note:"Morning kitchen" },
+  { id:2, eid:2, date:"2025-07-07", start:"11:00", end:"15:00", break_mins:0,  note:"Lunch floor" },
+  { id:3, eid:3, date:"2025-07-07", start:"11:00", end:"17:00", break_mins:30, note:"Cashier" },
+  { id:4, eid:4, date:"2025-07-07", start:"07:00", end:"15:30", break_mins:30, note:"Sous chef" },
+  { id:5, eid:1, date:"2025-07-08", start:"07:00", end:"15:30", break_mins:30, note:"" },
+  { id:6, eid:2, date:"2025-07-08", start:"16:00", end:"22:00", break_mins:0,  note:"Dinner service" },
+  { id:7, eid:4, date:"2025-07-08", start:"07:00", end:"15:30", break_mins:30, note:"" },
+  { id:8, eid:1, date:"2025-07-09", start:"07:00", end:"15:30", break_mins:30, note:"" },
+  { id:9, eid:3, date:"2025-07-09", start:"12:00", end:"18:00", break_mins:0,  note:"" },
+  {id:10, eid:4, date:"2025-07-09", start:"07:00", end:"15:30", break_mins:30, note:"" },
+  {id:11, eid:2, date:"2025-07-12", start:"10:00", end:"16:00", break_mins:0,  note:"Weekend lunch" },
+  {id:12, eid:3, date:"2025-07-12", start:"10:00", end:"18:00", break_mins:30, note:"Weekend shift" },
+  {id:13, eid:1, date:"2025-07-13", start:"08:00", end:"14:00", break_mins:0,  note:"Sunday brunch" },
 ];
 
 const SEED_DOCUMENTS = [
@@ -332,104 +762,117 @@ const pdfDownload = (pdf, filename) => {
 
 // ── PDF layout primitives matching app's pp-* classes ─────────
 
-// Header: 3-col — left(logo+Mise), centre(subtitle+title), right(meta)
+// Header — three vertical zones that never overlap:
+//   Zone 1 (y=10–22): Logo | subtitle centre | biz name right
+//   Zone 2 (y=28–50): large title centre ONLY — right column is blank here
+//   Zone 3 (y=54–76): period / generated / mgmt summary right ONLY
+//   Separator y=82, return 96
 const pdfHeader = (pdf, title, subtitle, period='', bizName='My Business') => {
-  const W=pdf.W, M=pdf.M;
-  // Border-bottom line (matches pp-hdr border-bottom: 2px solid #E5E7EB)
-  pdf.line(M, 58, W-M, 58, {color:'#E5E7EB', w:1.5});
-  // Left: green M badge
+  const W=pdf.W, M=pdf.M, cx=W/2;
+
+  // Zone 1 — logo strip
   pdf.rect(M, 10, 32, 32, {fill:'#8FCB72'});
-  pdf.text(M+8, 12, 'M', {size:18, bold:true, color:'#0C0F0D'});
-  // Left: Mise wordmark
-  pdf.text(M+40, 12, 'Mise', {size:14, bold:true, color:'#0C0F0D'});
-  pdf.text(M+40, 26, 'HOSPITALITY FINANCE', {size:7.5, color:'#6B7280'});
-  // Centre: subtitle (small caps style) + title (large bold)
-  const cx=W/2;
+  pdf.text(M+8, 13, 'M', {size:18, bold:true, color:'#0C0F0D'});
+  pdf.text(M+40, 13, 'Mise', {size:13, bold:true, color:'#0C0F0D'});
+  pdf.text(M+40, 27, 'HOSPITALITY FINANCE', {size:7, color:'#6B7280'});
+  // subtitle (small caps) centre
   pdf.text(cx, 10, subtitle.toUpperCase(), {size:8, color:'#9CA3AF', align:'center'});
-  pdf.text(cx, 22, title, {size:17, bold:true, color:'#111111', align:'center'});
-  // Right: meta block
+  // biz name right — baseline = 10+10 = 20, well above title zone
   pdf.text(W-M, 10, bizName, {size:10, bold:true, color:'#111111', align:'right'});
-  if(period) pdf.text(W-M, 23, `Period: ${period}`, {size:8.5, color:'#6B7280', align:'right'});
-  pdf.text(W-M, 35, `Generated: ${todayStr}`, {size:8, color:'#9CA3AF', align:'right'});
-  pdf.text(W-M, 48, 'MANAGEMENT SUMMARY ONLY', {size:7, color:'#D1D5DB', align:'right'});
-  return 70;
+
+  // Zone 2 — large title, centre ONLY
+  // title baseline = 28+17 = 45; visual top ≈ 28+17×0.3 = 33
+  pdf.text(cx, 28, title, {size:17, bold:true, color:'#111111', align:'center'});
+
+  // Zone 3 — right-aligned meta, BELOW title baseline (45)
+  // period  visual top = 52+8×0.3 = 54.4  >  45 ✓
+  if(period) pdf.text(W-M, 52, `Period: ${period}`, {size:8, color:'#6B7280', align:'right'});
+  pdf.text(W-M, 63, `Generated: ${todayStr}`, {size:7.5, color:'#9CA3AF', align:'right'});
+  pdf.text(W-M, 73, 'MANAGEMENT SUMMARY ONLY', {size:7, color:'#D1D5DB', align:'right'});
+  // separator — below mgmt summary baseline (73+7=80) by 2pt
+  pdf.line(M, 82, W-M, 82, {color:'#E5E7EB', w:1.5});
+  return 96;
 };
 
-// Section header — matches .pp-sec-ttl (uppercase, small, gray, border-bottom)
+// Section header — matches .pp-sec-ttl
 const pdfSecTitle = (pdf, y, title) => {
+  // title baseline = y+9; separator at y+16 (7pt gap); next content at y+24
   pdf.text(pdf.M, y, title, {size:9, bold:true, color:'#6B7280'});
-  pdf.line(pdf.M, y+12, pdf.W-pdf.M, y+12, {color:'#E5E7EB', w:0.8});
-  return y+18;
+  pdf.line(pdf.M, y+16, pdf.W-pdf.M, y+16, {color:'#E5E7EB', w:0.8});
+  return y+24;
 };
 
-// KV row — matches .pp-row (flex space-between, border-bottom: 1px solid #F3F4F6)
-const pdfRow = (pdf, y, label, value, {valColor='#111111', valBold=false, valSize=10, lx, rx, colW}={}) => {
+// KV row — matches .pp-row
+// text at y+5 (size 9.5 → baseline y+14.5); separator at y+20; row height 22
+const pdfRow = (pdf, y, label, value, {valColor='#111111', valBold=false, valSize=10, lx, rx}={}) => {
   const left  = lx ?? pdf.M;
   const right = rx ?? pdf.W - pdf.M;
-  pdf.text(left+4, y+2, label, {size:9.5, color:'#374151'});
-  pdf.text(right-4, y+2, value, {size:valSize, bold:valBold, color:valColor, align:'right'});
-  pdf.line(left, y+14, right, y+14, {color:'#F3F4F6', w:0.5});
-  return y+16;
+  pdf.text(left+4,  y+5, label, {size:9.5, color:'#374151'});
+  pdf.text(right-4, y+5, value, {size:valSize, bold:valBold, color:valColor, align:'right'});
+  pdf.line(left, y+20, right, y+20, {color:'#F3F4F6', w:0.5});
+  return y+22;
 };
 
-// Total row — matches .pp-tot (gray bg, rounded, bold value in green)
+// Total row — matches .pp-tot (gray bg, bold value in green)
+// box height 32; label at y+10 (baseline y+20); value at y+9 (baseline y+23)
 const pdfTotRow = (pdf, y, label, value, {valColor='#8FCB72', lx, rw}={}) => {
   const x  = lx ?? pdf.M;
   const bw = rw ?? (pdf.W - pdf.M*2);
-  pdf.rect(x, y, bw, 26, {fill:'#F9FAFB', stroke:'#E5E7EB'});
-  pdf.text(x+10, y+9, label, {size:10, bold:true, color:'#111111'});
-  pdf.text(x+bw-10, y+6, value, {size:14, bold:true, color:valColor, align:'right'});
-  return y+34;
+  pdf.rect(x, y, bw, 32, {fill:'#F9FAFB', stroke:'#E5E7EB'});
+  pdf.text(x+10,    y+10, label, {size:10, bold:true, color:'#111111'});
+  pdf.text(x+bw-10, y+9,  value, {size:14, bold:true, color:valColor, align:'right'});
+  return y+40;
 };
 
 // Warning row — matches .pp-warn (yellow bg, border)
+// box height 28; text at y+10 (baseline y+18.5)
 const pdfWarn = (pdf, y, msg) => {
   const bw=pdf.W-pdf.M*2;
-  pdf.rect(pdf.M, y, bw, 22, {fill:'#FEFCE8', stroke:'#FDE047'});
-  pdf.text(pdf.M+8, y+7, msg, {size:8.5, color:'#854D0E'});
-  return y+28;
+  pdf.rect(pdf.M, y, bw, 28, {fill:'#FEFCE8', stroke:'#FDE047'});
+  pdf.text(pdf.M+8, y+10, msg, {size:8.5, color:'#854D0E'});
+  return y+36;
 };
 
 // Two-column section (like the GST | Wages grid in app)
-// Each col gets a section header + rows + optional total row
 const pdfTwoSec = (pdf, startY, left, right) => {
-  const M=pdf.M, W=pdf.W, gap=12;
+  const M=pdf.M, W=pdf.W, gap=14;
   const colW=(W-M*2-gap)/2;
   const lx=M, rx=M+colW+gap;
+  const ROW_H = 22;   // text size 9 baseline at y+5+9=y+14; separator at y+22; gap=8pt
 
-  // Section titles
-  pdf.text(lx, startY, left.title, {size:9, bold:true, color:'#6B7280'});
-  pdf.line(lx, startY+12, lx+colW, startY+12, {color:'#E5E7EB', w:0.8});
+  // Section titles: text baseline at startY+9; separator at startY+16; rows start at startY+24
+  pdf.text(lx, startY, left.title,  {size:9, bold:true, color:'#6B7280'});
+  pdf.line(lx, startY+16, lx+colW, startY+16, {color:'#E5E7EB', w:0.8});
   pdf.text(rx, startY, right.title, {size:9, bold:true, color:'#6B7280'});
-  pdf.line(rx, startY+12, rx+colW, startY+12, {color:'#E5E7EB', w:0.8});
-  let ly=startY+18, ry=startY+18;
+  pdf.line(rx, startY+16, rx+colW,  startY+16, {color:'#E5E7EB', w:0.8});
+  let ly=startY+24, ry=startY+24;
 
   left.rows.forEach(r=>{
-    pdf.text(lx+4, ly+2, r.lbl, {size:9, color:'#374151'});
-    pdf.text(lx+colW-4, ly+2, r.val, {size:9, bold:!!r.bold, color:r.color||'#111111', align:'right'});
-    pdf.line(lx, ly+14, lx+colW, ly+14, {color:'#F3F4F6', w:0.5});
-    ly+=16;
+    pdf.text(lx+4,       ly+5, r.lbl, {size:9, color:'#374151'});
+    pdf.text(lx+colW-4,  ly+5, r.val, {size:9, bold:!!r.bold, color:r.color||'#111111', align:'right'});
+    pdf.line(lx, ly+ROW_H, lx+colW, ly+ROW_H, {color:'#F3F4F6', w:0.5});
+    ly+=ROW_H;
   });
   right.rows.forEach(r=>{
-    pdf.text(rx+4, ry+2, r.lbl, {size:9, color:'#374151'});
-    pdf.text(rx+colW-4, ry+2, r.val, {size:9, bold:!!r.bold, color:r.color||'#111111', align:'right'});
-    pdf.line(rx, ry+14, rx+colW, ry+14, {color:'#F3F4F6', w:0.5});
-    ry+=16;
+    pdf.text(rx+4,      ry+5, r.lbl, {size:9, color:'#374151'});
+    pdf.text(rx+colW-4, ry+5, r.val, {size:9, bold:!!r.bold, color:r.color||'#111111', align:'right'});
+    pdf.line(rx, ry+ROW_H, rx+colW, ry+ROW_H, {color:'#F3F4F6', w:0.5});
+    ry+=ROW_H;
   });
 
-  const maxY=Math.max(ly,ry)+4;
+  const maxY=Math.max(ly,ry)+8;
   // Total boxes side-by-side
   if(left.total){
-    pdf.rect(lx, maxY, colW, 28, {fill:'#F9FAFB', stroke:'#E5E7EB'});
-    pdf.text(lx+8, maxY+8, left.total.lbl, {size:9.5, bold:true, color:'#111111'});
-    pdf.text(lx+colW-8, maxY+6, left.total.val, {size:14, bold:true, color:left.total.color||'#8FCB72', align:'right'});
+    pdf.rect(lx, maxY, colW, 32, {fill:'#F9FAFB', stroke:'#E5E7EB'});
+    pdf.text(lx+8,      maxY+10, left.total.lbl,  {size:9.5, bold:true, color:'#111111'});
+    pdf.text(lx+colW-8, maxY+9,  left.total.val,  {size:14,  bold:true, color:left.total.color||'#8FCB72', align:'right'});
   }
   if(right.total){
-    pdf.rect(rx, maxY, colW, 28, {fill:'#F9FAFB', stroke:'#E5E7EB'});
-    pdf.text(rx+8, maxY+8, right.total.lbl, {size:9.5, bold:true, color:'#111111'});
-    pdf.text(rx+colW-8, maxY+6, right.total.val, {size:14, bold:true, color:right.total.color||'#8FCB72', align:'right'});
+    pdf.rect(rx, maxY, colW, 32, {fill:'#F9FAFB', stroke:'#E5E7EB'});
+    pdf.text(rx+8,      maxY+10, right.total.lbl, {size:9.5, bold:true, color:'#111111'});
+    pdf.text(rx+colW-8, maxY+9,  right.total.val, {size:14,  bold:true, color:right.total.color||'#8FCB72', align:'right'});
   }
-  return maxY + (left.total||right.total ? 28+10 : 4);
+  return maxY + (left.total||right.total ? 32+14 : 8);
 };
 
 // Mini stat card grid (like .pp-quarter-grid) — n cards in a row
@@ -438,29 +881,30 @@ const pdfStatCards = (pdf, y, cards) => {
   const cw=(W-M*2-(n-1)*gap)/n;
   cards.forEach((c,i)=>{
     const cx=M+i*(cw+gap);
-    pdf.rect(cx, y, cw, 42, {fill:'#F9FAFB', stroke:'#E5E7EB'});
-    pdf.text(cx+8, y+8, String(c.lbl), {size:8, color:'#9CA3AF'});
-    pdf.text(cx+8, y+20, String(c.val), {size:15, bold:true, color:c.color||'#111111'});
-    if(c.sub) pdf.text(cx+8, y+34, c.sub, {size:7.5, color:'#9CA3AF'});
+    pdf.rect(cx, y, cw, 50, {fill:'#F9FAFB', stroke:'#E5E7EB'});
+    pdf.text(cx+8, y+10,  String(c.lbl), {size:8,   color:'#9CA3AF'});
+    pdf.text(cx+8, y+24,  String(c.val), {size:15,  bold:true, color:c.color||'#111111'});
+    if(c.sub) pdf.text(cx+8, y+40, c.sub, {size:7.5, color:'#9CA3AF'});
   });
-  return y+50;
+  return y+58;
 };
 
 // Table helper
-const pdfTable = (pdf, y, headers, rows, colWidths, {rowH=15,hdrH=18,fontSize=9,footerRow=null,numCols=[]}={}) => {
+// rowH=22: text at y+6 (size 9 → baseline y+15); separator at y+22; gap to next text = 6+9×0.3=8.7pt
+const pdfTable = (pdf, y, headers, rows, colWidths, {rowH=22,hdrH=26,fontSize=9,footerRow=null,numCols=[]}={}) => {
   const M=pdf.M, totalW=colWidths.reduce((s,w)=>s+w,0);
   pdf.rect(M, y, totalW, hdrH, {fill:'#111827'});
   let cx=M;
   headers.forEach((h,i)=>{
     const isNum=numCols.includes(i)||(i>0&&i>=headers.length-2);
     const align=isNum?'right':'left';
-    pdf.text(cx+(align==='right'?colWidths[i]-5:5), y+5, h, {size:fontSize-1, bold:true, color:'#FFFFFF', align});
+    pdf.text(cx+(align==='right'?colWidths[i]-5:5), y+8, h, {size:fontSize-1, bold:true, color:'#FFFFFF', align});
     cx+=colWidths[i];
   });
   y+=hdrH;
 
   rows.forEach((row,ri)=>{
-    y=pdf.checkPage(y, rowH+4);
+    y=pdf.checkPage(y, rowH+6);
     if(ri%2===1) pdf.rect(M, y, totalW, rowH, {fill:'#F9FAFB'});
     cx=M;
     row.forEach((cell,ci)=>{
@@ -468,7 +912,7 @@ const pdfTable = (pdf, y, headers, rows, colWidths, {rowH=15,hdrH=18,fontSize=9,
       const align=isNum?'right':'left';
       const col=cell?.color||'#374151';
       const txt=String(cell?.text||cell||'');
-      pdf.text(cx+(align==='right'?colWidths[ci]-4:4), y+3, txt, {size:fontSize, color:col, align});
+      pdf.text(cx+(align==='right'?colWidths[ci]-4:4), y+7, txt, {size:fontSize, color:col, align});
       cx+=colWidths[ci];
     });
     pdf.line(M, y+rowH, M+totalW, y+rowH, {color:'#E5E7EB', w:0.5});
@@ -481,24 +925,24 @@ const pdfTable = (pdf, y, headers, rows, colWidths, {rowH=15,hdrH=18,fontSize=9,
     footerRow.forEach((cell,ci)=>{
       const isNum=numCols.includes(ci)||(ci>0&&ci>=footerRow.length-2);
       const align=isNum?'right':'left';
-      pdf.text(cx+(align==='right'?colWidths[ci]-4:4), y+5, String(cell||''), {size:fontSize, bold:true, color:'#111111', align});
+      pdf.text(cx+(align==='right'?colWidths[ci]-4:4), y+8, String(cell||''), {size:fontSize, bold:true, color:'#111111', align});
       cx+=colWidths[ci];
     });
     y+=hdrH;
   }
-  return y+8;
+  return y+12;
 };
 
 // Disclaimer footer — matches .pp-disc
 const pdfDisclaimer = (pdf, y) => {
-  y=pdf.checkPage(y, 36);
+  y=pdf.checkPage(y, 50);
   pdf.line(pdf.M, y, pdf.W-pdf.M, y, {color:'#E5E7EB', w:0.8});
-  y+=6;
-  pdf.text(pdf.M, y, 'Important: This document is a management summary only generated by Mise for planning and review purposes.', {size:7.5, color:'#9CA3AF'});
   y+=10;
-  pdf.text(pdf.M, y, 'Not a substitute for a registered tax agent, BAS agent or accountant. All figures are estimates based on data entered into Mise.', {size:7.5, color:'#9CA3AF'});
-  y+=10;
-  pdf.text(pdf.M, y, `Generated ${new Date().toLocaleDateString('en-AU',{day:'2-digit',month:'long',year:'numeric'})}   |   Retain records for 7 years (ATO requirement)   |   ato.gov.au`, {size:7.5, color:'#9CA3AF'});
+  pdf.text(pdf.M, y,    'Important: This document is a management summary only generated by Mise for planning and review purposes.', {size:7.5, color:'#9CA3AF'});
+  y+=13;
+  pdf.text(pdf.M, y,    'Not a substitute for a registered tax agent, BAS agent or accountant. All figures are estimates based on data entered into Mise.', {size:7.5, color:'#9CA3AF'});
+  y+=13;
+  pdf.text(pdf.M, y,    `Generated ${new Date().toLocaleDateString('en-AU',{day:'2-digit',month:'long',year:'numeric'})}   |   Retain records for 7 years (ATO requirement)   |   ato.gov.au`, {size:7.5, color:'#9CA3AF'});
 };
 
 // ── PDF render functions ──────────────────────────────────────
@@ -781,17 +1225,18 @@ const renderPayslipPDF = ({emp, rows, totals, payPeriodLabel, bizName, bizABN}) 
 
   // Pay summary
   y=pdfSecTitle(pdf, y, 'PAY SUMMARY');
-  y=pdfRow(pdf, y, 'Gross Pay',                           `$${totals.gross.toFixed(2)}`);
-  y=pdfRow(pdf, y, `PAYG Withheld (${emp.tfn?'~19%':'47% — no TFN'})`, `- $${totals.payg.toFixed(2)}`, {valColor:'#DC2626'});
+  y=pdfRow(pdf, y, 'Gross Pay', `$${totals.gross.toFixed(2)}`);
+  y=pdfRow(pdf, y, `PAYG Withheld (ATO${emp.tfn?' Scale 2':' — no TFN 47%'})`, `- $${totals.payg.toFixed(2)}`, {valColor:'#DC2626'});
   y+=2;
   y=pdfTotRow(pdf, y, 'Net Pay (Take-Home)', `$${totals.net.toFixed(2)}`);
   y+=4;
 
-  // Super info box
-  pdf.rect(M, y, W-M*2, 26, {fill:'#EFF6FF', stroke:'#BFDBFE'});
-  pdf.text(M+10, y+8, `Super (11.5%): $${totals.super.toFixed(2)} to be paid to ${emp.superfund||'nominated fund'} within 28 days of quarter end.`, {size:8.5, color:'#1D4ED8'});
-  pdf.text(M+10, y+18, 'Late super payments attract the SGC — not tax deductible.', {size:8, color:'#3B82F6'});
-  y+=32;
+  // Super info box — rate is period-aware (11.5% pre-Jul 2025, 12% from Jul 2025)
+  const superRateDisplay = totals.superR ? `${(totals.superR*100).toFixed(1)}%` : '11.5%';
+  pdf.rect(M, y, W-M*2, 40, {fill:'#EFF6FF', stroke:'#BFDBFE'});
+  pdf.text(M+10, y+10, `Super (${superRateDisplay}): $${totals.super.toFixed(2)} to be paid to ${emp.superfund||'nominated fund'} within 28 days of quarter end.`, {size:8.5, color:'#1D4ED8'});
+  pdf.text(M+10, y+26, 'Late super payments attract the SGC — not tax deductible.', {size:8, color:'#3B82F6'});
+  y+=48;
 
   if(!emp.tfn){
     y=pdfWarn(pdf, y, `No TFN on file — PAYG withheld at 47%. Ask ${emp.name} to provide their TFN.`);
@@ -1753,62 +2198,385 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
   const [supplier,   setSupplier]   = useState("");
   const catSearchRef = useRef(null);
 
+  // ── Smart auto-categorisation ────────────────────────────
+  // customMappings: { [keyword]: categoryId } — user-taught rules
+  const [customMappings, setCustomMappings] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("mise_cat_rules") || "{}"); } catch { return {}; }
+  });
+  const saveCustomMapping = (keyword, cat) => {
+    const updated = { ...customMappings, [keyword.toLowerCase().trim()]: cat };
+    setCustomMappings(updated);
+    localStorage.setItem("mise_cat_rules", JSON.stringify(updated));
+  };
+  const deleteCustomMapping = (keyword) => {
+    const updated = { ...customMappings };
+    delete updated[keyword];
+    setCustomMappings(updated);
+    localStorage.setItem("mise_cat_rules", JSON.stringify(updated));
+  };
+
+  // autoSuggest: shown when desc typed and no cat manually selected
+  const [autoSuggest,   setAutoSuggest]   = useState(null);  // { cat, keyword, confidence }
+  const [suggestDismissed, setSuggestDismissed] = useState(false);
+  // teachPrompt: "remember this?" shown after user picks cat from typed query
+  const [teachPrompt,   setTeachPrompt]   = useState(null);  // { keyword, cat } or null
+  // show/hide custom rules manager
+  const [showRules,     setShowRules]     = useState(false);
+  // track if user manually picked category (suppresses autoSuggest)
+  const [manualCat,     setManualCat]     = useState(false);
+
+  // ── Favourites / Quick-add Templates ─────────────────────
+  // Template: { id, name, cat, amount, desc, supplier, gst, invoice, usageCount, lastUsed }
+  const [templates, setTemplates] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("mise_fav_templates") || "[]"); } catch { return []; }
+  });
+  const [savingTemplate,  setSavingTemplate]  = useState(false);  // show save-name input
+  const [templateName,    setTemplateName]    = useState("");
+  const [showAllTemplates,setShowAllTemplates]= useState(false);
+  const [editingTplId,    setEditingTplId]    = useState(null);    // id of template being renamed
+  const [editingTplName,  setEditingTplName]  = useState("");
+
+  const saveTemplates = updated => {
+    setTemplates(updated);
+    localStorage.setItem("mise_fav_templates", JSON.stringify(updated));
+  };
+
+  const addTemplate = () => {
+    if (!templateName.trim()) return;
+    const tpl = {
+      id: Date.now(),
+      name: templateName.trim(),
+      cat: f.cat,
+      amount: f.amount,          // may be "" = variable
+      desc: f.desc,
+      supplier,
+      gst: f.gst,
+      invoice: f.invoice,
+      usageCount: 0,
+      lastUsed: null,
+    };
+    saveTemplates([tpl, ...templates]);
+    setSavingTemplate(false);
+    setTemplateName("");
+    showToast(`⭐ Saved template: "${tpl.name}"`);
+  };
+
+  const applyTemplate = tpl => {
+    // Fill entire form from template
+    setF({ date:todayStr, cat:tpl.cat, amount:tpl.amount||"", desc:tpl.desc, gst:tpl.gst, invoice:tpl.invoice });
+    setSelCat(tpl.cat);
+    setManualCat(true);
+    setSupplier(tpl.supplier || "");
+    setCatQuery("");
+    setAutoSuggest(null);
+    setSuggestDismissed(true);
+    setTeachPrompt(null);
+    // Update usage stats
+    const updated = templates.map(t => t.id === tpl.id
+      ? { ...t, usageCount: (t.usageCount||0)+1, lastUsed: todayStr }
+      : t
+    );
+    saveTemplates(updated);
+    // Focus amount if it's blank (variable amount template)
+    setTimeout(() => {
+      if (!tpl.amount) document.getElementById("exp-amount-input")?.focus();
+    }, 50);
+  };
+
+  const deleteTemplate = id => {
+    saveTemplates(templates.filter(t => t.id !== id));
+    showToast("Template removed");
+  };
+
+  const renameTemplate = id => {
+    if (!editingTplName.trim()) return;
+    saveTemplates(templates.map(t => t.id === id ? {...t, name: editingTplName.trim()} : t));
+    setEditingTplId(null);
+    setEditingTplName("");
+  };
+
+  // Most-recently-used templates (top 4 for the quick bar)
+  const recentTemplates = [...templates]
+    .sort((a,b) => {
+      if (b.lastUsed && a.lastUsed) return b.lastUsed.localeCompare(a.lastUsed);
+      if (b.lastUsed) return 1;
+      if (a.lastUsed) return -1;
+      return (b.usageCount||0) - (a.usageCount||0);
+    })
+    .slice(0, 4);
+
+  // ── Recurring Expense Detector ────────────────────────────
+  const thisMonthKey = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}`;
+  const lastMonthKey = (() => {
+    const d = new Date(today.getFullYear(), today.getMonth()-1, 1);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  })();
+
+  // Normalize a description for fingerprinting — strip " — Supplier" suffix
+  const fpDesc = desc => desc.replace(/\s*—\s*.+$/, '').toLowerCase().replace(/\s+/g,' ').trim().slice(0, 40);
+  const makeFP  = (desc, cat) => fpDesc(desc) + "||" + cat;
+
+  // Detect patterns: desc+cat appearing in ≥2 distinct calendar months
+  const detectPatterns = expList => {
+    const groups = {};
+    expList.forEach(e => {
+      const fp = makeFP(e.desc, e.cat);
+      if (!groups[fp]) groups[fp] = [];
+      groups[fp].push(e);
+    });
+    return Object.entries(groups)
+      .filter(([, list]) => new Set(list.map(e => e.date.slice(0,7))).size >= 2)
+      .map(([fp, list]) => {
+        const sorted = [...list].sort((a,b) => b.date.localeCompare(a.date));
+        const latest = sorted[0];
+        const amounts = list.map(e => e.amount);
+        const avgAmount = amounts.reduce((s,v)=>s+v,0) / amounts.length;
+        return {
+          fp, cat: latest.cat,
+          label: fpDesc(latest.desc),
+          latestAmount: latest.amount,
+          avgAmount: Math.round(avgAmount * 100) / 100,
+          gst: latest.gst, invoice: latest.invoice,
+          lastDate: latest.date,
+          monthsSeen: [...new Set(list.map(e=>e.date.slice(0,7)))].sort().reverse(),
+        };
+      });
+  };
+
+  // recurringRules: user-confirmed recurring items
+  // { fp, cat, label, amount, gst, invoice, active, createdAt }
+  const [recurringRules,    setRecurringRules]    = useState(() => {
+    try { return JSON.parse(localStorage.getItem("mise_recurring") || "[]"); } catch { return []; }
+  });
+  const [dismissedNudges,   setDismissedNudges]   = useState(() => {
+    try { return JSON.parse(localStorage.getItem("mise_recur_dismissed") || "[]"); } catch { return []; }
+  });
+  const [postAddNudge,      setPostAddNudge]      = useState(null); // { fp, cat, label, amount }
+  const [showRecurMgr,      setShowRecurMgr]      = useState(false);
+  const [confirmingRule,    setConfirmingRule]     = useState(null); // rule being confirmed — { rule, amount }
+
+  const saveRecurringRules = updated => {
+    setRecurringRules(updated);
+    localStorage.setItem("mise_recurring", JSON.stringify(updated));
+  };
+  const saveDismissedNudges = updated => {
+    setDismissedNudges(updated);
+    localStorage.setItem("mise_recur_dismissed", JSON.stringify(updated));
+  };
+
+  const addRecurringRule = (pattern, overrideAmount) => {
+    const rule = {
+      fp:       pattern.fp,
+      cat:      pattern.cat,
+      label:    pattern.label,
+      amount:   overrideAmount ?? pattern.latestAmount,
+      gst:      pattern.gst,
+      invoice:  pattern.invoice,
+      active:   true,
+      createdAt: todayStr,
+    };
+    saveRecurringRules([rule, ...recurringRules.filter(r => r.fp !== pattern.fp)]);
+    setPostAddNudge(null);
+    showToast(`🔁 Recurring: "${rule.label}" added`);
+  };
+
+  // Confirmed fps
+  const confirmedFPs = new Set(recurringRules.map(r => r.fp));
+
+  // Auto-detected patterns not yet confirmed or dismissed
+  const detectedPatterns = detectPatterns(expenses)
+    .filter(p => !confirmedFPs.has(p.fp) && !dismissedNudges.includes(p.fp));
+
+  // Rules due this month (active, no matching expense this month)
+  const recurringDue = recurringRules.filter(rule => {
+    if (!rule.active) return false;
+    return !expenses.some(e => e.date.startsWith(thisMonthKey) && makeFP(e.desc, e.cat) === rule.fp);
+  });
+
+  // Apply a recurring rule → fill the form
+  const applyRecurringRule = rule => {
+    setF({ date: todayStr, cat: rule.cat, amount: String(rule.amount), desc: rule.label, gst: rule.gst ? "yes":"no", invoice: rule.invoice ? "yes":"no" });
+    setSelCat(rule.cat);
+    setManualCat(true);
+    setAutoSuggest(null); setSuggestDismissed(true);
+    setTeachPrompt(null);
+    setConfirmingRule(null);
+    setTimeout(() => document.getElementById("exp-amount-input")?.focus(), 60);
+  };
+
   // ── Industry-aware category sorting ─────────────────────
+  // Shared finance/admin tail — all industries
+  const FINANCE_CATS = ["bank_fees","merchant_fees","telephone_internet","insurance_expense","interest_expense","loan_repayment","motor_vehicle","legal","license_fees","council_rates","freight","travel","printing","office_expenses","supplies","fees_charges","depreciation","fixed_assets","general_expenses"];
+
   const INDUSTRY_MAP = {
-    restaurant: ["ingredients","food_stock","packaging","cleaning","rent","utilities","equipment","repairs","staff_uniforms","delivery_fees","smallwares","linen","software","advertising","accounting","music_ent","other"],
-    café:       ["coffee_supplies","machine_maintenance","eco_packaging","bakery_supplies","food_stock","packaging","cleaning","rent","utilities","equipment","repairs","staff_uniforms","delivery_fees","smallwares","software","advertising","accounting","other"],
-    bar:        ["spirit_stock","beer_wine_stock","glassware","bar_equipment","liquor_license","rsa_training","cleaning","rent","utilities","equipment","repairs","staff_uniforms","music_ent","software","advertising","accounting","other"],
+    restaurant: ["ingredients","food_stock","packaging","cleaning","rent","utilities","equipment","repairs","staff_uniforms","delivery_fees","smallwares","linen","software","advertising","accounting","music_ent",...FINANCE_CATS,"other"],
+    café:       ["coffee_supplies","machine_maintenance","eco_packaging","bakery_supplies","food_stock","packaging","cleaning","rent","utilities","equipment","repairs","staff_uniforms","delivery_fees","smallwares","software","advertising","accounting",...FINANCE_CATS,"other"],
+    bar:        ["spirit_stock","beer_wine_stock","glassware","bar_equipment","liquor_license","rsa_training","cleaning","rent","utilities","equipment","repairs","staff_uniforms","music_ent","software","advertising","accounting",...FINANCE_CATS,"other"],
     other:      EXP_CATEGORIES,
   };
   const sortedCats   = INDUSTRY_MAP[industry] || EXP_CATEGORIES;
-  // "pinned" = first N categories specific to this industry
   const PINNED_COUNT = { restaurant:4, café:4, bar:6, other:0 }[industry] || 0;
   const pinnedCats   = sortedCats.slice(0, PINNED_COUNT);
+
+  // ── Usage-based personalised sorting ─────────────────────
+  // catUsage: { [catId]: count } — incremented on every Add Expense
+  const [catUsage, setCatUsage] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("mise_cat_usage") || "{}"); } catch { return {}; }
+  });
+
+  const trackCatUsage = cat => {
+    const updated = { ...catUsage, [cat]: (catUsage[cat] || 0) + 1 };
+    setCatUsage(updated);
+    localStorage.setItem("mise_cat_usage", JSON.stringify(updated));
+  };
+
+  // Re-rank industry order by usage. Ties preserve industry position.
+  const personalSortedCats = [...sortedCats].sort((a, b) => {
+    const ua = catUsage[a] || 0;
+    const ub = catUsage[b] || 0;
+    if (ub !== ua) return ub - ua;
+    return sortedCats.indexOf(a) - sortedCats.indexOf(b);
+  });
+
+  // Has the user added at least one expense? (gate for "Your top picks" label)
+  const hasPersonalData = Object.values(catUsage).some(v => v > 0);
+
+  // Top 5 personal picks (or fall back to industry pins before first use)
+  const TOP_PICKS_COUNT = 5;
+  const topPickCats = hasPersonalData
+    ? personalSortedCats.slice(0, TOP_PICKS_COUNT)
+    : pinnedCats.slice(0, TOP_PICKS_COUNT);
+
+  // Rank map for the top 3 — used for badges in dropdown
+  const catRank = {};
+  if (hasPersonalData) {
+    personalSortedCats.slice(0, 3).forEach((id, i) => { catRank[id] = i + 1; });
+  }
 
   const catLabel = cat => {
     const cfg = CAT_CONFIG[cat];
     return cfg ? `${cfg.emoji} ${cfg.label}` : cat.charAt(0).toUpperCase()+cat.slice(1);
   };
 
-  // ── Category search ──────────────────────────────────────
-  const catResults = catQuery.trim().length === 0 ? [] :
-    Object.entries(CAT_CONFIG).filter(([id, c]) => {
-      const q = catQuery.toLowerCase();
-      return c.label.toLowerCase().includes(q)
+  // ── Category search (with smart keyword boost + usage rank) ──
+  const catResults = catQuery.trim().length === 0 ? [] : (() => {
+    const q = catQuery.toLowerCase().trim();
+    const smart = detectCategory(q, customMappings);
+    const seen  = new Set();
+    const results = [];
+
+    // 1. Smart / custom match first
+    if (smart && !seen.has(smart.cat)) {
+      seen.add(smart.cat);
+      results.push({ id: smart.cat, c: CAT_CONFIG[smart.cat], smartMatch: smart });
+    }
+
+    // 2. Label / tag matches, ordered by usage rank (personalSortedCats)
+    personalSortedCats.forEach(id => {
+      if (seen.has(id)) return;
+      const c = CAT_CONFIG[id];
+      if (!c) return;
+      const match = c.label.toLowerCase().includes(q)
         || id.includes(q)
         || (c.tags || []).some(t => t.includes(q));
-    }).slice(0, 8);
+      if (match) { seen.add(id); results.push({ id, c, smartMatch: null }); }
+    });
 
-  const pickCat = id => {
+    return results.slice(0, 8);
+  })();
+
+  const pickCat = (id, fromQuery) => {
     setSelCat(id);
+    setManualCat(true);
     setF(p => ({...p, cat:id}));
+    const query = fromQuery ?? catQuery;
     setCatQuery("");
     setShowCatDrop(false);
     setDropFocus(0);
     setSupplier("");
+    setAutoSuggest(null);
+    setSuggestDismissed(false);
+
+    // Offer to teach if the user typed something that isn't already in tags for this cat
+    if (query && query.trim().length > 2) {
+      const q = query.toLowerCase().trim();
+      const cfg = CAT_CONFIG[id];
+      const alreadyKnown = cfg && ((cfg.tags||[]).some(t => t.includes(q)) || id.includes(q) || cfg.label.toLowerCase().includes(q));
+      const alreadyCustom = Object.keys(customMappings).some(k => k === q);
+      if (!alreadyKnown && !alreadyCustom && !SMART_KEYWORDS[q]) {
+        setTeachPrompt({ keyword: query.trim(), cat: id });
+      } else {
+        setTeachPrompt(null);
+      }
+    } else {
+      setTeachPrompt(null);
+    }
   };
 
   const catKeyDown = e => {
     if (!showCatDrop || catResults.length === 0) return;
     if (e.key === "ArrowDown") { e.preventDefault(); setDropFocus(f => Math.min(f+1, catResults.length-1)); }
     if (e.key === "ArrowUp")   { e.preventDefault(); setDropFocus(f => Math.max(f-1, 0)); }
-    if (e.key === "Enter")     { e.preventDefault(); pickCat(catResults[dropFocus][0]); }
+    if (e.key === "Enter")     { e.preventDefault(); pickCat(catResults[dropFocus].id); }
     if (e.key === "Escape")    { setShowCatDrop(false); setCatQuery(""); }
   };
 
   const catSuppliers = selCat ? (COMMON_SUPPLIERS[selCat] || []) : [];
   const selCatCfg    = selCat ? CAT_CONFIG[selCat] : null;
 
+  // ── Smart description detection ──────────────────────────
+  const handleDescChange = val => {
+    setF(p => ({...p, desc:val}));
+    if (!manualCat && !suggestDismissed && val.trim().length > 3) {
+      const detected = detectCategory(val, customMappings);
+      if (detected && detected.cat !== selCat) setAutoSuggest(detected);
+      else setAutoSuggest(null);
+    } else {
+      setAutoSuggest(null);
+    }
+  };
+
+  const acceptSuggest = () => {
+    if (!autoSuggest) return;
+    pickCat(autoSuggest.cat, autoSuggest.keyword);
+  };
+
   const add = () => {
     if (!f.amount || !f.desc) return;
+    const fullDesc = f.desc + (supplier ? ` — ${supplier}` : "");
+    const fp = makeFP(fullDesc, f.cat);
+
+    // Check BEFORE setExpenses (expenses still = current list)
+    const seenLastMonth  = expenses.some(e => e.date.startsWith(lastMonthKey) && makeFP(e.desc, e.cat) === fp);
+    const alreadyRule    = confirmedFPs.has(fp);
+    const alreadyDismiss = dismissedNudges.includes(fp);
+
     setExpenses(p => [...p, {
       id:Date.now(), date:f.date, cat:f.cat,
       amount:parseFloat(f.amount)||0,
-      desc: f.desc + (supplier ? ` — ${supplier}` : ""),
+      desc: fullDesc,
       gst:f.gst==="yes", invoice:f.invoice==="yes"
     }]);
-    setF({ date:todayStr, cat: sortedCats[0] || "ingredients", amount:"", desc:"", gst:"yes", invoice:"yes" });
+    trackCatUsage(f.cat);
+
+    // Fire post-add nudge if pattern seen last month and not already tracked
+    if (seenLastMonth && !alreadyRule && !alreadyDismiss) {
+      setPostAddNudge({
+        fp, cat: f.cat,
+        label: fpDesc(fullDesc),
+        latestAmount: parseFloat(f.amount)||0,
+        avgAmount: parseFloat(f.amount)||0,
+        gst: f.gst === "yes", invoice: f.invoice === "yes",
+        monthsSeen: [lastMonthKey, thisMonthKey],
+        lastDate: f.date,
+      });
+    }
+
+    setF({ date:todayStr, cat: personalSortedCats[0] || "ingredients", amount:"", desc:"", gst:"yes", invoice:"yes" });
     setSelCat(null); setSupplier(""); setCatQuery("");
+    setAutoSuggest(null); setSuggestDismissed(false);
+    setTeachPrompt(null); setManualCat(false);
+    setSavingTemplate(false); setTemplateName("");
     showToast("Expense added!");
     catSearchRef.current?.focus();
   };
@@ -1981,9 +2749,178 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
         </div>
       )}
 
+      {/* ── Recurring: Due This Month panel ── */}
+      {recurringDue.length > 0 && (
+        <div style={{ background:"rgba(61,201,160,.05)", border:"1px solid rgba(61,201,160,.3)", borderRadius:12, padding:"14px 16px", marginBottom:14 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+            <div style={{ fontSize:13, fontWeight:700, color:"#3DC9A0" }}>🔁 Recurring expenses due this month</div>
+            <div style={{ fontSize:11, color:C.dim }}>{recurringDue.length} item{recurringDue.length>1?"s":""} not yet logged</div>
+          </div>
+          <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
+            {recurringDue.map(rule => (
+              <div key={rule.fp} style={{ display:"flex", alignItems:"center", gap:10, background:C.surface, border:`1px solid ${C.border}`, borderRadius:9, padding:"10px 13px" }}>
+                <span style={{ fontSize:17 }}>{CAT_CONFIG[rule.cat]?.emoji}</span>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:13, fontWeight:600, textTransform:"capitalize" }}>{rule.label}</div>
+                  <div style={{ fontSize:11, color:C.dim, marginTop:1 }}>
+                    {CAT_CONFIG[rule.cat]?.label} · Last: {money(rule.amount)}
+                    {" · "}GST: {rule.gst?"yes":"no"} · Invoice: {rule.invoice?"yes":"no"}
+                  </div>
+                </div>
+                {confirmingRule?.fp === rule.fp ? (
+                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <span style={{ fontSize:11, color:C.dim }}>Amount $</span>
+                    <input type="number" id="recur-confirm-amt"
+                      value={confirmingRule.amount}
+                      onChange={e => setConfirmingRule(r => ({...r, amount: e.target.value}))}
+                      onKeyDown={e => { if(e.key==="Enter") { applyRecurringRule({...rule, amount: parseFloat(confirmingRule.amount)||rule.amount}); } if(e.key==="Escape") setConfirmingRule(null); }}
+                      style={{ width:80, padding:"4px 8px", borderRadius:6, border:`1px solid ${C.border}`, background:C.surfaceAlt, color:C.text, fontSize:13, fontFamily:"DM Mono,monospace" }}
+                      autoFocus/>
+                    <button onClick={() => applyRecurringRule({...rule, amount: parseFloat(confirmingRule.amount)||rule.amount})}
+                      style={{ background:"#3DC9A0", color:"#0C0F0D", border:"none", borderRadius:7, padding:"6px 13px", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>
+                      Fill form ↵
+                    </button>
+                    <button onClick={() => setConfirmingRule(null)}
+                      style={{ background:"none", border:"none", fontSize:12, color:C.muted, cursor:"pointer" }}>✕</button>
+                  </div>
+                ) : (
+                  <div style={{ display:"flex", gap:6 }}>
+                    <button onClick={() => { setConfirmingRule({ fp:rule.fp, amount: String(rule.amount) }); }}
+                      style={{ background:"rgba(61,201,160,.12)", color:"#3DC9A0", border:"1px solid rgba(61,201,160,.35)", borderRadius:7, padding:"6px 13px", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
+                      ✓ Log now
+                    </button>
+                    <button onClick={() => saveRecurringRules(recurringRules.map(r => r.fp===rule.fp ? {...r, active:false} : r))}
+                      style={{ background:"none", border:`1px solid ${C.border}`, borderRadius:7, padding:"6px 9px", fontSize:11, color:C.muted, cursor:"pointer", fontFamily:"inherit" }}>
+                      Pause
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Auto-detected patterns: subtle banner ── */}
+      {detectedPatterns.length > 0 && !detectedPatterns.every(p => dismissedNudges.includes(p.fp)) && (
+        <div style={{ background:"rgba(143,203,114,.05)", border:"1px solid rgba(143,203,114,.25)", borderRadius:11, padding:"11px 15px", marginBottom:14 }}>
+          <div style={{ fontSize:12, fontWeight:700, color:C.accent, marginBottom:8 }}>
+            🔁 Mise noticed {detectedPatterns.length} recurring pattern{detectedPatterns.length>1?"s":""}
+          </div>
+          <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+            {detectedPatterns.slice(0,3).map(p => (
+              <div key={p.fp} style={{ display:"flex", alignItems:"center", gap:9, flexWrap:"wrap" }}>
+                <span style={{ fontSize:15 }}>{CAT_CONFIG[p.cat]?.emoji}</span>
+                <div style={{ flex:1, minWidth:120 }}>
+                  <span style={{ fontSize:12, fontWeight:600, textTransform:"capitalize" }}>{p.label}</span>
+                  <span style={{ fontSize:11, color:C.dim }}> · seen in {p.monthsSeen.length} months · avg {money(p.avgAmount)}</span>
+                </div>
+                <div style={{ display:"flex", gap:5 }}>
+                  <button onClick={() => addRecurringRule(p)}
+                    style={{ fontSize:11, fontWeight:700, background:"rgba(143,203,114,.15)", color:C.accent, border:`1px solid rgba(143,203,114,.4)`, borderRadius:6, padding:"4px 11px", cursor:"pointer", fontFamily:"inherit" }}>
+                    Track it 🔁
+                  </button>
+                  <button onClick={() => { const u=[...dismissedNudges,p.fp]; saveDismissedNudges(u); }}
+                    style={{ fontSize:11, color:C.muted, background:"none", border:`1px solid ${C.border}`, borderRadius:6, padding:"4px 8px", cursor:"pointer", fontFamily:"inherit" }}>
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ── Quick Entry Form ── */}
       <div className="fsec">
-        <div className="ftit">Add Expense</div>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+          <div className="ftit" style={{ marginBottom:0 }}>Add Expense</div>
+          {templates.length > 0 && (
+            <button onClick={() => setShowAllTemplates(v=>!v)}
+              style={{ fontSize:11, fontWeight:700, color:C.accent, background:"none", border:`1px solid rgba(143,203,114,.4)`, borderRadius:7, padding:"4px 11px", cursor:"pointer", fontFamily:"inherit" }}>
+              ⭐ {templates.length} template{templates.length>1?"s":""}  {showAllTemplates?"▲":"▼"}
+            </button>
+          )}
+        </div>
+
+        {/* ── Favourites quick bar (top 4 recently used) ── */}
+        {recentTemplates.length > 0 && !showAllTemplates && (
+          <div style={{ marginBottom:14 }}>
+            <div style={{ fontSize:10, color:C.dim, textTransform:"uppercase", letterSpacing:".6px", marginBottom:7 }}>⭐ Quick-add favourites</div>
+            <div style={{ display:"flex", gap:7, flexWrap:"wrap" }}>
+              {recentTemplates.map(tpl => (
+                <button key={tpl.id} onClick={() => applyTemplate(tpl)}
+                  style={{ border:`1.5px solid rgba(212,168,67,.4)`, background:"rgba(212,168,67,.07)", color:C.text, borderRadius:9, padding:"7px 13px", fontSize:12, fontFamily:"inherit", cursor:"pointer", display:"flex", alignItems:"center", gap:6, maxWidth:220, transition:"all .15s", position:"relative" }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor=C.yellow; e.currentTarget.style.background="rgba(212,168,67,.12)"; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor="rgba(212,168,67,.4)"; e.currentTarget.style.background="rgba(212,168,67,.07)"; }}>
+                  <span style={{ fontSize:16 }}>{CAT_CONFIG[tpl.cat]?.emoji}</span>
+                  <div style={{ textAlign:"left" }}>
+                    <div style={{ fontWeight:700, fontSize:12, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:140 }}>{tpl.name}</div>
+                    <div style={{ fontSize:10, color:C.dim, marginTop:1 }}>
+                      {tpl.amount ? `$${tpl.amount} · ` : "variable · "}{CAT_CONFIG[tpl.cat]?.label}
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Full templates manager (expanded) ── */}
+        {showAllTemplates && (
+          <div style={{ marginBottom:16, background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:12, padding:"14px 16px" }}>
+            <div style={{ fontSize:11, fontWeight:700, color:C.dim, textTransform:"uppercase", letterSpacing:".6px", marginBottom:12 }}>⭐ All Templates</div>
+            {templates.length === 0 && (
+              <div style={{ fontSize:13, color:C.dim, textAlign:"center", padding:"16px 0" }}>No templates yet — fill the form and click "Save as Template"</div>
+            )}
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              {templates.map(tpl => (
+                <div key={tpl.id} style={{ display:"flex", alignItems:"center", gap:10, background:C.surface, border:`1px solid ${C.border}`, borderRadius:9, padding:"10px 13px" }}>
+                  <span style={{ fontSize:18, flexShrink:0 }}>{CAT_CONFIG[tpl.cat]?.emoji}</span>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    {editingTplId === tpl.id ? (
+                      <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                        <input className="inp" value={editingTplName} onChange={e => setEditingTplName(e.target.value)}
+                          onKeyDown={e => { if(e.key==="Enter") renameTemplate(tpl.id); if(e.key==="Escape") setEditingTplId(null); }}
+                          style={{ flex:1, fontSize:12, padding:"4px 8px" }} autoFocus/>
+                        <button onClick={() => renameTemplate(tpl.id)}
+                          style={{ fontSize:11, fontWeight:700, color:C.accent, background:"none", border:`1px solid rgba(143,203,114,.4)`, borderRadius:6, padding:"3px 9px", cursor:"pointer", fontFamily:"inherit" }}>Save</button>
+                        <button onClick={() => setEditingTplId(null)}
+                          style={{ fontSize:11, color:C.muted, background:"none", border:"none", cursor:"pointer" }}>Cancel</button>
+                      </div>
+                    ) : (
+                      <>
+                        <div style={{ fontWeight:700, fontSize:12.5 }}>{tpl.name}</div>
+                        <div style={{ fontSize:11, color:C.dim, marginTop:2 }}>
+                          {CAT_CONFIG[tpl.cat]?.label}
+                          {tpl.amount ? ` · $${tpl.amount}` : " · variable amount"}
+                          {tpl.supplier ? ` · ${tpl.supplier}` : ""}
+                          {" · "}GST: {tpl.gst==="yes"?"yes":"no"}
+                          {" · "}Invoice: {tpl.invoice==="yes"?"yes":"no"}
+                          {tpl.usageCount > 0 && <span style={{ color:C.accent }}> · used {tpl.usageCount}×</span>}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  <div style={{ display:"flex", gap:5, flexShrink:0 }}>
+                    <button onClick={() => { applyTemplate(tpl); setShowAllTemplates(false); }}
+                      style={{ fontSize:11, fontWeight:700, background:C.accent, color:"#0C0F0D", border:"none", borderRadius:6, padding:"5px 11px", cursor:"pointer", fontFamily:"inherit" }}>
+                      Use ↵
+                    </button>
+                    <button onClick={() => { setEditingTplId(tpl.id); setEditingTplName(tpl.name); }}
+                      style={{ fontSize:11, color:C.muted, background:"none", border:`1px solid ${C.border}`, borderRadius:6, padding:"5px 8px", cursor:"pointer", fontFamily:"inherit" }}>
+                      ✎
+                    </button>
+                    <button onClick={() => deleteTemplate(tpl.id)}
+                      style={{ fontSize:11, color:C.red, background:"none", border:`1px solid rgba(224,96,96,.3)`, borderRadius:6, padding:"5px 8px", cursor:"pointer", fontFamily:"inherit" }}>
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Category search */}
         <div style={{ position:"relative", marginBottom: selCat ? 10 : 14 }}>
@@ -2001,14 +2938,14 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
             autoComplete="off"
           />
           {catQuery && (
-            <button onClick={() => { setCatQuery(""); setSelCat(null); setF(p=>({...p,cat:sortedCats[0]||"ingredients"})); }}
+            <button onClick={() => { setCatQuery(""); setSelCat(null); setF(p=>({...p,cat:personalSortedCats[0]||"ingredients"})); }}
               style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:15, padding:"2px 6px" }}>✕</button>
           )}
 
           {/* Dropdown */}
           {showCatDrop && catResults.length > 0 && (
             <div style={{ position:"absolute", top:"calc(100% + 4px)", left:0, right:0, background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, zIndex:50, overflow:"hidden", boxShadow:"0 8px 24px rgba(0,0,0,.5)" }}>
-              {catResults.map(([id, c], i) => (
+              {catResults.map(({id, c, smartMatch}, i) => (
                 <div key={id}
                   onMouseDown={() => pickCat(id)}
                   style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px", cursor:"pointer", borderBottom:`1px solid ${C.border}`, background: i===dropFocus ? C.surfaceAlt : selCat===id ? "rgba(143,203,114,.08)" : "transparent", transition:"background .1s" }}>
@@ -2017,31 +2954,63 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
                     <div style={{ fontSize:13, fontWeight:600 }}>{c.label}</div>
                     <div style={{ fontSize:10.5, color:C.dim, marginTop:1 }}>{(c.tags||[]).slice(0,4).join(" · ")}</div>
                   </div>
-                  {pinnedCats.includes(id) && <span style={{ fontSize:9.5, fontWeight:700, padding:"2px 7px", borderRadius:10, background:"rgba(143,203,114,.15)", color:C.accent }}>★ Top</span>}
+                  <div style={{ display:"flex", gap:5, alignItems:"center" }}>
+                    {smartMatch?.confidence === "custom" && <span style={{ fontSize:9, fontWeight:700, padding:"2px 7px", borderRadius:10, background:"rgba(61,201,160,.15)", color:"#3DC9A0" }}>★ Your rule</span>}
+                    {smartMatch?.confidence === "high" && <span style={{ fontSize:9, fontWeight:700, padding:"2px 7px", borderRadius:10, background:"rgba(143,203,114,.18)", color:C.accent }}>✦ Smart match</span>}
+                    {!smartMatch && catRank[id] === 1 && <span style={{ fontSize:9, fontWeight:700, padding:"2px 7px", borderRadius:10, background:"rgba(143,203,114,.22)", color:C.accent }}>⚡ #1</span>}
+                    {!smartMatch && catRank[id] === 2 && <span style={{ fontSize:9, fontWeight:700, padding:"2px 7px", borderRadius:10, background:"rgba(143,203,114,.14)", color:C.accent }}>#2</span>}
+                    {!smartMatch && catRank[id] === 3 && <span style={{ fontSize:9, fontWeight:700, padding:"2px 7px", borderRadius:10, background:"rgba(143,203,114,.09)", color:C.dim }}>#3</span>}
+                    {!smartMatch && !catRank[id] && pinnedCats.includes(id) && !hasPersonalData && <span style={{ fontSize:9, fontWeight:700, padding:"2px 7px", borderRadius:10, background:"rgba(143,203,114,.15)", color:C.accent }}>★ Top</span>}
+                  </div>
                 </div>
               ))}
             </div>
           )}
           {showCatDrop && catQuery.trim().length > 1 && catResults.length === 0 && (
-            <div style={{ position:"absolute", top:"calc(100% + 4px)", left:0, right:0, background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, zIndex:50, padding:"16px", textAlign:"center", color:C.dim, fontSize:13 }}>
-              No category found — try different keywords
+            <div style={{ position:"absolute", top:"calc(100% + 4px)", left:0, right:0, background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, zIndex:50, padding:"14px", boxShadow:"0 8px 24px rgba(0,0,0,.5)" }}>
+              <div style={{ fontSize:13, color:C.dim, marginBottom:8 }}>No category found for "<strong style={{color:C.text}}>{catQuery}</strong>"</div>
+              <div style={{ fontSize:11.5, color:C.muted }}>💡 Pick a category below, then Mise will ask to remember "{catQuery}" for next time.</div>
             </div>
           )}
         </div>
 
-        {/* Quick-pick pins */}
-        {!selCat && pinnedCats.length > 0 && (
+        {/* ── Your top picks (usage-personalised, fallback to industry pins) ── */}
+        {!selCat && topPickCats.length > 0 && (
           <div style={{ marginBottom:14 }}>
-            <div style={{ fontSize:10, color:C.dim, textTransform:"uppercase", letterSpacing:".6px", marginBottom:7 }}>★ Quick picks for {{ restaurant:"Restaurant", café:"Café", bar:"Bar" }[industry]}</div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:7 }}>
+              <div style={{ fontSize:10, color:C.dim, textTransform:"uppercase", letterSpacing:".6px" }}>
+                {hasPersonalData ? "⚡ Your top picks" : `★ Quick picks for ${{ restaurant:"Restaurant", café:"Café", bar:"Bar", other:"You" }[industry] || "You"}`}
+              </div>
+              {hasPersonalData && (
+                <div style={{ fontSize:10, color:C.dim }}>
+                  based on your {Object.values(catUsage).reduce((s,v)=>s+v,0)} expenses
+                </div>
+              )}
+            </div>
             <div style={{ display:"flex", gap:7, flexWrap:"wrap" }}>
-              {pinnedCats.map(id => {
+              {topPickCats.map((id, idx) => {
                 const c = CAT_CONFIG[id]; if (!c) return null;
+                const count = catUsage[id] || 0;
+                const isTop = hasPersonalData && idx === 0;
                 return (
                   <button key={id} onClick={() => pickCat(id)}
-                    style={{ border:`1.5px solid ${C.border}`, background:C.surfaceAlt, color:C.text, borderRadius:8, padding:"7px 12px", fontSize:12, fontFamily:"inherit", cursor:"pointer", display:"flex", alignItems:"center", gap:5, transition:"all .15s" }}
+                    style={{
+                      border:`1.5px solid ${isTop ? "rgba(143,203,114,.6)" : C.border}`,
+                      background: isTop ? "rgba(143,203,114,.1)" : C.surfaceAlt,
+                      color:C.text, borderRadius:8, padding:"7px 12px", fontSize:12,
+                      fontFamily:"inherit", cursor:"pointer", display:"flex",
+                      alignItems:"center", gap:5, transition:"all .15s", position:"relative"
+                    }}
                     onMouseEnter={e => { e.currentTarget.style.borderColor=C.accent; e.currentTarget.style.color=C.accent; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor=C.border; e.currentTarget.style.color=C.text; }}>
+                    onMouseLeave={e => { e.currentTarget.style.borderColor=isTop?"rgba(143,203,114,.6)":C.border; e.currentTarget.style.color=C.text; }}>
                     {c.emoji} {c.label}
+                    {hasPersonalData && count > 0 && (
+                      <span style={{ fontSize:9.5, fontWeight:700, color: isTop ? C.accent : C.dim,
+                        background: isTop ? "rgba(143,203,114,.15)" : "transparent",
+                        borderRadius:8, padding: isTop ? "1px 5px" : "0" }}>
+                        {isTop ? `⚡ ${count}×` : `${count}×`}
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -2057,7 +3026,7 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
               <div style={{ fontWeight:700, fontSize:13, color:C.accent }}>{selCatCfg.label}</div>
               <div style={{ fontSize:11, color:C.dim, marginTop:1 }}>{(selCatCfg.tags||[]).slice(0,4).join(" · ")}</div>
             </div>
-            <button onClick={() => { setSelCat(null); setF(p=>({...p,cat:sortedCats[0]||"ingredients"})); setSupplier(""); }}
+            <button onClick={() => { setSelCat(null); setF(p=>({...p,cat:personalSortedCats[0]||"ingredients"})); setSupplier(""); }}
               style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:12 }}>change ✕</button>
           </div>
         )}
@@ -2080,14 +3049,64 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
         {/* Fields — only show once category is selected */}
         <div className="frow2">
           <div className="fg"><label className="flbl">Amount ($)</label>
-            <input className="inp" type="number" placeholder="0.00" value={f.amount} onChange={e => setF({...f,amount:e.target.value})}/>
+            <input id="exp-amount-input" className="inp" type="number" placeholder="0.00" value={f.amount} onChange={e => setF({...f,amount:e.target.value})}/>
           </div>
           <div className="fg"><label className="flbl">Date</label>
             <input className="inp" type="date" value={f.date} onChange={e => setF({...f,date:e.target.value})}/>
           </div>
-          <div className="fg" style={{ gridColumn:"1/-1" }}><label className="flbl">Description</label>
-            <input className="inp" placeholder="Brief description…" value={f.desc} onChange={e => setF({...f,desc:e.target.value})} onKeyDown={e => e.key==="Enter" && add()}/>
+          <div className="fg" style={{ gridColumn:"1/-1" }}><label className="flbl">Description
+            <span style={{ float:"right", fontSize:10, color:C.dim, fontWeight:400 }}>Type a description and Mise will suggest a category</span>
+          </label>
+            <input className="inp" placeholder="e.g. beef tenderloin, weekly gas bill, Uber Eats commission…" value={f.desc}
+              onChange={e => handleDescChange(e.target.value)}
+              onKeyDown={e => e.key==="Enter" && add()}/>
             {supplier && <span className="fhint">Supplier: {supplier}</span>}
+
+            {/* Smart auto-suggest banner */}
+            {autoSuggest && !manualCat && (
+              <div style={{ marginTop:8, background:"rgba(143,203,114,.07)", border:"1px solid rgba(143,203,114,.3)", borderRadius:9, padding:"9px 13px", display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+                <span style={{ fontSize:16 }}>{CAT_CONFIG[autoSuggest.cat]?.emoji}</span>
+                <div style={{ flex:1, minWidth:120 }}>
+                  <span style={{ fontSize:12, color:C.muted }}>
+                    {autoSuggest.confidence === "custom" ? "Your rule: " : "Looks like "}
+                  </span>
+                  <strong style={{ fontSize:12.5, color:C.accent }}>{CAT_CONFIG[autoSuggest.cat]?.label}</strong>
+                  <span style={{ fontSize:11, color:C.dim }}> — based on "{autoSuggest.keyword}"</span>
+                </div>
+                <div style={{ display:"flex", gap:6 }}>
+                  <button onClick={acceptSuggest}
+                    style={{ background:C.accent, color:"#0C0F0D", border:"none", borderRadius:6, padding:"5px 12px", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>
+                    Yes, use this
+                  </button>
+                  <button onClick={() => { setAutoSuggest(null); setSuggestDismissed(true); }}
+                    style={{ background:"none", border:`1px solid ${C.border}`, borderRadius:6, padding:"5px 10px", fontSize:12, color:C.muted, cursor:"pointer", fontFamily:"inherit" }}>
+                    No thanks
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Teach prompt */}
+            {teachPrompt && (
+              <div style={{ marginTop:8, background:"rgba(61,201,160,.06)", border:"1px solid rgba(61,201,160,.25)", borderRadius:9, padding:"9px 13px", display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+                <span style={{ fontSize:14 }}>💾</span>
+                <div style={{ flex:1, minWidth:120 }}>
+                  <span style={{ fontSize:12, color:C.muted }}>Remember "</span>
+                  <strong style={{ fontSize:12, color:C.teal }}>{teachPrompt.keyword}</strong>
+                  <span style={{ fontSize:12, color:C.muted }}>" → {CAT_CONFIG[teachPrompt.cat]?.label}?</span>
+                </div>
+                <div style={{ display:"flex", gap:6 }}>
+                  <button onClick={() => { saveCustomMapping(teachPrompt.keyword, teachPrompt.cat); setTeachPrompt(null); showToast(`✅ Taught: "${teachPrompt.keyword}" → ${CAT_CONFIG[teachPrompt.cat]?.label}`); }}
+                    style={{ background:"rgba(61,201,160,.15)", color:"#3DC9A0", border:"1px solid rgba(61,201,160,.3)", borderRadius:6, padding:"5px 12px", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>
+                    Save rule
+                  </button>
+                  <button onClick={() => setTeachPrompt(null)}
+                    style={{ background:"none", border:"none", fontSize:12, color:C.muted, cursor:"pointer", padding:"5px 8px" }}>
+                    Skip
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
           <div className="fg"><label className="flbl">GST Applicable?</label>
             <select className="sel" value={f.gst} onChange={e => setF({...f,gst:e.target.value})}>
@@ -2129,8 +3148,140 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
 
         <div className="fbtns">
           <button className="btn" onClick={add}>+ Add Expense</button>
-          <button className="btn-g" onClick={() => { setF({date:todayStr,cat:sortedCats[0]||"ingredients",amount:"",desc:"",gst:"yes",invoice:"yes"}); setSelCat(null); setSupplier(""); setCatQuery(""); }}>Clear</button>
+          <button className="btn-g" onClick={() => { setF({date:todayStr,cat:personalSortedCats[0]||"ingredients",amount:"",desc:"",gst:"yes",invoice:"yes"}); setSelCat(null); setSupplier(""); setCatQuery(""); setAutoSuggest(null); setSuggestDismissed(false); setTeachPrompt(null); setManualCat(false); setSavingTemplate(false); setTemplateName(""); }}>Clear</button>
+          {/* Save as template — only offer when desc is filled */}
+          {f.desc.trim() && !savingTemplate && (
+            <button onClick={() => { setSavingTemplate(true); setTemplateName(f.desc.trim().slice(0,40)); }}
+              style={{ marginLeft:"auto", fontSize:11.5, fontWeight:700, color:C.yellow, background:"rgba(212,168,67,.08)", border:`1px solid rgba(212,168,67,.35)`, borderRadius:7, padding:"6px 13px", cursor:"pointer", fontFamily:"inherit", display:"flex", alignItems:"center", gap:5 }}>
+              ⭐ Save as template
+            </button>
+          )}
         </div>
+
+        {/* Save-template name input */}
+        {savingTemplate && (
+          <div style={{ marginTop:10, display:"flex", gap:8, alignItems:"center", background:"rgba(212,168,67,.07)", border:`1px solid rgba(212,168,67,.3)`, borderRadius:9, padding:"10px 13px" }}>
+            <span style={{ fontSize:14 }}>⭐</span>
+            <div style={{ flex:1 }}>
+              <div style={{ fontSize:11, color:C.dim, marginBottom:4 }}>Template name — how you'll recognise it later:</div>
+              <input className="inp" value={templateName} onChange={e => setTemplateName(e.target.value)}
+                onKeyDown={e => { if(e.key==="Enter") addTemplate(); if(e.key==="Escape") setSavingTemplate(false); }}
+                placeholder="e.g. Weekly veggie order, Monthly gas bill…"
+                style={{ fontSize:12.5, padding:"6px 10px" }} autoFocus/>
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
+              <button onClick={addTemplate}
+                style={{ fontSize:12, fontWeight:700, background:C.yellow, color:"#0C0F0D", border:"none", borderRadius:7, padding:"7px 14px", cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
+                Save ⭐
+              </button>
+              <button onClick={() => setSavingTemplate(false)}
+                style={{ fontSize:11, color:C.muted, background:"none", border:"none", cursor:"pointer", textAlign:"center" }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Post-add recurring nudge */}
+        {postAddNudge && (
+          <div style={{ marginTop:12, background:"rgba(61,201,160,.07)", border:"1px solid rgba(61,201,160,.35)", borderRadius:10, padding:"12px 14px" }}>
+            <div style={{ display:"flex", alignItems:"flex-start", gap:10 }}>
+              <span style={{ fontSize:20, marginTop:1 }}>🔁</span>
+              <div style={{ flex:1 }}>
+                <div style={{ fontSize:13, fontWeight:700, color:"#3DC9A0", marginBottom:3 }}>
+                  You added this last month too
+                </div>
+                <div style={{ fontSize:12, color:C.muted, marginBottom:10 }}>
+                  <strong style={{ color:C.text, textTransform:"capitalize" }}>{postAddNudge.label}</strong>
+                  {" "}({CAT_CONFIG[postAddNudge.cat]?.label}) — want Mise to remind you every month?
+                </div>
+                <div style={{ display:"flex", gap:7, flexWrap:"wrap" }}>
+                  <button onClick={() => addRecurringRule(postAddNudge)}
+                    style={{ background:"#3DC9A0", color:"#0C0F0D", border:"none", borderRadius:7, padding:"7px 16px", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>
+                    Yes, make it recurring 🔁
+                  </button>
+                  <button onClick={() => { setPostAddNudge(null); }}
+                    style={{ background:"none", border:`1px solid ${C.border}`, borderRadius:7, padding:"7px 12px", fontSize:12, color:C.muted, cursor:"pointer", fontFamily:"inherit" }}>
+                    Not now
+                  </button>
+                  <button onClick={() => { const u=[...dismissedNudges, postAddNudge.fp]; saveDismissedNudges(u); setPostAddNudge(null); }}
+                    style={{ background:"none", border:"none", fontSize:11, color:C.dim, cursor:"pointer", padding:"7px 4px" }}>
+                    Don't ask again
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* My Smart Rules manager */}
+        {Object.keys(customMappings).length > 0 && (
+          <div style={{ marginTop:16, borderTop:`1px solid ${C.border}`, paddingTop:14 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+              <div style={{ fontSize:11, fontWeight:700, color:C.dim, textTransform:"uppercase", letterSpacing:".6px" }}>
+                💾 Your Smart Rules ({Object.keys(customMappings).length})
+              </div>
+              <button onClick={() => setShowRules(r=>!r)}
+                style={{ fontSize:11, color:C.muted, background:"none", border:"none", cursor:"pointer", padding:"2px 6px" }}>
+                {showRules ? "Hide ▲" : "Show ▼"}
+              </button>
+            </div>
+            {showRules && (
+              <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                {Object.entries(customMappings).map(([kw, cat]) => (
+                  <div key={kw} style={{ display:"flex", alignItems:"center", gap:5, background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:7, padding:"4px 10px", fontSize:11.5 }}>
+                    <span style={{ color:C.teal, fontWeight:600 }}>"{kw}"</span>
+                    <span style={{ color:C.dim }}>→</span>
+                    <span>{CAT_CONFIG[cat]?.emoji} {CAT_CONFIG[cat]?.label || cat}</span>
+                    <button onClick={() => { deleteCustomMapping(kw); showToast(`Removed rule: "${kw}"`); }}
+                      style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:12, padding:"0 2px", lineHeight:1 }}>✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Manage Recurring — collapsible at bottom of form */}
+        {recurringRules.length > 0 && (
+          <div style={{ marginTop:14, borderTop:`1px solid ${C.border}`, paddingTop:13 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom: showRecurMgr ? 10 : 0 }}>
+              <div style={{ fontSize:11, fontWeight:700, color:"#3DC9A0", textTransform:"uppercase", letterSpacing:".6px" }}>
+                🔁 Recurring rules ({recurringRules.filter(r=>r.active).length} active)
+              </div>
+              <button onClick={() => setShowRecurMgr(v=>!v)}
+                style={{ fontSize:11, color:C.muted, background:"none", border:"none", cursor:"pointer", padding:"2px 6px" }}>
+                {showRecurMgr ? "Hide ▲" : "Manage ▼"}
+              </button>
+            </div>
+            {showRecurMgr && (
+              <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                {recurringRules.map(rule => (
+                  <div key={rule.fp} style={{ display:"flex", alignItems:"center", gap:9, background: rule.active ? "rgba(61,201,160,.05)" : C.surfaceAlt, border:`1px solid ${rule.active ? "rgba(61,201,160,.25)" : C.border}`, borderRadius:8, padding:"9px 12px", opacity: rule.active ? 1 : 0.6 }}>
+                    <span style={{ fontSize:16 }}>{CAT_CONFIG[rule.cat]?.emoji}</span>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:12.5, fontWeight:600, textTransform:"capitalize" }}>{rule.label}</div>
+                      <div style={{ fontSize:11, color:C.dim, marginTop:1 }}>
+                        {CAT_CONFIG[rule.cat]?.label} · {money(rule.amount)}
+                        {rule.active ? <span style={{ color:"#3DC9A0", marginLeft:6 }}>● Active</span> : <span style={{ color:C.dim, marginLeft:6 }}>● Paused</span>}
+                      </div>
+                    </div>
+                    <div style={{ display:"flex", gap:5 }}>
+                      <button onClick={() => saveRecurringRules(recurringRules.map(r => r.fp===rule.fp ? {...r, active:!r.active} : r))}
+                        style={{ fontSize:11, color: rule.active ? C.yellow : "#3DC9A0", background:"none", border:`1px solid ${rule.active ? "rgba(212,168,67,.4)" : "rgba(61,201,160,.4)"}`, borderRadius:6, padding:"4px 9px", cursor:"pointer", fontFamily:"inherit" }}>
+                        {rule.active ? "Pause" : "Resume"}
+                      </button>
+                      <button onClick={() => { saveRecurringRules(recurringRules.filter(r => r.fp !== rule.fp)); showToast("Recurring rule removed"); }}
+                        style={{ fontSize:11, color:C.red, background:"none", border:`1px solid rgba(224,96,96,.3)`, borderRadius:6, padding:"4px 8px", cursor:"pointer", fontFamily:"inherit" }}>
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ── Tabs ── */}
@@ -2152,13 +3303,13 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
             <input className="inp" style={{ flex:"1 1 180px", minWidth:160 }} placeholder="🔍 Search description or category…" value={search} onChange={e => setSearch(e.target.value)}/>
             <select className="sel" style={{ flex:"0 0 170px" }} value={filterCat} onChange={e => setFilterCat(e.target.value)}>
               <option value="all">All Categories</option>
-              {pinnedCats.length > 0 && (
-                <optgroup label={`── ${{ restaurant:"Restaurant", café:"Café", bar:"Bar" }[industry]} Essentials ──`}>
-                  {pinnedCats.map(c => <option key={c} value={c}>{catLabel(c)} ★</option>)}
+              {topPickCats.length > 0 && (
+                <optgroup label={hasPersonalData ? "── Your Most Used ──" : `── ${{ restaurant:"Restaurant", café:"Café", bar:"Bar" }[industry] || ""} Essentials ──`}>
+                  {topPickCats.map(c => <option key={c} value={c}>{catLabel(c)}{hasPersonalData && catUsage[c] ? ` (${catUsage[c]}×)` : " ★"}</option>)}
                 </optgroup>
               )}
               <optgroup label="── All ──">
-                {sortedCats.slice(PINNED_COUNT).map(c => <option key={c} value={c}>{catLabel(c)}</option>)}
+                {personalSortedCats.filter(c => !topPickCats.includes(c)).map(c => <option key={c} value={c}>{catLabel(c)}</option>)}
               </optgroup>
             </select>
             <select className="sel" style={{ flex:"0 0 120px" }} value={filterGst} onChange={e => setFilterGst(e.target.value)}>
@@ -2513,10 +3664,529 @@ function TimesheetModal({ employees, onSave, onClose }) {
 }
 
 // ════════════════════════════════════════════════════════════
+//  SHIFT MODAL
+// ════════════════════════════════════════════════════════════
+function ShiftModal({ employees, initial, onSave, onClose }) {
+  const [f, setF] = useState({
+    id:         initial.id         || null,
+    eid:        initial.eid        || (employees[0]?.id || ""),
+    date:       initial.date       || todayStr,
+    start:      initial.start      || "09:00",
+    end:        initial.end        || "17:00",
+    break_mins: initial.break_mins != null ? initial.break_mins : 30,
+    note:       initial.note       || "",
+  });
+  const upd = k => e => setF(p => ({...p, [k]: e.target.value}));
+
+  const netMins = () => {
+    const [sh,sm] = f.start.split(":").map(Number);
+    const [eh,em] = f.end.split(":").map(Number);
+    return Math.max(0, (eh*60+em) - (sh*60+sm) - (parseInt(f.break_mins)||0));
+  };
+  const hrs = (netMins() / 60);
+  const emp = employees.find(e => e.id === parseInt(f.eid));
+  const er  = emp ? effRate(emp) : 0;
+  const day = (() => { const [y,m,d] = f.date.split('-').map(Number); return new Date(y,m-1,d).getDay(); })();
+  const isWknd = day === 0 || day === 6;
+  const rate = isWknd ? er * WKND_RATE : er;
+  const gross = rate * hrs;
+
+  return (
+    <div className="modal-ov" onClick={onClose}>
+      <div className="modal" style={{maxWidth:440}} onClick={e => e.stopPropagation()}>
+        <div className="modal-hdr">
+          <div className="modal-ttl">{f.id ? "✏️ Edit Shift" : "➕ Add Shift"}</div>
+          <button className="modal-x" onClick={onClose}>×</button>
+        </div>
+        <div className="modal-body">
+          <div className="fg">
+            <label className="flbl">Employee</label>
+            <select className="sel" value={f.eid} onChange={upd("eid")}>
+              {employees.map(e => <option key={e.id} value={e.id}>{e.name} · {e.role}</option>)}
+            </select>
+          </div>
+          <div className="frow2">
+            <div className="fg">
+              <label className="flbl">Date</label>
+              <input type="date" className="inp" value={f.date} onChange={upd("date")}/>
+            </div>
+            <div className="fg">
+              <label className="flbl">Break (mins)</label>
+              <input type="number" className="inp" value={f.break_mins} onChange={upd("break_mins")} min={0} max={120} step={5}/>
+            </div>
+          </div>
+          <div className="frow2">
+            <div className="fg">
+              <label className="flbl">Start Time</label>
+              <input type="time" className="inp" value={f.start} onChange={upd("start")}/>
+            </div>
+            <div className="fg">
+              <label className="flbl">End Time</label>
+              <input type="time" className="inp" value={f.end} onChange={upd("end")}/>
+            </div>
+          </div>
+          {hrs > 0 && emp && (
+            <div style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 13px",fontSize:12,lineHeight:1.7,marginTop:2}}>
+              <div style={{display:"flex",justifyContent:"space-between"}}>
+                <span style={{color:C.muted}}>Net hours</span>
+                <span className="mono" style={{fontWeight:700}}>{hrs.toFixed(2)}h</span>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between"}}>
+                <span style={{color:C.muted}}>Rate {isWknd ? <span style={{background:"#FEF3C7",borderRadius:4,padding:"1px 5px",fontSize:10,color:"#92400E"}}>Weekend ×1.75</span> : "Weekday"}</span>
+                <span className="mono">{money(rate)}/hr</span>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",borderTop:`1px solid ${C.border}`,paddingTop:6,marginTop:4}}>
+                <span style={{fontWeight:600}}>Shift cost</span>
+                <span className="mono" style={{fontWeight:700,color:C.accent}}>{money(gross)}</span>
+              </div>
+            </div>
+          )}
+          <div className="fg">
+            <label className="flbl">Note (optional)</label>
+            <input className="inp" value={f.note} onChange={upd("note")} placeholder="e.g. covering for James, dinner service"/>
+          </div>
+        </div>
+        <div className="modal-footer" style={{display:"flex",justifyContent:"space-between",gap:8}}>
+          <button className="btn-b" onClick={onClose}>Cancel</button>
+          <button className="btn" onClick={() => {
+            if (!f.eid || !f.date || !f.start || !f.end) return;
+            onSave({...f, eid:parseInt(f.eid), break_mins:parseInt(f.break_mins)||0});
+          }}>{f.id ? "Save Changes" : "Add Shift"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+//  ROSTER TAB
+// ════════════════════════════════════════════════════════════
+function RosterTab({ employees, roster, setRoster, showToast }) {
+  // ── Week navigation ───────────────────────────────────────
+  const [viewMonday, setViewMonday] = useState(() => {
+    const d = new Date();
+    const day = d.getDay();
+    d.setDate(d.getDate() - (day === 0 ? 6 : day - 1)); // back to Monday
+    d.setHours(0,0,0,0);
+    return d;
+  });
+  const [shiftModal, setShiftModal] = useState(null); // null | {date,eid?} | shift
+
+  const addDays = (base, n) => { const d = new Date(base); d.setDate(d.getDate()+n); return d; };
+  // Use LOCAL date parts — toISOString() returns UTC which shifts date by timezone offset
+  const isoDate = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const prevWeek = () => setViewMonday(d => addDays(d,-7));
+  const nextWeek = () => setViewMonday(d => addDays(d, 7));
+  const thisWeek = () => {
+    const d = new Date();
+    const day = d.getDay();
+    d.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+    d.setHours(0,0,0,0);
+    setViewMonday(d);
+  };
+
+  // 7 days Mon → Sun
+  const weekDays  = Array.from({length:7}, (_,i) => addDays(viewMonday, i));
+  const weekDates = weekDays.map(isoDate);
+  const weekStart = weekDays[0].toLocaleDateString("en-AU",{day:"2-digit",month:"short"});
+  const weekEnd   = weekDays[6].toLocaleDateString("en-AU",{day:"2-digit",month:"short",year:"numeric"});
+  const weekShifts = roster.filter(s => weekDates.includes(s.date));
+
+  const DAY_LABELS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+
+  // ── Shift helpers ─────────────────────────────────────────
+  const shiftNetMins = s => {
+    const [sh,sm] = s.start.split(":").map(Number);
+    const [eh,em] = s.end.split(":").map(Number);
+    return Math.max(0, (eh*60+em)-(sh*60+sm)-(s.break_mins||0));
+  };
+  const shiftHrs  = s => shiftNetMins(s) / 60;
+  // Parse "YYYY-MM-DD" as LOCAL date to avoid UTC midnight → wrong-day-of-week bug
+  const isWeekend = dateStr => {
+    const [y,m,d] = dateStr.split('-').map(Number);
+    const day = new Date(y, m-1, d).getDay(); // local-time constructor, no UTC shift
+    return day === 0 || day === 6;
+  };
+
+  // ── OT-aware per-employee weekly breakdown ─────────────────
+  // Rules (Fair Work / Hospitality Industry Award):
+  //   • Weekend / PH shifts → ×1.75 always (not counted toward OT threshold)
+  //   • Weekday shifts      → accumulate; once total weekday hrs > emp.std_hrs → ×1.5
+  //   • Casual employees    → effective rate already includes 25% loading; OT still at ×1.5 of effective rate
+  // Returns Map<shiftId, { stdHrs, otHrs, wkndHrs, stdPay, otPay, wkndPay, gross, isOT }>
+  const calcEmpWeekBreakdown = (emp, shifts) => {
+    const er         = effRate(emp);
+    const threshold  = emp.std_hrs || 38; // contracted weekly hours
+    let weekdayBucket = 0;               // running weekday hours this week
+    const result = new Map();
+
+    // Process weekday shifts first (chronological), then weekends
+    const sorted = [...shifts].sort((a,b) => {
+      const aWknd = isWeekend(a.date) ? 1 : 0;
+      const bWknd = isWeekend(b.date) ? 1 : 0;
+      if (aWknd !== bWknd) return aWknd - bWknd; // weekdays first
+      return a.date < b.date ? -1 : a.date > b.date ? 1 : a.start.localeCompare(b.start);
+    });
+
+    sorted.forEach(sh => {
+      const hrs = shiftHrs(sh);
+      if (isWeekend(sh.date)) {
+        // Weekend: always WKND_RATE, not counted toward weekday OT threshold
+        result.set(sh.id, {
+          stdHrs:0, otHrs:0, wkndHrs:hrs,
+          stdPay:0, otPay:0, wkndPay: er * WKND_RATE * hrs,
+          gross: er * WKND_RATE * hrs,
+          isOT: false, isWknd: true,
+        });
+      } else {
+        // Weekday: split at threshold
+        const alreadyUsed = weekdayBucket;
+        const stdPortion  = Math.max(0, Math.min(hrs, threshold - alreadyUsed));
+        const otPortion   = hrs - stdPortion;
+        weekdayBucket    += hrs;
+        const stdPay  = er          * stdPortion;
+        const otPay   = er * OT_RATE * otPortion;
+        result.set(sh.id, {
+          stdHrs: stdPortion, otHrs: otPortion, wkndHrs: 0,
+          stdPay, otPay, wkndPay: 0,
+          gross: stdPay + otPay,
+          isOT: otPortion > 0, isWknd: false,
+          otHrsLabel: otPortion > 0 ? otPortion.toFixed(1) : null,
+        });
+      }
+    });
+    return result;
+  };
+
+  // Build full breakdown for all employees this week
+  const empBreakdowns = new Map(
+    employees.map(emp => [
+      emp.id,
+      calcEmpWeekBreakdown(emp, weekShifts.filter(s => s.eid === emp.id))
+    ])
+  );
+
+  // Convenience: get one shift's breakdown entry
+  const shiftData = (sh) => empBreakdowns.get(sh.eid)?.get(sh.id) ?? null;
+  // For grid display: cost of one shift
+  const shiftCost = (sh) => shiftData(sh)?.gross ?? 0;
+
+  // Unique avatar colours per employee
+  const empColor = emp => avatarBg(emp.id);
+
+  // ── Save / delete ─────────────────────────────────────────
+  const saveShift  = sh => {
+    if (sh.id) { setRoster(p => p.map(s => s.id===sh.id ? sh : s)); showToast("Shift updated!"); }
+    else        { setRoster(p => [...p, {...sh, id:Date.now()}]);      showToast("Shift added!"); }
+    setShiftModal(null);
+  };
+  const deleteShift = id => { setRoster(p => p.filter(s => s.id!==id)); showToast("Shift removed."); };
+
+  // ── Labour cost summary ───────────────────────────────────
+  // Use getSuperRate keyed to the Monday of the viewed week
+  const [wkYr, wkNum] = (() => {
+    // Get ISO week number of viewMonday
+    const d = new Date(Date.UTC(viewMonday.getFullYear(), viewMonday.getMonth(), viewMonday.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
+    const wk = Math.ceil((((d - yearStart) / 86400000) + 1)/7);
+    return [d.getUTCFullYear(), wk];
+  })();
+  const weekStr = `${wkYr}-W${String(wkNum).padStart(2,"0")}`;
+  const superR  = getSuperRate(weekStr);
+
+  const empSummary = employees.map(emp => {
+    const shifts    = weekShifts.filter(s => s.eid === emp.id);
+    const bd        = empBreakdowns.get(emp.id) || new Map();
+    const totalHrs  = shifts.reduce((s,sh) => s + shiftHrs(sh), 0);
+    const stdHrs    = [...bd.values()].reduce((s,v) => s + v.stdHrs,  0);
+    const otHrs     = [...bd.values()].reduce((s,v) => s + v.otHrs,   0);
+    const wkndHrs   = [...bd.values()].reduce((s,v) => s + v.wkndHrs, 0);
+    const gross     = [...bd.values()].reduce((s,v) => s + v.gross,    0);
+    const super_    = gross * superR;
+    const payg      = calcWeeklyPAYG(gross, emp.tfn);
+    const net       = gross - payg;
+    const labour    = gross + super_;
+    return { emp, shifts, totalHrs, stdHrs, otHrs, wkndHrs, gross, super:super_, payg, net, labour };
+  });
+
+  const totHrs    = empSummary.reduce((s,e) => s + e.totalHrs, 0);
+  const totGross  = empSummary.reduce((s,e) => s + e.gross,    0);
+  const totSuper  = empSummary.reduce((s,e) => s + e.super,    0);
+  const totPAYG   = empSummary.reduce((s,e) => s + e.payg,     0);
+  const totLabour = empSummary.reduce((s,e) => s + e.labour,   0);
+
+  // ── Render ────────────────────────────────────────────────
+  return (
+    <>
+      {shiftModal && (
+        <ShiftModal employees={employees} initial={shiftModal} onSave={saveShift} onClose={() => setShiftModal(null)}/>
+      )}
+
+      {/* ── Week navigator ── */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,gap:8}}>
+        <div style={{display:"flex",gap:6}}>
+          <button className="btn-b" onClick={prevWeek}>← Prev</button>
+          <button className="btn-b" onClick={thisWeek}>Today</button>
+          <button className="btn-b" onClick={nextWeek}>Next →</button>
+        </div>
+        <div style={{fontWeight:700,fontSize:15,letterSpacing:"-.3px"}}>
+          📅 Week of {weekStart} – {weekEnd}
+        </div>
+        <button className="btn" onClick={() => setShiftModal({date:isoDate(weekDays[0])})}>
+          + Add Shift
+        </button>
+      </div>
+
+      {/* ── Roster Grid ── */}
+      <div style={{overflowX:"auto",marginBottom:20,border:`1px solid ${C.border}`,borderRadius:13,overflow:"hidden"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",minWidth:820}}>
+          <thead>
+            <tr>
+              <th style={{background:"#111827",color:"#fff",padding:"10px 12px",textAlign:"left",fontSize:11,fontWeight:700,width:130,whiteSpace:"nowrap"}}>
+                Staff
+              </th>
+              {weekDays.map((d,i) => {
+                const wknd = d.getDay()===0||d.getDay()===6;
+                const isToday = isoDate(d)===isoDate(new Date());
+                return (
+                  <th key={i} style={{background:isToday?"#1C4532":wknd?"#78350F":"#111827",color:isToday?"#86EFAC":wknd?"#FDE68A":"#fff",padding:"8px 4px",textAlign:"center",fontSize:11,fontWeight:700,minWidth:100,position:"relative"}}>
+                    <div>{DAY_LABELS[i]}</div>
+                    <div style={{fontSize:9.5,fontWeight:400,opacity:.8}}>
+                      {d.toLocaleDateString("en-AU",{day:"2-digit",month:"short"})}
+                      {wknd && <span style={{marginLeft:4,fontSize:8.5,opacity:.7}}>×1.75</span>}
+                    </div>
+                  </th>
+                );
+              })}
+              <th style={{background:"#1F2937",color:"#9CA3AF",padding:"10px 8px",textAlign:"right",fontSize:10,fontWeight:700,whiteSpace:"nowrap"}}>
+                Total
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {employees.map((emp,ei) => {
+              const col = empColor(emp);
+              const empWeekShifts = weekShifts.filter(s => s.eid===emp.id);
+              const empHrs  = empWeekShifts.reduce((s,sh) => s+shiftHrs(sh), 0);
+              const empCost = empWeekShifts.reduce((s,sh) => s+shiftCost(sh), 0);
+              const empOTHrs = [...(empBreakdowns.get(emp.id)||new Map()).values()].reduce((s,v)=>s+v.otHrs,0);
+              return (
+                <tr key={emp.id} style={{background: ei%2===0 ? C.surface : C.surfaceAlt}}>
+                  {/* Employee name cell */}
+                  <td style={{padding:"8px 10px",borderBottom:`1px solid ${C.border}`,verticalAlign:"middle"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:7}}>
+                      <div style={{width:28,height:28,borderRadius:"50%",background:col,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:"#fff",flexShrink:0}}>
+                        {initials(emp.name)}
+                      </div>
+                      <div>
+                        <div style={{fontWeight:600,fontSize:11.5,letterSpacing:"-.2px"}}>{emp.name}</div>
+                        <div style={{fontSize:9.5,color:C.muted}}>{money(effRate(emp))}/hr · {emp.std_hrs}h/wk</div>
+                        {empOTHrs > 0 && <div style={{fontSize:9,fontWeight:700,color:"#DC2626",marginTop:1}}>⚡ {empOTHrs.toFixed(1)}h OT</div>}
+                      </div>
+                    </div>
+                  </td>
+                  {/* Day cells */}
+                  {weekDays.map((d,di) => {
+                    const date = isoDate(d);
+                    const dayShifts = empWeekShifts.filter(s => s.date===date);
+                    const wknd = d.getDay()===0||d.getDay()===6;
+                    return (
+                      <td key={di} style={{
+                        padding:"4px 3px",
+                        borderBottom:`1px solid ${C.border}`,
+                        borderLeft:`1px solid ${C.border}`,
+                        verticalAlign:"top",
+                        background: wknd ? "rgba(251,191,36,.06)" : undefined,
+                        minWidth:100,
+                      }}>
+                        {dayShifts.map(sh => {
+                          const sd = shiftData(sh);
+                          const hasOT   = sd?.isOT;
+                          const isWknd  = sd?.isWknd;
+                          const borderC = hasOT ? "#DC2626" : isWknd ? "#D97706" : col;
+                          return (
+                            <div key={sh.id} style={{
+                              background: (hasOT ? "#DC2626" : isWknd ? "#D97706" : col)+"18",
+                              borderLeft: `3px solid ${borderC}`,
+                              borderRadius:5,
+                              padding:"4px 6px",
+                              marginBottom:3,
+                              cursor:"pointer",
+                              position:"relative",
+                            }}
+                              onClick={() => setShiftModal(sh)}
+                            >
+                              <div style={{fontSize:10,fontWeight:700,color:borderC,lineHeight:1.2}}>{sh.start}–{sh.end}</div>
+                              <div style={{fontSize:9,color:C.muted,marginTop:1}}>
+                                {shiftHrs(sh).toFixed(1)}h · {money(shiftCost(sh))}
+                              </div>
+                              {/* OT / Weekend rate badge */}
+                              {hasOT && (
+                                <div style={{fontSize:8,fontWeight:700,color:"#DC2626",marginTop:1}}>
+                                  ⚡ {sd.otHrs.toFixed(1)}h OT ×1.5
+                                </div>
+                              )}
+                              {isWknd && (
+                                <div style={{fontSize:8,fontWeight:700,color:"#D97706",marginTop:1}}>
+                                  ×1.75 Wknd
+                                </div>
+                              )}
+                              {sh.note && <div style={{fontSize:8.5,color:C.dim,marginTop:1,fontStyle:"italic",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:85}}>{sh.note}</div>}
+                              <button
+                                style={{position:"absolute",top:2,right:3,background:"none",border:"none",cursor:"pointer",fontSize:9,color:"#DC2626",padding:0,lineHeight:1,opacity:.7}}
+                                onClick={e => { e.stopPropagation(); deleteShift(sh.id); }}
+                                title="Remove shift"
+                              >✕</button>
+                            </div>
+                          );
+                        })}
+                        <button
+                          style={{width:"100%",background:"none",border:`1px dashed ${C.border}`,borderRadius:5,color:C.dim,fontSize:9.5,padding:"3px 0",cursor:"pointer",marginTop:dayShifts.length?1:0}}
+                          onClick={() => setShiftModal({date, eid:emp.id})}
+                        >+ shift</button>
+                      </td>
+                    );
+                  })}
+                  {/* Row total */}
+                  <td style={{padding:"8px 10px",borderBottom:`1px solid ${C.border}`,borderLeft:`1px solid ${C.border}`,textAlign:"right",verticalAlign:"middle"}}>
+                    <div className="mono" style={{fontWeight:700,fontSize:12,color: empHrs>0?C.text:C.dim}}>{empHrs>0?`${empHrs.toFixed(1)}h`:"—"}</div>
+                    {empCost>0 && <div style={{fontSize:9.5,color:C.muted}}>{money(empCost)}</div>}
+                    {empOTHrs > 0 && <div style={{fontSize:9,fontWeight:700,color:"#DC2626"}}>⚡ {empOTHrs.toFixed(1)}h OT</div>}
+                  </td>
+                </tr>
+              );
+            })}
+            {/* Daily totals row */}
+            <tr style={{background:"#F3F4F6"}}>
+              <td style={{padding:"7px 10px",fontWeight:700,fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:".4px"}}>Day Total</td>
+              {weekDays.map((d,di) => {
+                const date = isoDate(d);
+                const dayShifts = weekShifts.filter(s => s.date===date);
+                const dayHrs  = dayShifts.reduce((s,sh)=>s+shiftHrs(sh), 0);
+                const dayCost = dayShifts.reduce((s,sh)=>s+shiftCost(sh), 0);
+                return (
+                  <td key={di} style={{padding:"7px 4px",textAlign:"center",borderLeft:`1px solid ${C.border}`}}>
+                    <div className="mono" style={{fontWeight:700,fontSize:11,color:dayHrs>0?C.text:C.dim}}>{dayHrs>0?`${dayHrs.toFixed(1)}h`:"—"}</div>
+                    {dayCost>0 && <div style={{fontSize:9,color:C.muted}}>{money(dayCost)}</div>}
+                  </td>
+                );
+              })}
+              <td style={{padding:"7px 10px",textAlign:"right",borderLeft:`1px solid ${C.border}`}}>
+                <div className="mono" style={{fontWeight:700,fontSize:12}}>{totHrs.toFixed(1)}h</div>
+                <div style={{fontSize:9.5,color:C.muted}}>{money(totGross)}</div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {/* ── Labour Cost Summary ── */}
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:13,padding:"18px 20px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+          <div style={{fontWeight:700,fontSize:14}}>💰 Labour Cost Summary — {weekStart} to {weekEnd}</div>
+          <div style={{fontSize:10,color:C.muted}}>Super @ {(superR*100).toFixed(1)}% · ATO 2024-25 progressive PAYG</div>
+        </div>
+
+        {/* Stat cards — now includes OT hours */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10,marginBottom:16}}>
+          {[
+            {lbl:"Total Hours",    val:`${totHrs.toFixed(1)}h`,                                           cls:"",  ico:"🕐"},
+            {lbl:"Std Hours",      val:`${empSummary.reduce((s,e)=>s+e.stdHrs,0).toFixed(1)}h`,           cls:"",  ico:"📋"},
+            {lbl:"OT Hours ×1.5",  val:`${empSummary.reduce((s,e)=>s+e.otHrs,0).toFixed(1)}h`,           cls:empSummary.some(e=>e.otHrs>0)?"r":"", ico:"⚡"},
+            {lbl:"Wknd Hrs ×1.75", val:`${empSummary.reduce((s,e)=>s+e.wkndHrs,0).toFixed(1)}h`,         cls:"y", ico:"📅"},
+            {lbl:"Total Labour",   val:money(totLabour),                                                  cls:"g", ico:"📊"},
+          ].map((c,i) => (
+            <div key={i} className="card" style={{display:"flex",flexDirection:"column",gap:4}}>
+              <div className="clbl">{c.ico} {c.lbl}</div>
+              <div className={`cval ${c.cls}`}>{c.val}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Per-employee breakdown table */}
+        {totHrs > 0 ? (
+          <div style={{overflowX:"auto"}}>
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th style={{textAlign:"left"}}>Employee</th>
+                  <th style={{textAlign:"right"}}>Std Hrs</th>
+                  <th style={{textAlign:"right",color:"#DC2626"}}>OT Hrs ×1.5</th>
+                  <th style={{textAlign:"right",color:"#D97706"}}>Wknd Hrs ×1.75</th>
+                  <th style={{textAlign:"right"}}>Gross Pay</th>
+                  <th style={{textAlign:"right"}}>PAYG (ATO)</th>
+                  <th style={{textAlign:"right"}}>Super ({(superR*100).toFixed(1)}%)</th>
+                  <th style={{textAlign:"right"}}>Labour Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {empSummary.filter(e => e.shifts.length > 0).map(({emp,shifts,totalHrs,stdHrs,otHrs,wkndHrs,gross,super:sup,payg,net,labour}) => (
+                  <tr key={emp.id}>
+                    <td>
+                      <div style={{display:"flex",alignItems:"center",gap:7}}>
+                        <div style={{width:22,height:22,borderRadius:"50%",background:empColor(emp),display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700,color:"#fff",flexShrink:0}}>
+                          {initials(emp.name)}
+                        </div>
+                        <div>
+                          <div style={{fontWeight:600,fontSize:12}}>{emp.name}</div>
+                          <div style={{fontSize:9.5,color:C.muted}}>{emp.role} · {emp.std_hrs}h threshold</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="mono" style={{textAlign:"right"}}>{stdHrs.toFixed(1)}h</td>
+                    <td className="mono" style={{textAlign:"right",fontWeight: otHrs>0?700:400, color: otHrs>0?"#DC2626":C.dim}}>
+                      {otHrs>0 ? `⚡ ${otHrs.toFixed(1)}h` : "—"}
+                    </td>
+                    <td className="mono" style={{textAlign:"right",color: wkndHrs>0?"#D97706":C.dim}}>
+                      {wkndHrs>0 ? `${wkndHrs.toFixed(1)}h` : "—"}
+                    </td>
+                    <td className="mono" style={{textAlign:"right",fontWeight:600}}>{money(gross)}</td>
+                    <td className="mono" style={{textAlign:"right",color:C.yellow}}>−{money(payg)}</td>
+                    <td className="mono" style={{textAlign:"right",color:C.blue}}>{money(sup)}</td>
+                    <td className="mono" style={{textAlign:"right",fontWeight:700,color:C.accent}}>{money(labour)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <th style={{textAlign:"left"}}>TOTAL</th>
+                  <th className="mono" style={{textAlign:"right"}}>{empSummary.reduce((s,e)=>s+e.stdHrs,0).toFixed(1)}h</th>
+                  <th className="mono" style={{textAlign:"right",color:"#DC2626"}}>
+                    {empSummary.reduce((s,e)=>s+e.otHrs,0)>0 ? `⚡ ${empSummary.reduce((s,e)=>s+e.otHrs,0).toFixed(1)}h` : "—"}
+                  </th>
+                  <th className="mono" style={{textAlign:"right",color:"#D97706"}}>
+                    {empSummary.reduce((s,e)=>s+e.wkndHrs,0)>0 ? `${empSummary.reduce((s,e)=>s+e.wkndHrs,0).toFixed(1)}h` : "—"}
+                  </th>
+                  <th className="mono" style={{textAlign:"right"}}>{money(totGross)}</th>
+                  <th className="mono" style={{textAlign:"right",color:C.yellow}}>−{money(totPAYG)}</th>
+                  <th className="mono" style={{textAlign:"right",color:C.blue}}>{money(totSuper)}</th>
+                  <th className="mono" style={{textAlign:"right",color:C.accent,fontWeight:700}}>{money(totLabour)}</th>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        ) : (
+          <div className="empty-state">
+            <div className="empty-icon">📅</div>
+            <div className="empty-txt">No shifts this week. Click "+ Add Shift" or click any "+ shift" cell above to start rostering.</div>
+          </div>
+        )}
+
+        <div style={{fontSize:10.5,color:C.muted,marginTop:12,paddingTop:10,borderTop:`1px solid ${C.border}`,lineHeight:1.6}}>
+          💡 <strong>OT detection:</strong> Weekday hours beyond each employee's contracted hours (e.g. 38h/wk) are automatically charged at ×1.5. Weekend/PH shifts are ×1.75 regardless of weekly total. <strong>Labour Cost</strong> = Gross + Employer Super (PAYG is the employee's tax, not your cost). ATO 2024-25 progressive PAYG rates applied. Estimates only — consult your accountant.
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
 //  STAFF & WAGES PAGE
 // ════════════════════════════════════════════════════════════
-function WagesPage({ employees, setEmployees, timesheets, setTimesheets, leave, setLeave, showToast }) {
-  const [tab,        setTab]        = useState("profiles");
+function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster, setRoster, leave, setLeave, showToast }) {
+  const [tab,        setTab]        = useState("roster");
   const [empModal,   setEmpModal]   = useState(null);
   const [tsModal,    setTsModal]    = useState(false);
   const [dayWorkers, setDayWorkers] = useState([]);
@@ -2569,8 +4239,7 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, leave, 
         <div className="hdr-left"><div className="ptitle">Staff & Wages</div><div className="psub">Employee profiles, timesheets and labour cost estimates</div></div>
         <div className="hdr-right">
           {tab === "profiles"   && <button className="btn" onClick={() => setEmpModal("add")}>+ Add Employee</button>}
-          {tab === "timesheets" && <button className="btn" onClick={() => setTsModal(true)}>+ Log Hours</button>}
-        </div>
+          {tab === "timesheets" && <button className="btn" onClick={() => setTsModal(true)}>+ Log Hours</button>}        </div>
       </div>
 
       <div className="g4">
@@ -2583,10 +4252,15 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, leave, 
       </div>
 
       <div className="tabs">
-        {[["profiles","👤 Profiles"],["timesheets","🕐 Timesheets"],["summary","📊 Wage Summary"],["leave","🏖️ Leave & Lieu"],["dayworkers","⚡ Day Workers"],["payslip","🧾 Payslips"]].map(([id,lbl]) => (
+        {[["roster","📅 Roster"],["profiles","👤 Profiles"],["timesheets","🕐 Timesheets"],["summary","📊 Wage Summary"],["leave","🏖️ Leave & Lieu"],["dayworkers","⚡ Day Workers"],["payslip","🧾 Payslips"]].map(([id,lbl]) => (
           <div key={id} className={`tab${tab===id?" on-a":""}`} onClick={() => setTab(id)}>{lbl}</div>
         ))}
       </div>
+
+      {/* ── ROSTER ── */}
+      {tab === "roster" && (
+        <RosterTab employees={employees} roster={roster} setRoster={setRoster} showToast={showToast}/>
+      )}
 
       {/* ── PROFILES ── */}
       {tab === "profiles" && (
@@ -3035,14 +4709,17 @@ function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, biz
   );
   const emp = employees.find(e => e.id === parseInt(selEmp));
 
-  // ── Calculations ─────────────────────────────────────────
+  // ── Calculations — ATO-compliant ──────────────────────────
+  // PAYG: ATO 2024-25 progressive withholding (calcWeeklyPAYG), whole dollars
+  // Super: date-aware SGC rate (11.5% pre-Jul 2025, 12% from Jul 2025)
   const rows = empTs.map(ts => {
-    const gross  = calcGross(emp, ts);
-    const super_ = gross * SUPER_RATE;
-    const payg   = emp?.tfn ? gross * PAYG_RATE : gross * 0.47;
-    const net    = gross - payg;
-    const effR   = effRate(emp);
-    return { ...ts, gross, super:super_, payg, net, effR };
+    const gross   = calcGross(emp, ts);
+    const superR  = getSuperRate(ts.week);
+    const super_  = gross * superR;
+    const payg    = calcWeeklyPAYG(gross, emp?.tfn);
+    const net     = gross - payg;
+    const effR    = effRate(emp);
+    return { ...ts, gross, super:super_, superR, payg, net, effR };
   });
 
   const totals = {
@@ -3053,6 +4730,8 @@ function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, biz
     super:    rows.reduce((s,r) => s + r.super,     0),
     payg:     rows.reduce((s,r) => s + r.payg,      0),
     net:      rows.reduce((s,r) => s + r.net,       0),
+    // display: show the effective super rate (latest week's rate, or avg if mixed)
+    superR:   rows.length > 0 ? rows[rows.length-1].superR : getSuperRate(null),
   };
 
   // ── Week label helper ─────────────────────────────────────
@@ -3157,9 +4836,9 @@ function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, biz
         <div className="pp-sec-ttl" style={{marginBottom:8}}>Pay Summary</div>
         <div className="pp-box" style={{marginBottom:16}}>
           {[
-            {lbl:"Gross Pay",                                           val:money(totals.gross),        col:"#111"},
-            {lbl:`PAYG Withheld (${emp.tfn?"~19%":"47% — no TFN"})`,   val:`− ${money(totals.payg)}`,  col:"#DC2626"},
-            {lbl:"Net Pay (Take-Home)",                                  val:money(totals.net),          col:"#16A34A", bold:true},
+            {lbl:"Gross Pay",                                                         val:money(totals.gross),       col:"#111"},
+            {lbl:`PAYG Withheld (ATO${emp.tfn?" scale 2":" — no TFN 47%"})`,         val:`− ${money(totals.payg)}`, col:"#DC2626"},
+            {lbl:"Net Pay (Take-Home)",                                                val:money(totals.net),         col:"#16A34A", bold:true},
           ].map((r,i) => (
             <div key={i} className="pp-row" style={{borderBottom: i<2 ? "1px solid #E5E7EB" : "none", paddingTop: r.bold ? 10 : undefined, marginTop: r.bold ? 4 : undefined}}>
               <span style={{fontWeight:r.bold?700:500,fontSize:r.bold?15:13}}>{r.lbl}</span>
@@ -3185,8 +4864,13 @@ function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, biz
         {!emp.tfn && (
           <div className="pp-warn" style={{marginBottom:10}}>⚠️ No TFN on file — PAYG withheld at 47%. Ask employee to provide their TFN.</div>
         )}
+        {emp.tfn && (
+          <div style={{background:"#F0FDF4",border:"1px solid #BBF7D0",borderRadius:8,padding:"9px 14px",fontSize:11,color:"#166534",marginBottom:12}}>
+            ℹ️ PAYG calculated using ATO 2024-25 Scale 2 (resident, tax-free threshold). Assumes employee has claimed the tax-free threshold on their TFN declaration.
+          </div>
+        )}
         <div style={{background:"#EFF6FF",border:"1px solid #BFDBFE",borderRadius:8,padding:"11px 14px",fontSize:11.5,color:"#1D4ED8",marginBottom:20}}>
-          💡 <strong>Super note:</strong> {money(totals.super)} must be paid to {emp.superfund || "the nominated fund"} within 28 days of quarter end. Late payments attract the Super Guarantee Charge (SGC) — not tax deductible.
+          💡 <strong>Super note:</strong> {money(totals.super)} (@ {(totals.superR*100).toFixed(1)}%) must be paid to {emp.superfund || "the nominated fund"} within 28 days of quarter end. Late payments attract the Super Guarantee Charge (SGC) — not tax deductible.
         </div>
 
         <PPDisclaimer/>
@@ -5578,6 +7262,7 @@ export default function App() {
   const [expenses,   setExpenses]   = useState(SEED_EXPENSES);
   const [employees,  setEmployees]  = useState(SEED_EMPLOYEES);
   const [timesheets, setTimesheets] = useState(SEED_TIMESHEETS);
+  const [roster,     setRoster]     = useState(SEED_ROSTER);
   const [insurance,  setInsurance]  = useState(SEED_INSURANCE);
   const [leave,      setLeave]      = useState(SEED_LEAVE);
   const [documents,  setDocuments]  = useState(SEED_DOCUMENTS);
@@ -5602,7 +7287,7 @@ export default function App() {
           {page === "dashboard"      && <DashboardPage revenue={revenue} expenses={expenses} employees={employees} timesheets={timesheets} insurance={insurance} setPage={setPage}/>}
           {page === "revenue"        && <RevenuePage   revenue={revenue}   setRevenue={setRevenue}   showToast={showToast}/>}
           {page === "expenses"       && <ExpensesPage  expenses={expenses} setExpenses={setExpenses} showToast={showToast} industry={industry} dismissed={dismissedAlerts} setDismissed={setDismissedAlerts}/>}
-          {page === "wages"          && <WagesPage     employees={employees} setEmployees={setEmployees} timesheets={timesheets} setTimesheets={setTimesheets} leave={leave} setLeave={setLeave} showToast={showToast}/>}
+          {page === "wages"          && <WagesPage     employees={employees} setEmployees={setEmployees} timesheets={timesheets} setTimesheets={setTimesheets} roster={roster} setRoster={setRoster} leave={leave} setLeave={setLeave} showToast={showToast}/>}
           {page === "insurance"      && <InsurancePage insurance={insurance} setInsurance={setInsurance} employees={employees} timesheets={timesheets} showToast={showToast}/>}
           {page === "tax"            && <TaxSummaryPage revenue={revenue} expenses={expenses} employees={employees} timesheets={timesheets}/>}
           {page === "taxsaver"       && <TaxSaverPage  expenses={expenses} setExpenses={setExpenses} employees={employees} timesheets={timesheets} setTimesheets={setTimesheets} showToast={showToast}/>}

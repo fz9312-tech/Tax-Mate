@@ -539,6 +539,32 @@ const DOC_CATEGORIES = [
 ];
 const BAS_QUARTERS = ["Q1 FY2026","Q2 FY2026","Q3 FY2026","Q4 FY2026","Q1 FY2025","Q2 FY2025","Q3 FY2025","Q4 FY2025"];
 const FIN_YEARS    = ["FY2026","FY2025","FY2024"];
+
+// IAS: generate rolling 18-month list (current month back 17)
+const IAS_MONTHS = Array.from({length:18}, (_,i) => {
+  const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+});
+// "2025-07" → "July 2025"
+const fmtIASMonth = m => {
+  const [y,mo] = m.split('-').map(Number);
+  return new Date(y, mo-1, 1).toLocaleDateString('en-AU',{month:'long',year:'numeric'});
+};
+// ISO week string "YYYY-WNN" → "YYYY-MM" (using Monday of that week as proxy pay date)
+const weekToMonth = weekStr => {
+  const [yearPart, weekPart] = weekStr.split('-W');
+  const year = parseInt(yearPart), week = parseInt(weekPart);
+  const jan4 = new Date(year, 0, 4);
+  const jan4dow = jan4.getDay() || 7; // Mon=1..Sun=7
+  const w1Mon = new Date(year, 0, 4 - (jan4dow - 1));
+  const targetMon = new Date(w1Mon.getTime() + (week - 1) * 7 * 86400000);
+  return `${targetMon.getFullYear()}-${String(targetMon.getMonth()+1).padStart(2,'0')}`;
+};
+const IAS_STATUS_CFG = {
+  draft:      { lbl:"Draft",      col:"#D97706", bg:"#FFFBEB", border:"#FDE68A" },
+  finalised:  { lbl:"Finalised",  col:"#2563EB", bg:"#EFF6FF", border:"#BFDBFE" },
+  lodged:     { lbl:"Lodged ✓",   col:"#059669", bg:"#ECFDF5", border:"#A7F3D0" },
+};
 const DOC_ICONS    = {
   "application/pdf":"📄","image/jpeg":"🖼️","image/png":"🖼️",
   "application/vnd.ms-excel":"📊",
@@ -627,6 +653,14 @@ const SEED_LEAVE = [
   { id:4, eid:4, type:"annual",   date:"2025-07-05", hours:19, notes:"2.5 days leave" },
 ];
 
+// IAS per-month adjustment & status records
+// adjustW1/adjustW2 = manual additions on top of timesheet-auto-calc (e.g. cash wages, contractor payments)
+const SEED_IAS = [
+  { id:1, month:"2025-07", adjustW1:0,   adjustW2:0,  notes:"", status:"draft",     lodgedDate:null },
+  { id:2, month:"2025-06", adjustW1:250, adjustW2:48, notes:"Included $250 cash wages paid to kitchen hand (no timesheet).", status:"finalised", lodgedDate:null },
+  { id:3, month:"2025-05", adjustW1:0,   adjustW2:0,  notes:"", status:"lodged",    lodgedDate:"2025-06-28" },
+];
+
 // Roster shifts: one shift per employee per day
 // { id, eid, date:"YYYY-MM-DD", start:"HH:MM", end:"HH:MM", break_mins, note }
 const SEED_ROSTER = [
@@ -672,8 +706,10 @@ const money = n =>
 
 // ── Pure-JS PDF Generator — no external dependencies ────────
 class MiniPDF {
-  constructor() {
-    this.W=595; this.H=842; this.M=40;
+  constructor(landscape=false) {
+    this.W = landscape ? 842 : 595;
+    this.H = landscape ? 595 : 842;
+    this.M = landscape ? 30  : 40;
     this.pages=[[]];
   }
   get ops(){ return this.pages[this.pages.length-1]; }
@@ -1246,6 +1282,101 @@ const renderPayslipPDF = ({emp, rows, totals, payPeriodLabel, bizName, bizABN}) 
   return pdf;
 };
 
+const renderIASPDF = ({ d, month, bizName, bizABN, adjustment, status }) => {
+  const pdf  = new MiniPDF();
+  const W = pdf.W, M = pdf.M;
+  const finalW1 = d.autoW1 + (adjustment?.adjustW1 || 0);
+  const finalW2 = d.autoW2 + (adjustment?.adjustW2 || 0);
+  const cfg     = IAS_STATUS_CFG[status] || IAS_STATUS_CFG.draft;
+
+  let y = pdfHeader(pdf, 'Monthly IAS', 'PAYG Withholding — Instalment Activity Statement', fmtIASMonth(month), bizName || 'My Business');
+
+  // Statement info box
+  pdf.rect(M, y, W-M*2, 48, {fill:'#F9FAFB', stroke:'#E5E7EB'});
+  const col2 = M + (W-M*2)/2 + 8;
+  pdf.text(M+10, y+10, 'Business Name:', {size:8.5, color:'#6B7280'});
+  pdf.text(M+10, y+22, bizName || 'My Business', {size:9.5, bold:true, color:'#111111'});
+  pdf.text(M+10, y+35, `ABN: ${bizABN || 'Not provided'}`, {size:8.5, color:'#6B7280'});
+  pdf.text(col2, y+10, 'Period:', {size:8.5, color:'#6B7280'});
+  pdf.text(col2, y+22, fmtIASMonth(month), {size:9.5, bold:true, color:'#111111'});
+  pdf.text(col2, y+35, `Due: ${d.dueDate}  |  Status: ${cfg.lbl}`, {size:8.5, color:cfg.col});
+  y += 60;
+
+  // ATO W fields — large display boxes
+  y = pdfSecTitle(pdf, y, 'ATO PAYG WITHHOLDING FIELDS (IAS)');
+  const boxW = (W - M*2 - 10) / 2;
+
+  // W1 box
+  pdf.rect(M,          y, boxW, 56, {fill:'#F0FDF4', stroke:'#BBF7D0'});
+  pdf.text(M+10,       y+10, 'W1', {size:18, bold:true, color:'#16A34A'});
+  pdf.text(M+10,       y+30, 'Total Gross Salaries & Wages', {size:8.5, color:'#374151'});
+  pdf.text(M+boxW-10,  y+12, `$${finalW1.toFixed(2)}`, {size:16, bold:true, color:'#111111', align:'right'});
+  if (adjustment?.adjustW1) {
+    pdf.text(M+10, y+46, `Incl. $${adjustment.adjustW1.toFixed(2)} manual adjustment`, {size:7.5, color:'#16A34A'});
+  }
+
+  // W2 box
+  pdf.rect(M+boxW+10,  y, boxW, 56, {fill:'#FFF7ED', stroke:'#FED7AA'});
+  pdf.text(M+boxW+20,  y+10, 'W2', {size:18, bold:true, color:'#EA580C'});
+  pdf.text(M+boxW+20,  y+30, 'PAYG Withheld from Wages', {size:8.5, color:'#374151'});
+  pdf.text(M+boxW*2,   y+12, `$${finalW2.toFixed(2)}`, {size:16, bold:true, color:'#111111', align:'right'});
+  if (adjustment?.adjustW2) {
+    pdf.text(M+boxW+20, y+46, `Incl. $${adjustment.adjustW2.toFixed(2)} manual adjustment`, {size:7.5, color:'#EA580C'});
+  }
+  y += 68;
+
+  // Net payable total box
+  y = pdfTotRow(pdf, y, 'W2 — Net PAYG Payable to ATO this month', `$${finalW2.toFixed(2)}`, {valColor:'#EA580C'});
+  y += 6;
+
+  // Super info (informational, not an IAS W field)
+  pdf.rect(M, y, W-M*2, 28, {fill:'#EFF6FF', stroke:'#BFDBFE'});
+  pdf.text(M+10, y+10, `ℹ  Employer super obligation (not IAS): $${d.autoSuper.toFixed(2)} — due to funds within 28 days of quarter end.`, {size:8.5, color:'#1D4ED8'});
+  y += 40;
+
+  // Per-employee breakdown
+  y = pdfSecTitle(pdf, y, 'EMPLOYEE PAYG BREAKDOWN');
+  const totalW = W - M*2;
+  const cols   = [120, 55, 50, 0, 70, 70];
+  cols[3]      = totalW - cols.slice(0,3).reduce((s,c)=>s+c,0) - cols[4] - cols[5];
+  y = pdfTable(pdf, y,
+    ['Employee', 'Role', 'Weeks', 'Type', 'W1 Gross', 'W2 PAYG'],
+    d.empData.map(e => [
+      e.emp.name,
+      e.emp.role || '—',
+      String(e.weeks),
+      e.emp.type ? e.emp.type.charAt(0).toUpperCase()+e.emp.type.slice(1) : '—',
+      `$${e.gross.toFixed(2)}`,
+      e.noTFN
+        ? {text:`$${e.payg.toFixed(2)} (47%)`, color:'#DC2626'}
+        : `$${e.payg.toFixed(2)}`,
+    ]),
+    cols,
+    { footerRow: ['TOTALS (auto)', '', '', '',
+        `$${d.autoW1.toFixed(2)}`,
+        `$${d.autoW2.toFixed(2)}`],
+      numCols: [4, 5] }
+  );
+
+  // Manual adjustments
+  if (adjustment && (adjustment.adjustW1 !== 0 || adjustment.adjustW2 !== 0 || adjustment.notes)) {
+    y = pdfSecTitle(pdf, y, 'MANUAL ADJUSTMENTS');
+    if (adjustment.adjustW1) y = pdfRow(pdf, y, 'Additional W1 Gross (manual)', `$${adjustment.adjustW1.toFixed(2)}`, {valColor:'#16A34A'});
+    if (adjustment.adjustW2) y = pdfRow(pdf, y, 'Additional W2 PAYG (manual)',  `$${adjustment.adjustW2.toFixed(2)}`, {valColor:'#EA580C'});
+    if (adjustment.notes)    y = pdfRow(pdf, y, 'Notes', adjustment.notes.slice(0,80));
+    y += 4;
+    y = pdfTotRow(pdf, y, 'Final W1 (Total Gross)', `$${finalW1.toFixed(2)}`, {valColor:'#16A34A'});
+    y = pdfTotRow(pdf, y, 'Final W2 (PAYG Payable)', `$${finalW2.toFixed(2)}`, {valColor:'#EA580C'});
+  }
+
+  if (d.noTFNCount > 0) {
+    y = pdfWarn(pdf, y, `${d.noTFNCount} employee(s) without TFN — PAYG withheld at 47% flat rate. Obtain TFN declarations ASAP.`);
+  }
+
+  pdfDisclaimer(pdf, y);
+  return pdf;
+};
+
 const calcAge = dob => {
   if (!dob) return null;
   const b = new Date(dob), now = new Date();
@@ -1335,6 +1466,32 @@ const avatarBg  = id  => AVATAR_COLORS[(id - 1) % AVATAR_COLORS.length];
 const initials  = name => name.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2);
 
 // ── Report data builders ──────────────────────────────────
+// ── IAS month data builder ────────────────────────────────
+// Uses ATO-correct calcWeeklyPAYG (not flat PAYG_RATE) since IAS is a formal ATO document
+function buildIASMonthData(timesheets, employees, month) {
+  const empData = employees.map(emp => {
+    const empTs = timesheets.filter(ts => ts.eid === emp.id && weekToMonth(ts.week) === month);
+    if (empTs.length === 0) return null;
+    const gross  = empTs.reduce((s,ts) => s + calcGross(emp, ts), 0);
+    const payg   = empTs.reduce((s,ts) => s + calcWeeklyPAYG(calcGross(emp, ts), emp.tfn), 0);
+    const super_ = empTs.reduce((s,ts) => s + calcGross(emp, ts) * getSuperRate(ts.week), 0);
+    return { emp, weeks: empTs.length, gross, payg, super: super_, noTFN: !emp.tfn };
+  }).filter(Boolean);
+
+  const autoW1    = empData.reduce((s,e) => s + e.gross, 0);
+  const autoW2    = empData.reduce((s,e) => s + e.payg,  0);
+  const autoSuper = empData.reduce((s,e) => s + e.super, 0);
+  const weekCount = timesheets.filter(ts => weekToMonth(ts.week) === month).length;
+  const noTFNCount = empData.filter(e => e.noTFN).length;
+
+  // Due date = 28th of following month
+  const [y,m] = month.split('-').map(Number);
+  const dueDate = new Date(m === 12 ? y+1 : y, m === 12 ? 0 : m, 28)
+    .toLocaleDateString('en-AU',{day:'2-digit',month:'long',year:'numeric'});
+
+  return { empData, autoW1, autoW2, autoSuper, weekCount, noTFNCount, dueDate };
+}
+
 function buildBASData(revenue, expenses, timesheets, employees, insurance, docs, quarter) {
   const ts   = annotateTimesheets(employees, timesheets);
   const totalRev  = revenue.reduce((s,r) => s + r.amount, 0);
@@ -1961,6 +2118,7 @@ function Sidebar({ page, setPage, onLogout, flagCount }) {
     { sec:"Tax" },
     { id:"tax",       ico:"📋", lbl:"Tax Summary" },
     { id:"taxsaver",  ico:"🔍", lbl:"Audit Ready", badge: flagCount > 0 ? `${flagCount} flags` : "PRO" },
+    { id:"ias",       ico:"🧾", lbl:"Monthly IAS" },
     { sec:"Documents & Reports" },
     { id:"documents",     ico:"📁", lbl:"Document Hub" },
     { id:"bassummary",    ico:"📋", lbl:"BAS Summary" },
@@ -3758,6 +3916,135 @@ function ShiftModal({ employees, initial, onSave, onClose }) {
   );
 }
 
+// ── Roster PDF renderer — LANDSCAPE, employee-facing ─────
+const renderRosterPDF = ({ employees, weekShifts, weekDays, weekStart, weekEnd, isoDate, shiftHrs }) => {
+  const pdf = new MiniPDF(true);   // landscape: 842 × 595
+  const W = pdf.W, H = pdf.H, M = pdf.M;
+  const DAY_SHORT = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+  // ASCII-safe — MiniPDF drops anything above 0x7E
+  const safe    = str => String(str||'').replace(/[\u2013\u2014]/g,'-').replace(/[^\x20-\x7E]/g,'');
+  const safeDt  = d   => {
+    const dd = String(d.getDate()).padStart(2,'0');
+    const mo  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
+    return `${dd} ${mo}`;
+  };
+
+  // ── Compact landscape header ───────────────────────────
+  // Logo block (left)
+  pdf.rect(M, 14, 28, 28, { fill:'#8FCB72' });
+  pdf.text(M+5, 17, 'M', { size:14, bold:true, color:'#0C0F0D' });
+  pdf.text(M+34, 17, 'Mise', { size:11, bold:true, color:'#0C0F0D' });
+  pdf.text(M+34, 29, 'HOSPITALITY FINANCE', { size:6, color:'#9CA3AF' });
+  // Centre title
+  pdf.text(W/2, 14, 'STAFF SCHEDULE', { size:7.5, color:'#9CA3AF', align:'center' });
+  pdf.text(W/2, 25, 'Weekly Roster', { size:16, bold:true, color:'#111111', align:'center' });
+  // Right: week + date
+  pdf.text(W-M, 14, safe(`${weekStart} - ${weekEnd}`), { size:9,   bold:true, color:'#111111', align:'right' });
+  pdf.text(W-M, 26, `Generated: ${todayStr}`,           { size:7,   color:'#9CA3AF',           align:'right' });
+  // Separator
+  pdf.line(M, 48, W-M, 48, { color:'#E5E7EB', w:1.2 });
+  let y = 56;
+
+  // ── Table layout ────────────────────────────────────────
+  // nameW wide enough for name + role; dayW fills the rest evenly across 7 days
+  const nameW = 110;
+  const usable = W - M*2 - nameW;
+  const dayW   = Math.floor(usable / 7);
+  const tableW = nameW + dayW * 7;
+
+  // Estimate row heights to see if everything fits on one page
+  const rowHeights = employees.map(emp => {
+    const max = Math.max(1, ...weekDays.map(d =>
+      weekShifts.filter(s => s.eid===emp.id && s.date===isoDate(d)).length
+    ));
+    return Math.max(44, max * 36 + 10);
+  });
+  const hdrH   = 32;
+  const totalTblH = hdrH + rowHeights.reduce((s,h) => s+h, 0);
+  // If it all fits in remaining space, keep y; else scale row heights down
+  const availH  = H - y - 40; // leave 40pt for disclaimer
+  const scale   = totalTblH > availH ? availH / totalTblH : 1;
+  const scaledRows = rowHeights.map(h => Math.max(30, Math.round(h * scale)));
+
+  // ── Table header ────────────────────────────────────────
+  pdf.rect(M, y, tableW, hdrH, { fill:'#111827' });
+  pdf.text(M+8, y+11, 'Staff', { size:9, bold:true, color:'#FFFFFF' });
+
+  weekDays.forEach((d, i) => {
+    const cx   = M + nameW + i * dayW;
+    const wknd = d.getDay()===0 || d.getDay()===6;
+    if (wknd) pdf.rect(cx, y, dayW, hdrH, { fill:'#78350F' });
+    pdf.text(cx + dayW/2, y+8,  DAY_SHORT[i], { size:9,   bold:true, color: wknd?'#FDE68A':'#FFFFFF', align:'center' });
+    pdf.text(cx + dayW/2, y+20, safeDt(d),    { size:7.5,            color:'#9CA3AF',                  align:'center' });
+  });
+  y += hdrH;
+
+  // ── Employee rows ────────────────────────────────────────
+  employees.forEach((emp, ei) => {
+    const rH        = scaledRows[ei];
+    const empShifts = weekShifts.filter(s => s.eid === emp.id);
+
+    // Alternating row bg
+    if (ei % 2 === 1) pdf.rect(M, y, tableW, rH, { fill:'#F8FAFC' });
+
+    // Left border
+    pdf.line(M, y, M, y+rH, { color:'#CBD5E1', w:0.5 });
+
+    // Name + role — vertically centred
+    const nameMid = y + rH/2;
+    pdf.text(M+8,  nameMid-5, safe(emp.name),    { size:10,  bold:true, color:'#111111' });
+    pdf.text(M+8,  nameMid+7, safe(emp.role||''), { size:7.5,            color:'#94A3B8' });
+
+    // Day cells
+    weekDays.forEach((d, di) => {
+      const cx        = M + nameW + di * dayW;
+      const wknd      = d.getDay()===0 || d.getDay()===6;
+      const dayShifts = empShifts.filter(s => s.date === isoDate(d));
+
+      pdf.line(cx, y, cx, y+rH, { color:'#CBD5E1', w:0.4 });
+      if (wknd) pdf.rect(cx, y, dayW, rH, { fill: ei%2===1 ? '#FEF9EC' : '#FFFBEB' });
+
+      if (dayShifts.length === 0) {
+        // subtle dash
+        pdf.text(cx + dayW/2, y + rH/2 - 4, '-', { size:10, color:'#CBD5E1', align:'center' });
+      } else {
+        const slotH   = rH / dayShifts.length;
+        dayShifts.forEach((sh, si) => {
+          const sy      = y + si * slotH;
+          const hrs     = shiftHrs(sh);
+          const timeStr = safe(`${sh.start}-${sh.end}`);
+          const hrsStr  = `${hrs.toFixed(1)}h`;
+          const fillC   = wknd ? '#FEF3C7' : '#F0FDF4';
+          const bordC   = wknd ? '#F59E0B' : '#34D399';
+          const timeC   = wknd ? '#92400E' : '#065F46';
+          const hrsC    = wknd ? '#B45309' : '#059669';
+          // Pill — 4pt inset all sides
+          const pH = Math.max(22, slotH - 8);
+          const py = sy + (slotH - pH) / 2;
+          pdf.rect(cx+4, py, dayW-8, pH, { fill:fillC, stroke:bordC });
+          // Time — bigger, prominent
+          pdf.text(cx + dayW/2, py + pH*0.32, timeStr, { size:9,   bold:true, color:timeC, align:'center' });
+          // Hours — smaller, below
+          pdf.text(cx + dayW/2, py + pH*0.68, hrsStr,  { size:7.5,            color:hrsC,  align:'center' });
+        });
+      }
+    });
+
+    // Right border
+    pdf.line(M+tableW, y, M+tableW, y+rH, { color:'#CBD5E1', w:0.5 });
+    // Row bottom
+    pdf.line(M, y+rH, M+tableW, y+rH, { color:'#CBD5E1', w: ei===employees.length-1 ? 1 : 0.5 });
+    y += rH;
+  });
+
+  // ── Footer disclaimer (minimal — this is for employees) ──
+  y += 10;
+  pdf.text(M, y, 'This roster is subject to change. Contact your manager with any queries.', { size:7, color:'#9CA3AF' });
+  pdf.text(W-M, y, `Mise Hospitality Finance  |  ${todayStr}`, { size:7, color:'#CBD5E1', align:'right' });
+
+  return pdf;
+};
+
 // ════════════════════════════════════════════════════════════
 //  ROSTER TAB
 // ════════════════════════════════════════════════════════════
@@ -3917,6 +4204,12 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
   const totPAYG   = empSummary.reduce((s,e) => s + e.payg,     0);
   const totLabour = empSummary.reduce((s,e) => s + e.labour,   0);
 
+  const exportRosterPDF = () => {
+    const pdf = renderRosterPDF({ employees, weekShifts, weekDays, weekStart, weekEnd, isoDate, shiftHrs, isWeekend });
+    pdfDownload(pdf, `Roster_${isoDate(weekDays[0])}_to_${isoDate(weekDays[6])}.pdf`);
+    showToast("Roster PDF downloaded!");
+  };
+
   // ── Render ────────────────────────────────────────────────
   return (
     <>
@@ -3934,9 +4227,12 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
         <div style={{fontWeight:700,fontSize:15,letterSpacing:"-.3px"}}>
           📅 Week of {weekStart} – {weekEnd}
         </div>
-        <button className="btn" onClick={() => setShiftModal({date:isoDate(weekDays[0])})}>
-          + Add Shift
-        </button>
+        <div style={{display:"flex",gap:6}}>
+          <button className="btn-b" onClick={exportRosterPDF}>⬇️ Export PDF</button>
+          <button className="btn" onClick={() => setShiftModal({date:isoDate(weekDays[0])})}>
+            + Add Shift
+          </button>
+        </div>
       </div>
 
       {/* ── Roster Grid ── */}
@@ -4020,7 +4316,7 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
                             >
                               <div style={{fontSize:10,fontWeight:700,color:borderC,lineHeight:1.2}}>{sh.start}–{sh.end}</div>
                               <div style={{fontSize:9,color:C.muted,marginTop:1}}>
-                                {shiftHrs(sh).toFixed(1)}h · {money(shiftCost(sh))}
+                                {shiftHrs(sh).toFixed(1)}h
                               </div>
                               {/* OT / Weekend rate badge */}
                               {hasOT && (
@@ -4052,7 +4348,6 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
                   {/* Row total */}
                   <td style={{padding:"8px 10px",borderBottom:`1px solid ${C.border}`,borderLeft:`1px solid ${C.border}`,textAlign:"right",verticalAlign:"middle"}}>
                     <div className="mono" style={{fontWeight:700,fontSize:12,color: empHrs>0?C.text:C.dim}}>{empHrs>0?`${empHrs.toFixed(1)}h`:"—"}</div>
-                    {empCost>0 && <div style={{fontSize:9.5,color:C.muted}}>{money(empCost)}</div>}
                     {empOTHrs > 0 && <div style={{fontSize:9,fontWeight:700,color:"#DC2626"}}>⚡ {empOTHrs.toFixed(1)}h OT</div>}
                   </td>
                 </tr>
@@ -4069,13 +4364,11 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
                 return (
                   <td key={di} style={{padding:"7px 4px",textAlign:"center",borderLeft:`1px solid ${C.border}`}}>
                     <div className="mono" style={{fontWeight:700,fontSize:11,color:dayHrs>0?C.text:C.dim}}>{dayHrs>0?`${dayHrs.toFixed(1)}h`:"—"}</div>
-                    {dayCost>0 && <div style={{fontSize:9,color:C.muted}}>{money(dayCost)}</div>}
                   </td>
                 );
               })}
               <td style={{padding:"7px 10px",textAlign:"right",borderLeft:`1px solid ${C.border}`}}>
                 <div className="mono" style={{fontWeight:700,fontSize:12}}>{totHrs.toFixed(1)}h</div>
-                <div style={{fontSize:9.5,color:C.muted}}>{money(totGross)}</div>
               </td>
             </tr>
           </tbody>
@@ -6624,6 +6917,365 @@ function DocumentsPage({ documents, setDocuments, employees, showToast }) {
 }
 
 // ════════════════════════════════════════════════════════════
+//  MONTHLY IAS PAGE
+// ════════════════════════════════════════════════════════════
+function IASPage({ timesheets, employees, ias, setIas, showToast }) {
+  const [selMonth, setSelMonth] = useState(IAS_MONTHS[0]);
+  const [tab,      setTab]      = useState("statement");
+  const [bizName,  setBizName]  = useState("My Restaurant");
+  const [bizABN,   setBizABN]   = useState("");
+
+  // Find or default adjustment record for selected month
+  const adj = ias.find(r => r.month === selMonth) || { month:selMonth, adjustW1:0, adjustW2:0, notes:"", status:"draft", lodgedDate:null };
+  const [localAdj, setLocalAdj] = useState(adj);
+
+  // Re-sync localAdj when month changes
+  const changeMonth = m => {
+    setSelMonth(m);
+    const found = ias.find(r => r.month === m) || { month:m, adjustW1:0, adjustW2:0, notes:"", status:"draft", lodgedDate:null };
+    setLocalAdj(found);
+  };
+
+  const d = buildIASMonthData(timesheets, employees, selMonth);
+  const finalW1 = d.autoW1 + (localAdj.adjustW1 || 0);
+  const finalW2 = d.autoW2 + (localAdj.adjustW2 || 0);
+
+  const saveAdj = (patch) => {
+    const updated = {...localAdj, ...patch};
+    setLocalAdj(updated);
+    setIas(prev => {
+      const exists = prev.find(r => r.month === selMonth);
+      if (exists) return prev.map(r => r.month === selMonth ? {...r,...patch} : r);
+      return [...prev, {...updated, id: Date.now()}];
+    });
+  };
+
+  const setStatus = st => {
+    const patch = { status: st, lodgedDate: st === "lodged" ? todayStr : localAdj.lodgedDate };
+    saveAdj(patch);
+    showToast(`IAS ${IAS_STATUS_CFG[st].lbl} for ${fmtIASMonth(selMonth)}`);
+  };
+
+  const cfg = IAS_STATUS_CFG[localAdj.status] || IAS_STATUS_CFG.draft;
+
+  const exportPDF = () => {
+    const pdf = renderIASPDF({ d, month:selMonth, bizName, bizABN, adjustment:localAdj, status:localAdj.status });
+    pdfDownload(pdf, `IAS_${selMonth}_PAYG_${todayStr}.pdf`);
+    showToast("PDF downloaded!");
+  };
+
+  return (
+    <>
+      {/* ── Header ── */}
+      <div className="hdr">
+        <div className="hdr-left">
+          <div className="ptitle">📋 Monthly IAS</div>
+          <div className="psub">PAYG Withholding — Instalment Activity Statement · Medium withholder</div>
+        </div>
+        <div className="hdr-right">
+          <select className="sel" value={selMonth} onChange={e => changeMonth(e.target.value)} style={{width:160}}>
+            {IAS_MONTHS.map(m => <option key={m} value={m}>{fmtIASMonth(m)}</option>)}
+          </select>
+          <button className="btn" onClick={exportPDF}>⬇️ Export PDF</button>
+        </div>
+      </div>
+
+      {/* ── ATO info bar ── */}
+      <div className="alert al-b" style={{marginBottom:14}}>
+        <span className="al-ico">ℹ️</span>
+        <div>
+          <div className="al-ttl">IAS due: 28 {(() => { const [y,m]=selMonth.split('-').map(Number); return new Date(m===12?y+1:y,m===12?0:m,1).toLocaleDateString('en-AU',{month:'long',year:'numeric'}); })()} · W2 is your payment obligation to ATO</div>
+          <div className="al-msg">Medium withholder = $25,000–$1M annual PAYG. Lodge and pay monthly via ATO Business Portal or tax agent. This summary is auto-calculated from your timesheets — review and adjust before lodging.</div>
+        </div>
+      </div>
+
+      {/* ── Status banner ── */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:cfg.bg,border:`1px solid ${cfg.border}`,borderRadius:10,padding:"12px 18px",marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <div style={{fontWeight:700,fontSize:13,color:cfg.col}}>● {cfg.lbl}</div>
+          <div style={{fontSize:12,color:"#6B7280"}}>{fmtIASMonth(selMonth)}</div>
+          {localAdj.lodgedDate && <div style={{fontSize:11,color:"#059669"}}>Lodged {localAdj.lodgedDate}</div>}
+        </div>
+        <div style={{display:"flex",gap:6}}>
+          {localAdj.status === "draft"     && <button className="btn-b" onClick={() => setStatus("finalised")}>Mark as Finalised</button>}
+          {localAdj.status === "finalised" && <><button className="btn-b" onClick={() => setStatus("draft")}>Back to Draft</button><button className="btn" onClick={() => setStatus("lodged")}>Mark as Lodged ✓</button></>}
+          {localAdj.status === "lodged"    && <button className="btn-b" onClick={() => setStatus("draft")}>Re-open</button>}
+        </div>
+      </div>
+
+      {/* ── Stat cards ── */}
+      <div className="g4" style={{marginBottom:16}}>
+        {[
+          {lbl:"W1 — Gross Wages",      val:money(finalW1),      cls:""},
+          {lbl:"W2 — PAYG to ATO",      val:money(finalW2),      cls:"y"},
+          {lbl:"Super (informational)", val:money(d.autoSuper),  cls:"b"},
+          {lbl:"Due Date",              val:d.dueDate,           cls:localAdj.status==="lodged"?"g":"r"},
+        ].map((c,i) => <div key={i} className="card"><div className="clbl">{c.lbl}</div><div className={`cval ${c.cls}`}>{c.val}</div></div>)}
+      </div>
+
+      {/* ── Tabs ── */}
+      <div className="tabs">
+        {[["statement","📄 Statement"],["adjustments","✏️ Adjustments"],["settings","🏢 Business Details"],["history","📅 History"]].map(([id,lbl]) => (
+          <div key={id} className={`tab${tab===id?" on-a":""}`} onClick={() => setTab(id)}>{lbl}</div>
+        ))}
+      </div>
+
+      {/* ── STATEMENT TAB ── */}
+      {tab === "statement" && (
+        <>
+          {d.weekCount === 0 && (
+            <div className="alert al-y">
+              <span className="al-ico">⚠️</span>
+              <div><div className="al-ttl">No timesheet data for {fmtIASMonth(selMonth)}</div>
+              <div className="al-msg">Log timesheets under Staff & Wages → Timesheets to populate this IAS automatically. You can still add manual adjustments.</div></div>
+            </div>
+          )}
+          {d.noTFNCount > 0 && (
+            <div className="alert al-r">
+              <span className="al-ico">⚠️</span>
+              <div><div className="al-ttl">{d.noTFNCount} employee(s) without TFN — withholding at 47%</div>
+              <div className="al-msg">Obtain TFN declarations immediately. 47% withholding rate applies until TFN is provided.</div></div>
+            </div>
+          )}
+
+          {/* W fields */}
+          <div className="g2" style={{marginBottom:14}}>
+            <div className="bc" style={{border:`2px solid #BBF7D0`,background:"#F0FDF4"}}>
+              <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between"}}>
+                <div>
+                  <div style={{fontSize:24,fontWeight:900,color:"#16A34A",lineHeight:1}}>W1</div>
+                  <div style={{fontSize:11,color:"#374151",marginTop:4}}>Total gross salaries, wages &amp; other payments</div>
+                  <div style={{fontSize:10,color:"#6B7280",marginTop:3}}>Auto: {money(d.autoW1)}{localAdj.adjustW1 ? ` + adj: ${money(localAdj.adjustW1)}` : ""}</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div className="mono" style={{fontSize:22,fontWeight:800,color:"#111111"}}>{money(finalW1)}</div>
+                  <div style={{fontSize:10,color:"#6B7280",marginTop:2}}>{d.weekCount} week{d.weekCount!==1?"s":""} · {d.empData.length} employee{d.empData.length!==1?"s":""}</div>
+                </div>
+              </div>
+            </div>
+            <div className="bc" style={{border:`2px solid #FED7AA`,background:"#FFF7ED"}}>
+              <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between"}}>
+                <div>
+                  <div style={{fontSize:24,fontWeight:900,color:"#EA580C",lineHeight:1}}>W2</div>
+                  <div style={{fontSize:11,color:"#374151",marginTop:4}}>PAYG withheld from salaries &amp; wages</div>
+                  <div style={{fontSize:10,color:"#6B7280",marginTop:3}}>Auto: {money(d.autoW2)}{localAdj.adjustW2 ? ` + adj: ${money(localAdj.adjustW2)}` : ""}</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div className="mono" style={{fontSize:22,fontWeight:800,color:"#111111"}}>{money(finalW2)}</div>
+                  <div style={{fontSize:10,color:"#EA580C",fontWeight:600,marginTop:2}}>← Pay this to ATO</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Total due box */}
+          <div className="bc" style={{background:"#111827",border:"none",marginBottom:14}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{color:"#9CA3AF",fontSize:11}}>NET W2 PAYABLE TO ATO</div>
+                <div style={{color:"#D1D5DB",fontSize:10,marginTop:3}}>{fmtIASMonth(selMonth)} · Due {d.dueDate}</div>
+              </div>
+              <div className="mono" style={{fontSize:26,fontWeight:800,color:"#FBBF24"}}>{money(finalW2)}</div>
+            </div>
+          </div>
+
+          {/* Per-employee table */}
+          {d.empData.length > 0 && (
+            <div className="bc">
+              <div className="bctit">Employee PAYG Breakdown — {fmtIASMonth(selMonth)}</div>
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th style={{textAlign:"left"}}>Employee</th>
+                    <th>Role</th>
+                    <th>Type</th>
+                    <th style={{textAlign:"center"}}>Weeks</th>
+                    <th style={{textAlign:"right"}}>W1 Gross</th>
+                    <th style={{textAlign:"right"}}>W2 PAYG</th>
+                    <th style={{textAlign:"right"}}>Super (info)</th>
+                    <th style={{textAlign:"right"}}>Eff. Rate</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {d.empData.map(({emp,weeks,gross,payg,super:sup,noTFN}) => (
+                    <tr key={emp.id}>
+                      <td>
+                        <div style={{display:"flex",alignItems:"center",gap:7}}>
+                          <div style={{width:22,height:22,borderRadius:"50%",background:avatarBg(emp.id),display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700,color:"#fff",flexShrink:0}}>{initials(emp.name)}</div>
+                          <span style={{fontWeight:600,fontSize:12}}>{emp.name}</span>
+                          {noTFN && <span className="pill pl-r" style={{fontSize:9}}>No TFN</span>}
+                        </div>
+                      </td>
+                      <td style={{color:"#6B7280",fontSize:11}}>{emp.role}</td>
+                      <td><span className={`pill ${emp.type==="casual"?"pl-y":emp.type==="part-time"?"pl-b":"pl-g"}`}>{emp.type}</span></td>
+                      <td style={{textAlign:"center"}}>{weeks}</td>
+                      <td className="mono" style={{textAlign:"right",fontWeight:600}}>{money(gross)}</td>
+                      <td className="mono" style={{textAlign:"right",color:noTFN?"#DC2626":"#EA580C",fontWeight:600}}>{money(payg)}{noTFN && <span style={{fontSize:9,marginLeft:3}}>(47%)</span>}</td>
+                      <td className="mono" style={{textAlign:"right",color:"#2563EB"}}>{money(sup)}</td>
+                      <td className="mono" style={{textAlign:"right",color:"#6B7280"}}>{money(effRate(emp))}/hr</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <th colSpan={4} style={{textAlign:"left"}}>AUTO-CALCULATED TOTAL</th>
+                    <th className="mono" style={{textAlign:"right"}}>{money(d.autoW1)}</th>
+                    <th className="mono" style={{textAlign:"right",color:"#EA580C"}}>{money(d.autoW2)}</th>
+                    <th className="mono" style={{textAlign:"right",color:"#2563EB"}}>{money(d.autoSuper)}</th>
+                    <th></th>
+                  </tr>
+                  {(localAdj.adjustW1 || localAdj.adjustW2) && (
+                    <tr style={{background:"#F0FDF4"}}>
+                      <th colSpan={4} style={{textAlign:"left",color:"#16A34A"}}>+ MANUAL ADJUSTMENTS</th>
+                      <th className="mono" style={{textAlign:"right",color:"#16A34A"}}>{localAdj.adjustW1 ? `+ ${money(localAdj.adjustW1)}` : "—"}</th>
+                      <th className="mono" style={{textAlign:"right",color:"#16A34A"}}>{localAdj.adjustW2 ? `+ ${money(localAdj.adjustW2)}` : "—"}</th>
+                      <th colSpan={2}></th>
+                    </tr>
+                  )}
+                  <tr style={{background:"#111827"}}>
+                    <th colSpan={4} style={{textAlign:"left",color:"#fff"}}>FINAL W1 / W2</th>
+                    <th className="mono" style={{textAlign:"right",color:"#86EFAC"}}>{money(finalW1)}</th>
+                    <th className="mono" style={{textAlign:"right",color:"#FDE68A"}}>{money(finalW2)}</th>
+                    <th colSpan={2}></th>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+
+          <div style={{fontSize:10.5,color:"#9CA3AF",marginTop:12,lineHeight:1.6,padding:"10px 0",borderTop:`1px solid #E5E7EB`}}>
+            💡 <strong>PAYG calculation:</strong> ATO 2024-25 progressive Scale 2 rates (resident, tax-free threshold). Employees without TFN withheld at 47% flat. Super is <em>informational only</em> — it's not an IAS obligation but is due quarterly to super funds. Figures are estimates — verify with your registered tax agent before lodging.
+          </div>
+        </>
+      )}
+
+      {/* ── ADJUSTMENTS TAB ── */}
+      {tab === "adjustments" && (
+        <div className="bc">
+          <div className="bctit">✏️ Manual Adjustments — {fmtIASMonth(selMonth)}</div>
+          <div className="alert al-b" style={{marginBottom:14}}>
+            <span className="al-ico">ℹ️</span>
+            <div><div className="al-msg">Use adjustments to add wages <strong>not captured in timesheets</strong> — e.g. cash payments, contractor PAYG, corrections from prior periods. Adjustments are added on top of auto-calculated figures.</div></div>
+          </div>
+          <div className="frow2" style={{marginBottom:14}}>
+            <div className="fg">
+              <label className="flbl">Additional W1 Gross ($)</label>
+              <input type="number" className="inp" min={0} step={0.01}
+                value={localAdj.adjustW1 || ""}
+                onChange={e => saveAdj({adjustW1: parseFloat(e.target.value)||0})}
+                placeholder="0.00"/>
+              <div style={{fontSize:10,color:"#9CA3AF",marginTop:4}}>Extra gross wages not in timesheets</div>
+            </div>
+            <div className="fg">
+              <label className="flbl">Additional W2 PAYG ($)</label>
+              <input type="number" className="inp" min={0} step={0.01}
+                value={localAdj.adjustW2 || ""}
+                onChange={e => saveAdj({adjustW2: parseFloat(e.target.value)||0})}
+                placeholder="0.00"/>
+              <div style={{fontSize:10,color:"#9CA3AF",marginTop:4}}>Extra PAYG withheld on those wages</div>
+            </div>
+          </div>
+          <div className="fg" style={{marginBottom:14}}>
+            <label className="flbl">Notes / Reason for Adjustment</label>
+            <textarea className="inp" rows={4} style={{resize:"vertical"}}
+              value={localAdj.notes || ""}
+              onChange={e => saveAdj({notes: e.target.value})}
+              placeholder="e.g. Included $500 cash wages for kitchen hand + 47% PAYG ($235) — no TFN on file."/>
+          </div>
+          {/* Live preview */}
+          <div style={{background:"#F9FAFB",border:"1px solid #E5E7EB",borderRadius:9,padding:"14px 16px"}}>
+            <div style={{fontWeight:700,fontSize:12,marginBottom:10}}>Preview after adjustments</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              {[
+                {lbl:"W1 Auto",   val:money(d.autoW1),        cls:""},
+                {lbl:"W2 Auto",   val:money(d.autoW2),        cls:""},
+                {lbl:"W1 Adj",    val:`+ ${money(localAdj.adjustW1||0)}`, cls:"g"},
+                {lbl:"W2 Adj",    val:`+ ${money(localAdj.adjustW2||0)}`, cls:"g"},
+                {lbl:"W1 FINAL",  val:money(finalW1),         cls:"b"},
+                {lbl:"W2 FINAL",  val:money(finalW2),         cls:"y"},
+              ].map((c,i) => (
+                <div key={i} className="card" style={{padding:"8px 12px"}}>
+                  <div className="clbl">{c.lbl}</div>
+                  <div className={`cval ${c.cls}`} style={{fontSize:16}}>{c.val}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── BUSINESS DETAILS TAB ── */}
+      {tab === "settings" && (
+        <div className="bc">
+          <div className="bctit">🏢 Business Details for IAS PDF</div>
+          <div className="frow2">
+            <div className="fg">
+              <label className="flbl">Business / Trading Name</label>
+              <input className="inp" value={bizName} onChange={e => setBizName(e.target.value)} placeholder="My Restaurant Pty Ltd"/>
+            </div>
+            <div className="fg">
+              <label className="flbl">ABN</label>
+              <input className="inp" value={bizABN} onChange={e => setBizABN(e.target.value)} placeholder="12 345 678 901"/>
+            </div>
+          </div>
+          <div style={{fontSize:11,color:"#9CA3AF",marginTop:8}}>These details appear on your exported IAS PDF. They are not saved between sessions — set them in Settings for persistence.</div>
+        </div>
+      )}
+
+      {/* ── HISTORY TAB ── */}
+      {tab === "history" && (
+        <div className="bc">
+          <div className="bctit">📅 IAS History — Last 18 Months</div>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th style={{textAlign:"left"}}>Month</th>
+                <th style={{textAlign:"right"}}>W1 Gross</th>
+                <th style={{textAlign:"right"}}>W2 PAYG</th>
+                <th style={{textAlign:"right"}}>Employees</th>
+                <th style={{textAlign:"center"}}>Status</th>
+                <th style={{textAlign:"center"}}>Lodged Date</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {IAS_MONTHS.map(m => {
+                const md   = buildIASMonthData(timesheets, employees, m);
+                const mrec = ias.find(r => r.month === m);
+                const st   = mrec?.status || "draft";
+                const scfg = IAS_STATUS_CFG[st];
+                const fw1  = md.autoW1 + (mrec?.adjustW1 || 0);
+                const fw2  = md.autoW2 + (mrec?.adjustW2 || 0);
+                const hasData = md.weekCount > 0 || (mrec && (mrec.adjustW1||mrec.adjustW2));
+                return (
+                  <tr key={m} style={{opacity: hasData ? 1 : 0.4}}>
+                    <td style={{fontWeight: m===selMonth ? 700 : 400}}>{fmtIASMonth(m)}{m===selMonth && <span style={{marginLeft:6,fontSize:10,color:"#2563EB"}}>← current</span>}</td>
+                    <td className="mono" style={{textAlign:"right"}}>{hasData ? money(fw1) : "—"}</td>
+                    <td className="mono" style={{textAlign:"right",color:"#EA580C"}}>{hasData ? money(fw2) : "—"}</td>
+                    <td style={{textAlign:"right"}}>{hasData ? md.empData.length : "—"}</td>
+                    <td style={{textAlign:"center"}}>
+                      <span style={{background:scfg.bg,border:`1px solid ${scfg.border}`,color:scfg.col,borderRadius:5,padding:"2px 8px",fontSize:10,fontWeight:600}}>
+                        {scfg.lbl}
+                      </span>
+                    </td>
+                    <td style={{textAlign:"center",fontSize:11,color:"#6B7280"}}>{mrec?.lodgedDate || "—"}</td>
+                    <td>
+                      <button className="btn-b" style={{fontSize:10,padding:"3px 8px"}} onClick={() => changeMonth(m) || setTab("statement")}>
+                        View
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
 //  BAS SUMMARY GENERATOR PAGE
 // ════════════════════════════════════════════════════════════
 function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, documents, showToast }) {
@@ -7265,6 +7917,7 @@ export default function App() {
   const [roster,     setRoster]     = useState(SEED_ROSTER);
   const [insurance,  setInsurance]  = useState(SEED_INSURANCE);
   const [leave,      setLeave]      = useState(SEED_LEAVE);
+  const [ias,        setIas]        = useState(SEED_IAS);
   const [documents,  setDocuments]  = useState(SEED_DOCUMENTS);
   const [toast,      setToast]      = useState(null);
 
@@ -7291,6 +7944,7 @@ export default function App() {
           {page === "insurance"      && <InsurancePage insurance={insurance} setInsurance={setInsurance} employees={employees} timesheets={timesheets} showToast={showToast}/>}
           {page === "tax"            && <TaxSummaryPage revenue={revenue} expenses={expenses} employees={employees} timesheets={timesheets}/>}
           {page === "taxsaver"       && <TaxSaverPage  expenses={expenses} setExpenses={setExpenses} employees={employees} timesheets={timesheets} setTimesheets={setTimesheets} showToast={showToast}/>}
+          {page === "ias"            && <IASPage        timesheets={timesheets} employees={employees} ias={ias} setIas={setIas} showToast={showToast}/>}
           {page === "documents"      && <DocumentsPage documents={documents} setDocuments={setDocuments} employees={employees} showToast={showToast}/>}
           {page === "bassummary"     && <BASSummaryPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} showToast={showToast}/>}
           {page === "accountantpack" && <AccountantPackPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} showToast={showToast}/>}

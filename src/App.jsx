@@ -3885,6 +3885,57 @@ function TimesheetModal({ employees, onSave, onClose }) {
 // ════════════════════════════════════════════════════════════
 //  SHIFT MODAL
 // ════════════════════════════════════════════════════════════
+function TimePicker({ label, value, onChange }) {
+  // value is "HH:MM" 24h, internally converts to/from 12h AM/PM
+  const [h24, m] = (value || "09:00").split(":").map(Number);
+  const isPM  = h24 >= 12;
+  const h12   = h24 === 0 ? 12 : h24 > 12 ? h24 - 12 : h24;
+
+  const emit = (newH12, newM, newIsPM) => {
+    let h = newH12 % 12;
+    if (newIsPM) h += 12;
+    onChange(`${String(h).padStart(2,"0")}:${String(newM).padStart(2,"0")}`);
+  };
+
+  const hours   = [12,1,2,3,4,5,6,7,8,9,10,11];
+  const minutes = [0,5,10,15,20,25,30,35,40,45,50,55];
+
+  const selStyle = {
+    background: C.surfaceAlt, border: `1px solid ${C.border}`,
+    borderRadius: 7, color: C.text, fontSize: 14, fontWeight: 600,
+    padding: "7px 8px", cursor: "pointer", fontFamily: "inherit",
+    appearance: "none", WebkitAppearance: "none", textAlign: "center",
+  };
+  const ampmBtn = active => ({
+    flex: 1, padding: "7px 0", fontSize: 12, fontWeight: 700,
+    borderRadius: 6, cursor: "pointer", border: "none", fontFamily: "inherit",
+    background: active ? C.accent : C.surfaceAlt,
+    color: active ? "#000" : C.muted,
+    transition: "all .12s",
+  });
+
+  return (
+    <div className="fg">
+      <label className="flbl">{label}</label>
+      <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+        <select style={{...selStyle, flex:"0 0 60px"}} value={h12}
+          onChange={e => emit(parseInt(e.target.value), m, isPM)}>
+          {hours.map(h => <option key={h} value={h}>{String(h).padStart(2,"0")}</option>)}
+        </select>
+        <span style={{ color:C.muted, fontWeight:700, fontSize:16 }}>:</span>
+        <select style={{...selStyle, flex:"0 0 60px"}} value={m}
+          onChange={e => emit(h12, parseInt(e.target.value), isPM)}>
+          {minutes.map(mn => <option key={mn} value={mn}>{String(mn).padStart(2,"0")}</option>)}
+        </select>
+        <div style={{ display:"flex", gap:3, flex:1 }}>
+          <button style={ampmBtn(!isPM)} onClick={() => emit(h12, m, false)}>AM</button>
+          <button style={ampmBtn(isPM)}  onClick={() => emit(h12, m, true)}>PM</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ShiftModal({ employees, initial, onSave, onClose }) {
   const [f, setF] = useState({
     id:         initial.id         || null,
@@ -3935,14 +3986,8 @@ function ShiftModal({ employees, initial, onSave, onClose }) {
             </div>
           </div>
           <div className="frow2">
-            <div className="fg">
-              <label className="flbl">Start Time</label>
-              <input type="time" className="inp" value={f.start} onChange={upd("start")}/>
-            </div>
-            <div className="fg">
-              <label className="flbl">End Time</label>
-              <input type="time" className="inp" value={f.end} onChange={upd("end")}/>
-            </div>
+            <TimePicker label="Start Time" value={f.start} onChange={v => setF(p=>({...p,start:v}))}/>
+            <TimePicker label="End Time"   value={f.end}   onChange={v => setF(p=>({...p,end:v}))}/>
           </div>
           {hrs > 0 && emp && (
             <div style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 13px",fontSize:12,lineHeight:1.7,marginTop:2}}>

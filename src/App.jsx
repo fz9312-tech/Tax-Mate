@@ -603,39 +603,70 @@ const SEED_EXPENSES = [
 
 // Employee profile: personal + employment + standard hours
 const SEED_EMPLOYEES = [
-  { id:1, name:"Mei Lin",      email:"mei.lin@email.com",    phone:"0412 345 678",
-    dob:"1990-03-14", nok_name:"David Lin",    nok_phone:"0412 000 001",
-    role:"Head Chef",    type:"full-time", rate:32.00, std_hrs:38,
-    start:"2022-01-10", tfn:true,  superfund:"AustralianSuper" },
-  { id:2, name:"James Tran",   email:"james.tran@email.com", phone:"0421 987 654",
-    dob:"1995-07-22", nok_name:"Susan Tran",   nok_phone:"0421 000 002",
-    role:"Floor Staff",  type:"part-time",hourly_rate:24.50, rate:24.50, std_hrs:20,
-    start:"2023-03-01", tfn:true,  superfund:"REST Super" },
-  { id:3, name:"Anika Sharma", email:"anika.s@email.com",    phone:"0435 111 222",
-    dob:"1998-11-05", nok_name:"Raj Sharma",   nok_phone:"0435 000 003",
-    role:"Cashier",      type:"casual",    rate:22.00, std_hrs:15,
-    start:"2023-09-15", tfn:true,  superfund:"Hostplus" },
-  { id:4, name:"Tom Nguyen",   email:"tom.nguyen@email.com", phone:"0400 333 444",
-    dob:"1988-02-28", nok_name:"Linda Nguyen", nok_phone:"0400 000 004",
-    role:"Sous Chef",    type:"full-time", rate:29.00, std_hrs:38,
-    start:"2024-01-08", tfn:false, superfund:"AustralianSuper" },
+  { id:1, name:"Lilian",       email:"lilian@email.com",      phone:"0400 000 001",
+    dob:"2000-04-10", nok_name:"", nok_phone:"",
+    role:"Floor Staff",  type:"casual", rate:15.18, std_hrs:15,
+    start:"2024-01-15", tfn:true,  superfund:"AustralianSuper" },
+  { id:2, name:"Charlotte",    email:"charlotte@email.com",   phone:"0400 000 002",
+    dob:"1999-08-22", nok_name:"", nok_phone:"",
+    role:"Floor Staff",  type:"casual", rate:15.60, std_hrs:15,
+    start:"2024-02-01", tfn:true,  superfund:"Hostplus" },
+  { id:3, name:"Cohen",        email:"cohen@email.com",       phone:"0400 000 003",
+    dob:"2001-11-30", nok_name:"", nok_phone:"",
+    role:"Floor Staff",  type:"casual", rate:15.18, std_hrs:15,
+    start:"2024-03-10", tfn:true,  superfund:"REST Super" },
+  { id:4, name:"Niamh",        email:"niamh@email.com",       phone:"0400 000 004",
+    dob:"2002-05-14", nok_name:"", nok_phone:"",
+    role:"Floor Staff",  type:"casual", rate:15.18, std_hrs:15,
+    start:"2024-04-01", tfn:true,  superfund:"AustralianSuper" },
+  { id:5, name:"Maddy",        email:"maddy@email.com",       phone:"0400 000 005",
+    dob:"2000-09-03", nok_name:"", nok_phone:"",
+    role:"Floor Staff",  type:"casual", rate:15.18, std_hrs:15,
+    start:"2024-05-20", tfn:true,  superfund:"Hostplus" },
+  { id:6, name:"Zi Jun Fan",   email:"zijun.fan@email.com",   phone:"0400 000 006",
+    dob:"1998-01-18", nok_name:"", nok_phone:"",
+    role:"",           type:"casual", rate:0, std_hrs:15,
+    start:"2024-06-01", tfn:true,  superfund:"" },
+  { id:7, name:"Zhao Hui Lin", email:"zhaohui.lin@email.com", phone:"0400 000 007",
+    dob:"1997-07-25", nok_name:"", nok_phone:"",
+    role:"",           type:"casual", rate:0, std_hrs:15,
+    start:"2024-07-15", tfn:true,  superfund:"" },
+  { id:8, name:"Zhong Min Fan",email:"zhongmin.fan@email.com",phone:"0400 000 008",
+    dob:"1999-03-08", nok_name:"", nok_phone:"",
+    role:"",           type:"casual", rate:0, std_hrs:15,
+    start:"2024-08-01", tfn:true,  superfund:"" },
 ];
 
 // Timesheet: one row = one employee × one week
 // std_hrs = standard hours worked, ot_hrs = overtime, wknd_hrs = weekend/PH
 const SEED_TIMESHEETS = [
-  { id:1,  eid:1, week:"2025-W26", std_hrs:38, ot_hrs:0,  wknd_hrs:0, super_paid:true  },
-  { id:2,  eid:2, week:"2025-W26", std_hrs:20, ot_hrs:0,  wknd_hrs:0, super_paid:true  },
-  { id:3,  eid:3, week:"2025-W26", std_hrs:15, ot_hrs:0,  wknd_hrs:2, super_paid:true  },
-  { id:4,  eid:4, week:"2025-W26", std_hrs:38, ot_hrs:2,  wknd_hrs:0, super_paid:true  },
-  { id:5,  eid:1, week:"2025-W27", std_hrs:38, ot_hrs:4,  wknd_hrs:0, super_paid:false },
-  { id:6,  eid:2, week:"2025-W27", std_hrs:22, ot_hrs:0,  wknd_hrs:4, super_paid:false },
-  { id:7,  eid:3, week:"2025-W27", std_hrs:15, ot_hrs:0,  wknd_hrs:4, super_paid:false },
-  { id:8,  eid:4, week:"2025-W27", std_hrs:38, ot_hrs:0,  wknd_hrs:0, super_paid:false },
-  { id:9,  eid:1, week:"2025-W28", std_hrs:38, ot_hrs:2,  wknd_hrs:8, super_paid:false },
-  { id:10, eid:2, week:"2025-W28", std_hrs:20, ot_hrs:0,  wknd_hrs:4, super_paid:false },
-  { id:11, eid:3, week:"2025-W28", std_hrs:15, ot_hrs:0,  wknd_hrs:6, super_paid:false },
-  { id:12, eid:4, week:"2025-W28", std_hrs:38, ot_hrs:3,  wknd_hrs:0, super_paid:false },
+  // ── Week 26 ──
+  { id:1,  eid:1, week:"2025-W26", std_hrs:15, ot_hrs:0, wknd_hrs:4, super_paid:true  },
+  { id:2,  eid:2, week:"2025-W26", std_hrs:15, ot_hrs:0, wknd_hrs:0, super_paid:true  },
+  { id:3,  eid:3, week:"2025-W26", std_hrs:12, ot_hrs:0, wknd_hrs:4, super_paid:true  },
+  { id:4,  eid:4, week:"2025-W26", std_hrs:15, ot_hrs:0, wknd_hrs:0, super_paid:true  },
+  { id:5,  eid:5, week:"2025-W26", std_hrs:10, ot_hrs:0, wknd_hrs:4, super_paid:true  },
+  { id:6,  eid:6, week:"2025-W26", std_hrs:15, ot_hrs:0, wknd_hrs:0, super_paid:true  },
+  { id:7,  eid:7, week:"2025-W26", std_hrs:12, ot_hrs:0, wknd_hrs:4, super_paid:true  },
+  { id:8,  eid:8, week:"2025-W26", std_hrs:15, ot_hrs:0, wknd_hrs:0, super_paid:true  },
+  // ── Week 27 ──
+  { id:9,  eid:1, week:"2025-W27", std_hrs:15, ot_hrs:0, wknd_hrs:4, super_paid:false },
+  { id:10, eid:2, week:"2025-W27", std_hrs:15, ot_hrs:0, wknd_hrs:4, super_paid:false },
+  { id:11, eid:3, week:"2025-W27", std_hrs:15, ot_hrs:0, wknd_hrs:0, super_paid:false },
+  { id:12, eid:4, week:"2025-W27", std_hrs:12, ot_hrs:0, wknd_hrs:4, super_paid:false },
+  { id:13, eid:5, week:"2025-W27", std_hrs:15, ot_hrs:0, wknd_hrs:0, super_paid:false },
+  { id:14, eid:6, week:"2025-W27", std_hrs:10, ot_hrs:0, wknd_hrs:4, super_paid:false },
+  { id:15, eid:7, week:"2025-W27", std_hrs:15, ot_hrs:0, wknd_hrs:0, super_paid:false },
+  { id:16, eid:8, week:"2025-W27", std_hrs:12, ot_hrs:0, wknd_hrs:4, super_paid:false },
+  // ── Week 28 ──
+  { id:17, eid:1, week:"2025-W28", std_hrs:15, ot_hrs:0, wknd_hrs:4, super_paid:false },
+  { id:18, eid:2, week:"2025-W28", std_hrs:12, ot_hrs:0, wknd_hrs:0, super_paid:false },
+  { id:19, eid:3, week:"2025-W28", std_hrs:15, ot_hrs:0, wknd_hrs:4, super_paid:false },
+  { id:20, eid:4, week:"2025-W28", std_hrs:15, ot_hrs:0, wknd_hrs:0, super_paid:false },
+  { id:21, eid:5, week:"2025-W28", std_hrs:12, ot_hrs:0, wknd_hrs:4, super_paid:false },
+  { id:22, eid:6, week:"2025-W28", std_hrs:15, ot_hrs:0, wknd_hrs:0, super_paid:false },
+  { id:23, eid:7, week:"2025-W28", std_hrs:15, ot_hrs:0, wknd_hrs:4, super_paid:false },
+  { id:24, eid:8, week:"2025-W28", std_hrs:12, ot_hrs:0, wknd_hrs:0, super_paid:false },
 ];
 
 const SEED_INSURANCE = [
@@ -647,10 +678,9 @@ const SEED_INSURANCE = [
 // Leave taken records  { eid, type: "annual"|"personal"|"lieu", date, hours, notes }
 // Leave accruals are computed from timesheets — only stored data is leave *taken*
 const SEED_LEAVE = [
-  { id:1, eid:1, type:"annual",   date:"2025-06-15", hours:38, notes:"Annual leave — family holiday" },
-  { id:2, eid:2, type:"personal", date:"2025-06-20", hours:8,  notes:"Sick day" },
-  { id:3, eid:1, type:"lieu",     date:"2025-07-01", hours:7.6,notes:"Lieu for Australia Day shift" },
-  { id:4, eid:4, type:"annual",   date:"2025-07-05", hours:19, notes:"2.5 days leave" },
+  { id:1, eid:1, type:"annual",   date:"2025-06-15", hours:15, notes:"Annual leave" },
+  { id:2, eid:3, type:"personal", date:"2025-06-20", hours:8,  notes:"Sick day" },
+  { id:3, eid:2, type:"lieu",     date:"2025-07-01", hours:7.5,notes:"Lieu for weekend shift" },
 ];
 
 // IAS per-month adjustment & status records
@@ -664,19 +694,30 @@ const SEED_IAS = [
 // Roster shifts: one shift per employee per day
 // { id, eid, date:"YYYY-MM-DD", start:"HH:MM", end:"HH:MM", break_mins, note }
 const SEED_ROSTER = [
-  { id:1, eid:1, date:"2025-07-07", start:"07:00", end:"15:30", break_mins:30, note:"Morning kitchen" },
-  { id:2, eid:2, date:"2025-07-07", start:"11:00", end:"15:00", break_mins:0,  note:"Lunch floor" },
-  { id:3, eid:3, date:"2025-07-07", start:"11:00", end:"17:00", break_mins:30, note:"Cashier" },
-  { id:4, eid:4, date:"2025-07-07", start:"07:00", end:"15:30", break_mins:30, note:"Sous chef" },
-  { id:5, eid:1, date:"2025-07-08", start:"07:00", end:"15:30", break_mins:30, note:"" },
-  { id:6, eid:2, date:"2025-07-08", start:"16:00", end:"22:00", break_mins:0,  note:"Dinner service" },
-  { id:7, eid:4, date:"2025-07-08", start:"07:00", end:"15:30", break_mins:30, note:"" },
-  { id:8, eid:1, date:"2025-07-09", start:"07:00", end:"15:30", break_mins:30, note:"" },
-  { id:9, eid:3, date:"2025-07-09", start:"12:00", end:"18:00", break_mins:0,  note:"" },
-  {id:10, eid:4, date:"2025-07-09", start:"07:00", end:"15:30", break_mins:30, note:"" },
-  {id:11, eid:2, date:"2025-07-12", start:"10:00", end:"16:00", break_mins:0,  note:"Weekend lunch" },
-  {id:12, eid:3, date:"2025-07-12", start:"10:00", end:"18:00", break_mins:30, note:"Weekend shift" },
-  {id:13, eid:1, date:"2025-07-13", start:"08:00", end:"14:00", break_mins:0,  note:"Sunday brunch" },
+  // Monday 7 Jul
+  { id:1,  eid:1, date:"2025-07-07", start:"09:00", end:"15:00", break_mins:30, note:"Lunch service" },
+  { id:2,  eid:2, date:"2025-07-07", start:"09:00", end:"15:00", break_mins:30, note:"Lunch service" },
+  { id:3,  eid:6, date:"2025-07-07", start:"16:00", end:"22:00", break_mins:0,  note:"Dinner service" },
+  // Tuesday 8 Jul
+  { id:4,  eid:3, date:"2025-07-08", start:"09:00", end:"15:00", break_mins:30, note:"" },
+  { id:5,  eid:4, date:"2025-07-08", start:"16:00", end:"22:00", break_mins:0,  note:"Dinner service" },
+  // Wednesday 9 Jul
+  { id:6,  eid:5, date:"2025-07-09", start:"09:00", end:"15:00", break_mins:30, note:"" },
+  { id:7,  eid:7, date:"2025-07-09", start:"16:00", end:"22:00", break_mins:0,  note:"" },
+  // Thursday 10 Jul
+  { id:8,  eid:1, date:"2025-07-10", start:"09:00", end:"15:00", break_mins:30, note:"" },
+  { id:9,  eid:8, date:"2025-07-10", start:"16:00", end:"22:00", break_mins:0,  note:"" },
+  // Friday 11 Jul
+  { id:10, eid:2, date:"2025-07-11", start:"09:00", end:"15:00", break_mins:30, note:"" },
+  { id:11, eid:3, date:"2025-07-11", start:"16:00", end:"22:00", break_mins:0,  note:"Busy Friday night" },
+  { id:12, eid:6, date:"2025-07-11", start:"16:00", end:"22:00", break_mins:0,  note:"Busy Friday night" },
+  // Saturday 12 Jul (weekend ×1.75)
+  { id:13, eid:4, date:"2025-07-12", start:"10:00", end:"16:00", break_mins:30, note:"Weekend lunch" },
+  { id:14, eid:5, date:"2025-07-12", start:"10:00", end:"16:00", break_mins:30, note:"Weekend lunch" },
+  { id:15, eid:7, date:"2025-07-12", start:"16:00", end:"22:00", break_mins:0,  note:"Weekend dinner" },
+  // Sunday 13 Jul (weekend ×1.75)
+  { id:16, eid:8, date:"2025-07-13", start:"10:00", end:"16:00", break_mins:30, note:"Sunday brunch" },
+  { id:17, eid:1, date:"2025-07-13", start:"10:00", end:"16:00", break_mins:30, note:"Sunday brunch" },
 ];
 
 const SEED_DOCUMENTS = [
@@ -687,7 +728,7 @@ const SEED_DOCUMENTS = [
   { id:5,  name:"Workers_Comp_Policy.pdf",     size:512000, type:"application/pdf",   cat:"Insurance Document",supplier:"Allianz Australia",      emp_id:null, quarter:"Q1 FY2026", fy:"FY2026", gst:false, status:"verified", date:"2025-07-01", notes:"Annual Workers Comp renewal" },
   { id:6,  name:"Jul_POS_Export.csv",          size:24576,  type:"text/csv",          cat:"POS Export",        supplier:"Square POS",            emp_id:null, quarter:"Q1 FY2026", fy:"FY2026", gst:false, status:"verified", date:"2025-07-05", notes:"July daily sales export" },
   { id:7,  name:"BAS_Q4FY25_Notice.pdf",       size:203776, type:"application/pdf",   cat:"BAS Notice",        supplier:"ATO",                   emp_id:null, quarter:"Q4 FY2025", fy:"FY2025", gst:false, status:"verified", date:"2025-07-28", notes:"Q4 FY2025 BAS lodgment confirmation" },
-  { id:8,  name:"Payroll_Mei_Jun.xlsx",        size:40960,  type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", cat:"Payroll Report", supplier:null, emp_id:1, quarter:"Q4 FY2025", fy:"FY2025", gst:false, status:"verified", date:"2025-06-28", notes:"Mei Lin June payroll" },
+  { id:8,  name:"Payroll_Lilian_Jun.xlsx",      size:40960,  type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", cat:"Payroll Report", supplier:null, emp_id:1, quarter:"Q4 FY2025", fy:"FY2025", gst:false, status:"verified", date:"2025-06-28", notes:"Lilian June payroll" },
   { id:9,  name:"Accountant_FY25_Notes.pdf",   size:311296, type:"application/pdf",   cat:"Accountant Note",   supplier:"Smith & Co Accountants",emp_id:null, quarter:"Q4 FY2025", fy:"FY2025", gst:false, status:"verified", date:"2025-07-15", notes:"Year-end review notes" },
   { id:10, name:"Facebook_Ads_Receipt.pdf",    size:61440,  type:"application/pdf",   cat:"Receipt",           supplier:"Meta Platforms",        emp_id:null, quarter:"Q1 FY2026", fy:"FY2026", gst:true,  status:"missing",  date:"2025-07-08", notes:"Facebook ads — invoice not yet received" },
   { id:11, name:"Jul_Bank_Statement.pdf",      size:425984, type:"application/pdf",   cat:"Bank Statement",    supplier:"Commonwealth Bank",     emp_id:null, quarter:"Q1 FY2026", fy:"FY2026", gst:false, status:"verified", date:"2025-07-31", notes:"July business account statement" },
@@ -699,6 +740,14 @@ const SEED_DOCUMENTS = [
 // ════════════════════════════════════════════════════════════
 const today    = new Date();
 const todayStr = today.toISOString().split("T")[0];
+// ISO week string for today — used for date-aware super/PAYG in modals without a specific week
+const todayWeekStr = (() => {
+  const d = new Date(); const day = d.getDay() || 7;
+  d.setDate(d.getDate() + 4 - day); // shift to nearest Thursday
+  const jan1 = new Date(d.getFullYear(), 0, 1);
+  const wk = Math.ceil((((d - jan1) / 86400000) + 1) / 7);
+  return `${d.getFullYear()}-W${String(wk).padStart(2,'0')}`;
+})();
 const quarter  = `Q${Math.ceil((today.getMonth()+1)/3)} ${today.getFullYear()}`;
 
 const money = n =>
@@ -1008,8 +1057,8 @@ const renderBASSummaryPDF = ({d, quarter}) => {
     { title:'WAGES & PAYG',
       rows:[
         {lbl:'Total Gross Wages',          val:`$${d.totalWages.toFixed(2)}`},
-        {lbl:'Est. PAYG Withholding (~19%)',val:`$${d.totalPayg.toFixed(2)}`},
-        {lbl:'Est. Super (11.5%)',          val:`$${d.totalSuper.toFixed(2)}`},
+        {lbl:'PAYG Withheld Withheld (ATO Scale 2)',val:`$${d.totalPayg.toFixed(2)}`},
+        {lbl:'Super (SGC) (SGC)',          val:`$${d.totalSuper.toFixed(2)}`},
       ],
       total:{lbl:'Total Employment Cost', val:`$${(d.totalWages+d.totalPayg+d.totalSuper).toFixed(2)}`, color:'#8FCB72'},
     }
@@ -1095,7 +1144,7 @@ const renderAccountantPackPDF = ({d, selFY}) => {
       rows:[
         {lbl:'Total Wages Paid',     val:`$${d.totalWages.toFixed(2)}`},
         {lbl:'Total PAYG Withheld',  val:`$${d.totalPayg.toFixed(2)}`},
-        {lbl:'Total Super (11.5%)',  val:`$${d.totalSuper.toFixed(2)}`},
+        {lbl:'Total Super (SGC)',  val:`$${d.totalSuper.toFixed(2)}`},
       ],
       total:{lbl:'Total Labour Cost', val:`$${(d.totalWages+d.totalSuper).toFixed(2)}`, color:'#8FCB72'},
     }
@@ -1156,7 +1205,7 @@ const renderPayrollPDF = ({employees, allRows, selFY}) => {
     },
     { title:'SUPER',
       rows:[
-        {lbl:'Total Super Obligation (11.5%)', val:`$${tSuper.toFixed(2)}`},
+        {lbl:'Total Super Obligation (SGC)', val:`$${tSuper.toFixed(2)}`},
         {lbl:'Total Labour Cost',              val:`$${(tGross+tSuper).toFixed(2)}`},
       ],
       total:{lbl:'SGC Due This Quarter', val:`$${(tSuper/4).toFixed(2)}`},
@@ -1268,7 +1317,7 @@ const renderPayslipPDF = ({emp, rows, totals, payPeriodLabel, bizName, bizABN}) 
   y+=4;
 
   // Super info box — rate is period-aware (11.5% pre-Jul 2025, 12% from Jul 2025)
-  const superRateDisplay = totals.superR ? `${(totals.superR*100).toFixed(1)}%` : '11.5%';
+  const superRateDisplay = totals.superR ? `${(totals.superR*100).toFixed(1)}%` : `${(getSuperRate(todayWeekStr)*100).toFixed(1)}%`;
   pdf.rect(M, y, W-M*2, 40, {fill:'#EFF6FF', stroke:'#BFDBFE'});
   pdf.text(M+10, y+10, `Super (${superRateDisplay}): $${totals.super.toFixed(2)} to be paid to ${emp.superfund||'nominated fund'} within 28 days of quarter end.`, {size:8.5, color:'#1D4ED8'});
   pdf.text(M+10, y+26, 'Late super payments attract the SGC — not tax deductible.', {size:8, color:'#3B82F6'});
@@ -1401,9 +1450,11 @@ const annotateTimesheets = (employees, timesheets) =>
     const emp = employees.find(e => e.id === ts.eid);
     if (!emp) return null;
     const gross  = calcGross(emp, ts);
-    const super_ = gross * SUPER_RATE;
-    const payg   = gross * PAYG_RATE;
-    return { ...ts, emp, gross, super: super_, payg, labour: gross + super_ + payg,
+    const superR = getSuperRate(ts.week);          // 11.5% pre-Jul 2025, 12% from Jul 2025
+    const super_ = gross * superR;
+    const payg   = calcWeeklyPAYG(gross, emp.tfn); // ATO 2024-25 Scale 2 progressive
+    return { ...ts, emp, gross, super: super_, superR, payg,
+             labour: gross + super_,               // labour cost = gross + super (PAYG is employee's)
              total_hrs: ts.std_hrs + ts.ot_hrs + ts.wknd_hrs };
   }).filter(Boolean);
 
@@ -2217,7 +2268,7 @@ function DashboardPage({ revenue, expenses, employees, timesheets, insurance, se
         {[
           { lbl:"Active Staff",       val:employees.filter(e=>e.id).length, cls:"t", sub:`${employees.length} total employees` },
           { lbl:"Total Gross Wages",  val:money(totalWages),                cls:"",  sub:"All logged timesheets" },
-          { lbl:"Est. Super Owed",    val:money(rows.reduce((s,t)=>s+t.super,0)), cls:"b", sub:"11.5% of gross wages" },
+          { lbl:"Super Owed (SGC)",    val:money(rows.reduce((s,t)=>s+t.super,0)), cls:"b", sub:"SGC rate on gross wages" },
           { lbl:"Annual Insurance",   val:money(totalIns),                  cls:"p", sub:`${insurance.length} policies` },
         ].map((c,i) => (
           <div key={i} className="card">
@@ -3701,14 +3752,19 @@ function EmployeeModal({ emp, onSave, onClose }) {
 
         {wkGross > 0 && (
           <div style={{ background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:10, padding:"13px 15px", marginTop:14 }}>
-            <div style={{ fontSize:10, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".8px", marginBottom:10 }}>Estimated Weekly Costs</div>
+            <div style={{ fontSize:10, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".8px", marginBottom:10 }}>Weekly Cost Preview</div>
             <div className="frow4">
-              {[
-                { lbl:"Gross Wages",   val:money(wkGross),                            col:C.text   },
-                { lbl:"PAYG (~19%)",   val:money(wkGross * PAYG_RATE),                col:C.yellow },
-                { lbl:"Super (11.5%)", val:money(wkGross * SUPER_RATE),               col:C.blue   },
-                { lbl:"Total Labour",  val:money(wkGross * (1+PAYG_RATE+SUPER_RATE)), col:C.accent },
-              ].map((s,i) => (
+              {(() => {
+                const wkPayg  = calcWeeklyPAYG(wkGross, f.tfn === "yes");
+                const superR  = getSuperRate(todayWeekStr);
+                const wkSuper = wkGross * superR;
+                return [
+                  { lbl:"Gross Wages",                          val:money(wkGross),          col:C.text   },
+                  { lbl:`PAYG (ATO Scale 2${f.tfn==="no"?" 47%":""})`, val:money(wkPayg), col:C.yellow },
+                  { lbl:`Super (SGC ${(superR*100).toFixed(1)}%)`,      val:money(wkSuper),  col:C.blue   },
+                  { lbl:"Total Labour Cost",                    val:money(wkGross+wkSuper),  col:C.accent },
+                ];
+              })().map((s,i) => (
                 <div key={i}>
                   <div className="mono" style={{ fontSize:15, fontWeight:700, color:s.col }}>{s.val}</div>
                   <div style={{ fontSize:10, color:C.muted, marginTop:3 }}>{s.lbl}</div>
@@ -3795,14 +3851,19 @@ function TimesheetModal({ employees, onSave, onClose }) {
 
         {gross > 0 && (
           <div style={{ background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:10, padding:"12px 14px", marginTop:13 }}>
-            <div style={{ fontSize:10, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".8px", marginBottom:9 }}>This Week's Estimated Costs</div>
+            <div style={{ fontSize:10, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".8px", marginBottom:9 }}>This Week's Costs</div>
             <div className="frow4">
-              {[
-                { lbl:`Gross (${std+ot+wknd}h)`, val:money(gross),                            col:C.text   },
-                { lbl:"PAYG (~19%)",              val:money(gross*PAYG_RATE),                  col:C.yellow },
-                { lbl:"Super (11.5%)",            val:money(gross*SUPER_RATE),                 col:C.blue   },
-                { lbl:"Total Labour",             val:money(gross*(1+PAYG_RATE+SUPER_RATE)),   col:C.accent },
-              ].map((s,i) => (
+              {(() => {
+                const tsPayg  = calcWeeklyPAYG(gross, emp?.tfn === "yes");
+                const superR  = getSuperRate(f.week || todayWeekStr);
+                const tsSuper = gross * superR;
+                return [
+                  { lbl:`Gross (${std+ot+wknd}h)`,                     val:money(gross),         col:C.text   },
+                  { lbl:`PAYG (ATO Scale 2${emp?.tfn==="no"?" 47%":""})`, val:money(tsPayg),      col:C.yellow },
+                  { lbl:`Super (SGC ${(superR*100).toFixed(1)}%)`,        val:money(tsSuper),     col:C.blue   },
+                  { lbl:"Total Labour Cost",                             val:money(gross+tsSuper), col:C.accent },
+                ];
+              })().map((s,i) => (
                 <div key={i}>
                   <div className="mono" style={{ fontSize:14, fontWeight:700, color:s.col }}>{s.val}</div>
                   <div style={{ fontSize:10, color:C.muted, marginTop:3 }}>{s.lbl}</div>
@@ -4539,7 +4600,7 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster,
         {[
           { lbl:"Active Staff",       val:employees.length, cls:"t" },
           { lbl:"Total Gross Wages",  val:money(totalGross), cls:"" },
-          { lbl:"Est. Super Owed",    val:money(totalSuper), cls:"b" },
+          { lbl:"Super Owed (SGC)",    val:money(totalSuper), cls:"b" },
           { lbl:"Unpaid Super Rows",  val:unpaidRows, cls:unpaidRows > 0 ? "r" : "g" },
         ].map((c,i) => <div key={i} className="card"><div className="clbl">{c.lbl}</div><div className={`cval ${c.cls}`}>{c.val}</div></div>)}
       </div>
@@ -5247,7 +5308,7 @@ function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, biz
               { lbl:"Gross Pay",      val:money(totals.gross), cls:"" },
               { lbl:"PAYG Withheld",  val:money(totals.payg),  cls:"r" },
               { lbl:"Net Pay",        val:money(totals.net),   cls:"g" },
-              { lbl:"Super (11.5%)",  val:money(totals.super), cls:"b" },
+              { lbl:"Super (SGC)",  val:money(totals.super), cls:"b" },
             ].map((c,i) => <div key={i} className="card"><div className="clbl">{c.lbl}</div><div className={`cval ${c.cls}`}>{c.val}</div></div>)}
           </div>
 
@@ -5291,7 +5352,7 @@ function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, biz
             <div className="bctit">Pay Summary</div>
             {[
               { lbl:"Gross Pay",                                      val:money(totals.gross),  col:C.text },
-              { lbl:`PAYG Withheld (${emp.tfn ? "~19%" : "47% — no TFN"})`, val:`− ${money(totals.payg)}`, col:C.red },
+              { lbl:`PAYG Withheld (ATO Scale 2${emp.tfn ? "" : " — no TFN 47%"})`, val:`− ${money(totals.payg)}`, col:C.red },
               { lbl:"Net Pay (Take-Home)",                            val:money(totals.net),    col:C.green, bold:true },
             ].map((r,i) => (
               <div key={i} style={{ display:"flex", justifyContent:"space-between", padding:"9px 0", borderBottom:`1px solid ${C.border}`, alignItems:"center" }}>
@@ -5308,7 +5369,7 @@ function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, biz
             </div>
             {!emp.tfn && (
               <div style={{ marginTop:10, padding:"10px 14px", background:"rgba(212,168,67,.1)", border:"1px solid rgba(212,168,67,.3)", borderRadius:9, fontSize:12, color:C.yellow }}>
-                ⚠️ <strong>No TFN on file</strong> — PAYG withheld at 47%. Ask employee to provide their TFN to reduce withholding to ~19%.
+                ⚠️ <strong>No TFN on file</strong> — PAYG withheld at 47%. Ask employee to provide their TFN to apply ATO Scale 2 progressive rates.
               </div>
             )}
           </div>
@@ -5345,7 +5406,7 @@ function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, biz
 
       <div className="disc">
         <div className="d-ttl">⚠️ Payslip Disclaimer</div>
-        <div className="d-txt">Payslips are generated from timesheet data entered in Mise. PAYG withholding is estimated at ~19% for employees with a TFN and 47% without. Actual withholding depends on the employee's tax file declaration. These payslips are for internal record-keeping and employee reference only. For STP lodgement and ATO-certified payroll reporting, consult a registered BAS agent or use ATO-approved payroll software. Retain payslip records for 7 years as required by the ATO.</div>
+        <div className="d-txt">Payslips are generated from timesheet data entered in Mise. PAYG withholding uses ATO 2024-25 progressive Scale 2 rates for employees with a TFN on file, and 47% flat for employees without a TFN (ATO statutory no-TFN rate). These payslips are for internal record-keeping and employee reference only. For STP lodgement and ATO-certified payroll reporting, consult a registered BAS agent or use ATO-approved payroll software. Retain payslip records for 7 years as required by the ATO.</div>
       </div>
 
       {showPrint && emp && (
@@ -5360,26 +5421,34 @@ function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, biz
 
 
 function DayWorkersTab({ showToast, workers, setWorkers }) {
-  const blankDW = { name:"", date:todayStr, hours:"", rate:"", isWeekend:false, notes:"" };
+  const blankDW = { name:"", date:todayStr, hours:"", rate:"", isWeekend:false, hasTFN:true, notes:"" };
   const [f,        setF]        = useState(blankDW);
   const [showHelp, setShowHelp] = useState(false);
 
-  // ── Calculations ─────────────────────────────────────────
-  const calc = (hours, rate, isWeekend) => {
-    const h   = parseFloat(hours) || 0;
-    const r   = parseFloat(rate)  || 0;
-    const effR= isWeekend ? r * WKND_RATE : r * (1 + CASUAL_LOADING);
+  // ── Calculations — ATO-accurate ──────────────────────────
+  const calc = (hours, rate, isWeekend, hasTFN, date) => {
+    const h    = parseFloat(hours) || 0;
+    const r    = parseFloat(rate)  || 0;
+    const effR = isWeekend ? r * WKND_RATE : r * (1 + CASUAL_LOADING);
     const gross = effR * h;
-    const super_ = gross * SUPER_RATE;
-    const payg  = gross * PAYG_RATE;
-    return { gross, super:super_, payg, effR };
+    // Date → week string for date-aware super rate
+    const [y,m,d] = (date||todayStr).split('-').map(Number);
+    const dt = new Date(y,m-1,d);
+    const day = dt.getDay()||7; dt.setDate(dt.getDate()+4-day);
+    const jan1 = new Date(dt.getFullYear(),0,1);
+    const wk = Math.ceil((((dt-jan1)/86400000)+1)/7);
+    const wkStr = `${dt.getFullYear()}-W${String(wk).padStart(2,'0')}`;
+    const superR  = getSuperRate(wkStr);
+    const super_  = gross * superR;
+    const payg    = calcWeeklyPAYG(gross, hasTFN);  // ATO Scale 2 or 47% no-TFN
+    return { gross, super:super_, superR, payg, effR };
   };
 
-  const preview = calc(f.hours, f.rate, f.isWeekend);
+  const preview = calc(f.hours, f.rate, f.isWeekend, f.hasTFN, f.date);
 
   const add = () => {
     if (!f.name.trim() || !f.hours || !f.rate) return;
-    const c = calc(f.hours, f.rate, f.isWeekend);
+    const c = calc(f.hours, f.rate, f.isWeekend, f.hasTFN, f.date);
     setWorkers(p => [...p, {
       id: Date.now(),
       name: f.name.trim(),
@@ -5439,8 +5508,8 @@ function DayWorkersTab({ showToast, workers, setWorkers }) {
           <div style={{ marginTop:14, borderTop:`1px solid ${C.border}`, paddingTop:14, display:"flex", flexDirection:"column", gap:10 }}>
             {[
               { icon:"🦺", title:"Workers Compensation", col:C.red, text:"Covered automatically under your existing policy. Their wages count towards your annual payroll figure used to calculate your Workers Comp premium. No separate policy needed." },
-              { icon:"💰", title:"Superannuation", col:C.blue, text:"Since 2022, there is NO minimum earnings threshold. Even $50 of wages requires Super at 11.5%. You must pay it within 28 days of the end of each quarter." },
-              { icon:"📋", title:"PAYG Withholding", col:C.yellow, text:"If the day worker has provided a TFN, withhold at their marginal rate (estimated ~19%). If no TFN, withhold at 47%. You must report this to the ATO." },
+              { icon:"💰", title:"Superannuation", col:C.blue, text:"Since 2022, there is NO minimum earnings threshold. Even $50 of wages requires Super at the current SGC rate. You must pay it within 28 days of the end of each quarter." },
+              { icon:"📋", title:"PAYG Withholding", col:C.yellow, text:"If the day worker has provided a TFN, withhold using ATO 2024-25 progressive Scale 2 rates. If no TFN, withhold at 47%. You must report this to the ATO." },
               { icon:"📁", title:"Record Keeping", col:C.teal, text:"ATO requires you to keep all wage records for 7 years — including one-day workers. This page gives you a downloadable CSV for your records." },
             ].map((item, i) => (
               <div key={i} style={{ display:"flex", gap:10, alignItems:"flex-start" }}>
@@ -5496,6 +5565,14 @@ function DayWorkersTab({ showToast, workers, setWorkers }) {
             </select>
           </div>
           <div className="fg">
+            <label className="flbl">TFN Provided?</label>
+            <select className="sel" value={f.hasTFN ? "yes" : "no"} onChange={e => setF({...f,hasTFN:e.target.value==="yes"})}>
+              <option value="yes">Yes — TFN on file</option>
+              <option value="no">No TFN — withhold at 47%</option>
+            </select>
+            {!f.hasTFN && <span className="fhint r">⚠️ ATO requires 47% withholding until TFN provided</span>}
+          </div>
+          <div className="fg">
             <label className="flbl">Notes (optional)</label>
             <input className="inp" placeholder="e.g. Kitchen hand, lunch service" value={f.notes} onChange={e => setF({...f,notes:e.target.value})} onKeyDown={e => e.key==="Enter" && add()}/>
           </div>
@@ -5509,10 +5586,10 @@ function DayWorkersTab({ showToast, workers, setWorkers }) {
             </div>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12 }}>
               {[
-                { lbl:"Effective Rate",  val:`${money(preview.effR)}/hr`, col:C.text,   sub: f.isWeekend ? "×1.75 weekend" : "+25% casual" },
-                { lbl:"Gross Pay",       val:money(preview.gross),        col:C.accent, sub:`${f.hours}h × ${money(preview.effR)}` },
-                { lbl:"Super (11.5%)",   val:money(preview.super),        col:C.blue,   sub:"Must be paid quarterly" },
-                { lbl:"PAYG Est. (~19%)",val:money(preview.payg),         col:C.yellow, sub:"Withhold from gross" },
+                { lbl:"Effective Rate",                                      val:`${money(preview.effR)}/hr`, col:C.text,   sub: f.isWeekend ? "×1.75 weekend" : "+25% casual" },
+                { lbl:"Gross Pay",                                           val:money(preview.gross),        col:C.accent, sub:`${f.hours}h × ${money(preview.effR)}` },
+                { lbl:`Super (SGC ${(preview.superR*100).toFixed(1)}%)`,     val:money(preview.super),        col:C.blue,   sub:"Must be paid quarterly" },
+                { lbl:`PAYG (ATO Scale 2${!f.hasTFN?" — 47%":""})`,         val:money(preview.payg),         col:C.yellow, sub:"Withhold from gross pay" },
               ].map((s,i) => (
                 <div key={i}>
                   <div className="mono" style={{ fontSize:16, fontWeight:700, color:s.col }}>{s.val}</div>
@@ -5598,7 +5675,7 @@ function DayWorkersTab({ showToast, workers, setWorkers }) {
 
       <div className="disc">
         <div className="d-ttl">⚠️ Day Worker Disclaimer</div>
-        <div className="d-txt">Pay calculations are estimates using standard casual loading (25%) and weekend/PH rates (×1.75). Actual rates may vary under the applicable Modern Award. Super is calculated at 11.5% of ordinary time earnings. PAYG is estimated at ~19% — actual withholding depends on the worker's tax situation. Always issue a payslip and report wages to the ATO. Consult a registered payroll provider for full compliance.</div>
+        <div className="d-txt">Pay calculations use standard casual loading (25%) and weekend/PH rates (×1.75). Actual rates may vary under the applicable Modern Award. Super is calculated at the current SGC rate on ordinary time earnings. PAYG uses ATO 2024-25 progressive Scale 2 rates (or 47% flat if no TFN provided). Always issue a payslip and report wages to the ATO. Consult a registered payroll provider for full compliance.</div>
       </div>
     </>
   );
@@ -6046,8 +6123,8 @@ function TaxSummaryPage({ revenue, expenses, employees, timesheets }) {
         <div className="bc">
           <div className="bctit" style={{ marginBottom:12 }}>PAYG & Super</div>
           <div className="bas-row"><span className="bas-lbl">Total Gross Wages</span><span className="bas-val">{money(totalWages)}</span></div>
-          <div className="bas-row"><span className="bas-lbl">Est. PAYG (~19%)</span><span className="bas-val" style={{ color:C.yellow }}>{money(totalPayg)}</span></div>
-          <div className="bas-row"><span className="bas-lbl">Est. Super (11.5%)</span><span className="bas-val" style={{ color:C.blue }}>{money(totalSuper)}</span></div>
+          <div className="bas-row"><span className="bas-lbl">PAYG Withheld (ATO Scale 2)</span><span className="bas-val" style={{ color:C.yellow }}>{money(totalPayg)}</span></div>
+          <div className="bas-row"><span className="bas-lbl">Super (SGC) (SGC)</span><span className="bas-val" style={{ color:C.blue }}>{money(totalSuper)}</span></div>
           <div className="bas-tot"><span className="bas-tot-lbl">Total Employment Cost</span><span className="bas-tot-val">{money(totalWages+totalPayg+totalSuper)}</span></div>
         </div>
       </div>
@@ -6371,7 +6448,7 @@ function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimeshe
             <div className="card">
               <div className="clbl">Total Super Obligation</div>
               <div className="cval b">{money(rows.reduce((s,t)=>s+t.super,0))}</div>
-              <div className="csub">11.5% of gross wages</div>
+              <div className="csub">SGC rate on gross wages</div>
             </div>
             <div className="card">
               <div className="clbl">Unpaid Super</div>
@@ -6383,7 +6460,7 @@ function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimeshe
           <div className="bc">
             <div className="bctit">Super & PAYG by Employee & Week</div>
             <table className="tbl">
-              <thead><tr><th>Employee</th><th>Week</th><th>Gross</th><th>Super (11.5%)</th><th>PAYG (~19%)</th><th>Total Labour</th><th>Super Paid?</th></tr></thead>
+              <thead><tr><th>Employee</th><th>Week</th><th>Gross</th><th>Super (SGC)</th><th>PAYG (ATO Scale 2)</th><th>Total Labour</th><th>Super Paid?</th></tr></thead>
               <tbody>
                 {rows.map(t => (
                   <tr key={t.id}>
@@ -7306,8 +7383,8 @@ function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, d
         <div className="pp-sec" style={{ marginBottom:0 }}>
           <div className="pp-sec-ttl">Wages & PAYG</div>
           <div className="pp-row"><span className="pp-lbl">Total Gross Wages</span><span className="pp-val">{money(d.totalWages)}</span></div>
-          <div className="pp-row"><span className="pp-lbl">Est. PAYG Withholding (~19%)</span><span className="pp-val">{money(d.totalPayg)}</span></div>
-          <div className="pp-row"><span className="pp-lbl">Est. Super (11.5%)</span><span className="pp-val">{money(d.totalSuper)}</span></div>
+          <div className="pp-row"><span className="pp-lbl">PAYG Withheld Withheld (ATO Scale 2)</span><span className="pp-val">{money(d.totalPayg)}</span></div>
+          <div className="pp-row"><span className="pp-lbl">Super (SGC) (SGC)</span><span className="pp-val">{money(d.totalSuper)}</span></div>
           <div className="pp-tot"><span>Total Employment Cost</span><span className="pp-tot-v">{money(d.totalWages+d.totalPayg+d.totalSuper)}</span></div>
         </div>
       </div>
@@ -7364,7 +7441,7 @@ function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, d
         {[
           { lbl:"Total Sales",         val:money(d.totalRev),   cls:"b" },
           { lbl:"Net GST Payable",     val:money(d.netGST),     cls:"y" },
-          { lbl:"Est. PAYG",           val:money(d.totalPayg),  cls:"" },
+          { lbl:"PAYG Withheld",           val:money(d.totalPayg),  cls:"" },
           { lbl:"Est. BAS Obligation", val:money(d.estBAS),     cls:"r" },
         ].map((c,i) => <div key={i} className="card"><div className="clbl">{c.lbl}</div><div className={`cval ${c.cls}`}>{c.val}</div></div>)}
       </div>
@@ -7380,8 +7457,8 @@ function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, d
         <div className="bc">
           <div className="bctit">Wages & Employment</div>
           <div className="bas-row"><span className="bas-lbl">Total Gross Wages</span><span className="bas-val">{money(d.totalWages)}</span></div>
-          <div className="bas-row"><span className="bas-lbl">Est. PAYG Withholding (~19%)</span><span className="bas-val" style={{ color:C.yellow }}>{money(d.totalPayg)}</span></div>
-          <div className="bas-row"><span className="bas-lbl">Est. Super (11.5%)</span><span className="bas-val" style={{ color:C.blue }}>{money(d.totalSuper)}</span></div>
+          <div className="bas-row"><span className="bas-lbl">PAYG Withheld Withheld (ATO Scale 2)</span><span className="bas-val" style={{ color:C.yellow }}>{money(d.totalPayg)}</span></div>
+          <div className="bas-row"><span className="bas-lbl">Super (SGC) (SGC)</span><span className="bas-val" style={{ color:C.blue }}>{money(d.totalSuper)}</span></div>
           <div className="bas-row"><span className="bas-lbl">Quarterly Insurance</span><span className="bas-val" style={{ color:C.purple }}>{money(d.totalIns)}</span></div>
           <div className="bas-tot"><span className="bas-tot-lbl">Total Employment Cost</span><span className="bas-tot-val">{money(d.totalWages+d.totalPayg+d.totalSuper)}</span></div>
         </div>
@@ -7466,8 +7543,8 @@ function AccountantPackPage({ revenue, expenses, timesheets, employees, insuranc
       <div className="pp-sec">
         <div className="pp-sec-ttl">Wages & Employment Costs</div>
         <div className="pp-row"><span className="pp-lbl">Total Gross Wages</span><span className="pp-val">{money(d.totalWages)}</span></div>
-        <div className="pp-row"><span className="pp-lbl">PAYG Withholding (~19%)</span><span className="pp-val">{money(d.totalPayg)}</span></div>
-        <div className="pp-row"><span className="pp-lbl">Super (11.5%)</span><span className="pp-val">{money(d.totalSuper)}</span></div>
+        <div className="pp-row"><span className="pp-lbl">PAYG Withheld (ATO Scale 2)</span><span className="pp-val">{money(d.totalPayg)}</span></div>
+        <div className="pp-row"><span className="pp-lbl">Super (SGC)</span><span className="pp-val">{money(d.totalSuper)}</span></div>
         <div className="pp-row"><span className="pp-lbl">Annual Insurance</span><span className="pp-val">{money(d.totalIns)}</span></div>
         <div className="pp-tot"><span>Total Labour + Insurance Cost</span><span className="pp-tot-v">{money(d.totalWages+d.totalPayg+d.totalSuper+d.totalIns)}</span></div>
       </div>

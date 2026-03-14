@@ -670,9 +670,9 @@ const SEED_TIMESHEETS = [
 ];
 
 const SEED_INSURANCE = [
-  { id:1, type:"Workers Compensation", annual:3400, notes:"Renewal due Oct 2025" },
-  { id:2, type:"Public Liability",     annual:1200, notes:"$10M cover" },
-  { id:3, type:"Equipment & Property", annual:2100, notes:"Fitout & kitchen equipment" },
+  { id:1, type:"Workers Compensation", annual:3400, notes:"Annual Workers Comp renewal", renewal:"2026-04-01" },
+  { id:2, type:"Public Liability",     annual:1200, notes:"$10M cover",                  renewal:"2026-05-15" },
+  { id:3, type:"Equipment & Property", annual:2100, notes:"Fitout & kitchen equipment",  renewal:"2026-06-30" },
 ];
 
 // Leave taken records  { eid, type: "annual"|"personal"|"lieu", date, hours, notes }
@@ -1513,7 +1513,23 @@ const analyseExpenses = expenses =>
 
 // Avatar
 const AVATAR_COLORS = ["#E05D44","#F0A500","#3B82F6","#10B981","#8B5CF6","#EC4899","#F97316","#06B6D4"];
-const avatarBg  = id  => AVATAR_COLORS[(id - 1) % AVATAR_COLORS.length];
+const avatarBg = (id, color) => color || AVATAR_COLORS[(id - 1) % AVATAR_COLORS.length];
+
+// Preset palette for employee color picker
+const EMP_COLOR_PALETTE = [
+  { col:"#E05D44", lbl:"Red"    },
+  { col:"#F97316", lbl:"Orange" },
+  { col:"#F0A500", lbl:"Amber"  },
+  { col:"#10B981", lbl:"Green"  },
+  { col:"#06B6D4", lbl:"Cyan"   },
+  { col:"#3B82F6", lbl:"Blue"   },
+  { col:"#6366F1", lbl:"Indigo" },
+  { col:"#8B5CF6", lbl:"Purple" },
+  { col:"#EC4899", lbl:"Pink"   },
+  { col:"#64748B", lbl:"Slate"  },
+  { col:"#0D9488", lbl:"Teal"   },
+  { col:"#D97706", lbl:"Gold"   },
+];
 const initials  = name => name.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2);
 
 // ── Report data builders ──────────────────────────────────
@@ -2214,34 +2230,159 @@ function Sidebar({ page, setPage, onLogout, flagCount }) {
 //  DASHBOARD
 // ════════════════════════════════════════════════════════════
 function DashboardPage({ revenue, expenses, employees, timesheets, insurance, setPage }) {
-  const rows      = annotateTimesheets(employees, timesheets);
-  const totalRev  = revenue.reduce((s,r) => s + r.amount, 0);
+  // ── Month selector ────────────────────────────────────────
+  const [selMonth, setSelMonth] = useState(() => todayStr.slice(0,7)); // "YYYY-MM"
+  const [y, m] = selMonth.split("-").map(Number);
+
+  const prevMonth = () => {
+    const d = new Date(y, m-2, 1);
+    setSelMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
+  };
+  const nextMonth = () => {
+    const d = new Date(y, m, 1);
+    setSelMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
+  };
+  const isCurrentMonth = selMonth === todayStr.slice(0,7);
+  const monthLabel = new Date(y, m-1, 1).toLocaleString("en-AU", { month:"long", year:"numeric" });
+
+  // ── Filter data to selected month ────────────────────────
+  const revMonth  = revenue.filter(r  => r.date.slice(0,7) === selMonth);
+  const expMonth  = expenses.filter(e => e.date.slice(0,7) === selMonth);
+  const tsMonth   = annotateTimesheets(employees,
+    timesheets.filter(t => weekToMonth(t.week) === selMonth));
+
+  // ── Same calcs but scoped to selected month ──────────────
+  const totalRev  = revMonth.reduce((s,r) => s + r.amount, 0);
   const gstColl   = totalRev / 11;
-  const gstCreds  = expenses.filter(e => e.gst).reduce((s,e) => s + e.amount / 11, 0);
+  const gstCreds  = expMonth.filter(e => e.gst).reduce((s,e) => s + e.amount/11, 0);
   const gstPay    = gstColl - gstCreds;
-  const totalWages= rows.reduce((s,t) => s + t.gross, 0);
-  const totalPayg = rows.reduce((s,t) => s + t.payg, 0);
+  const totalWages= tsMonth.reduce((s,t) => s + t.gross, 0);
+  const totalPayg = tsMonth.reduce((s,t) => s + t.payg,  0);
   const estBAS    = gstPay + totalPayg;
-  const wklyRes   = estBAS / 13;
+  const wklyRes   = estBAS / 4.33;
   const totalIns  = insurance.reduce((s,i) => s + i.annual, 0);
-  const todayR    = revenue[revenue.length - 1];
-  const todayTot  = todayR ? todayR.amount : 0;
+  const totalSuper= tsMonth.reduce((s,t) => s + t.super, 0);
+
+  // ── Last month comparison ─────────────────────────────────
+  const prevMonthStr = (() => {
+    const d = new Date(y, m-2, 1);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+  })();
+  const revPrev   = revenue.filter(r => r.date.slice(0,7) === prevMonthStr).reduce((s,r) => s+r.amount, 0);
+  const wagesPrev = annotateTimesheets(employees,
+    timesheets.filter(t => weekToMonth(t.week) === prevMonthStr)).reduce((s,t) => s+t.gross, 0);
+
+  const delta = (cur, prev) => {
+    if (!prev) return null;
+    const pct = ((cur - prev) / prev * 100).toFixed(1);
+    const up  = cur >= prev;
+    return { pct, up, label: `${up?"+":""}${pct}% vs last month` };
+  };
+  const revDelta   = delta(totalRev,   revPrev);
+  const wagesDelta = delta(totalWages, wagesPrev);
+
+  const [showMonthPicker, setShowMonthPicker] = useState(false);
+
+  // Generate last 18 months for picker
+  const monthOptions = Array.from({length:18}, (_,i) => {
+    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+    const val = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+    const lbl = d.toLocaleString("en-AU", { month:"short" });
+    const yr  = d.getFullYear();
+    return { val, lbl, yr };
+  }).reverse();
+
   const status    = gstPay < gstColl * 0.5 ? "g" : gstPay < gstColl * 0.8 ? "y" : "r";
   const statusMsg = { g:"Tracking well — tax reserves look healthy.", y:"Watch expenses — GST payable is growing.", r:"Tax shortfall risk — increase your weekly reserve." };
   const analysed  = analyseExpenses(expenses);
-  const flags     = analysed.filter(e => e.gstStatus === "missing-invoice").length + timesheets.filter(t => !t.super_paid).length;
+  const flags     = analysed.filter(e => e.gstStatus === "missing-invoice").length
+                  + timesheets.filter(t => !t.super_paid).length;
+  const expiringPolicies = insurance.filter(i => {
+    if (!i.renewal) return false;
+    const days = Math.ceil((new Date(i.renewal) - new Date()) / 86400000);
+    return days <= 60 && days >= 0;
+  });
+  const totalFlags = flags + expiringPolicies.length;
 
   return (
     <>
       <div className="hdr">
         <div className="hdr-left">
           <div className="ptitle">Dashboard</div>
-          <div className="psub">My Business · {today.toLocaleString("default",{month:"long"})} {today.getFullYear()}</div>
+          <div className="psub">My Business · {monthLabel}</div>
         </div>
         <div className="hdr-right">
           <div className="chip">📅 {quarter}</div>
-          <div className="av">GD</div>
         </div>
+      </div>
+
+      {/* ── Month Picker Bar ── */}
+      <div style={{marginBottom:18}}>
+        {/* Current month display + toggle */}
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom: showMonthPicker ? 10 : 0}}>
+          <button onClick={prevMonth} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,color:C.muted,fontSize:15,padding:"5px 10px",cursor:"pointer",lineHeight:1}}>‹</button>
+          <button
+            onClick={() => setShowMonthPicker(v => !v)}
+            style={{
+              flex:1, display:"flex", alignItems:"center", justifyContent:"space-between",
+              background:C.surface, border:`1px solid ${showMonthPicker ? C.accent : C.border}`,
+              borderRadius:9, padding:"8px 14px", cursor:"pointer", fontFamily:"inherit",
+            }}
+          >
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:16}}>📅</span>
+              <div style={{textAlign:"left"}}>
+                <div style={{fontSize:14,fontWeight:700,color:C.text}}>{monthLabel}</div>
+                <div style={{fontSize:10,color:C.muted}}>
+                  {isCurrentMonth ? "Current month" : "Viewing past data"}
+                </div>
+              </div>
+            </div>
+            <span style={{color:C.muted,fontSize:11}}>{showMonthPicker ? "▲ Close" : "▼ Change"}</span>
+          </button>
+          <button onClick={nextMonth} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,color:C.muted,fontSize:15,padding:"5px 10px",cursor:"pointer",lineHeight:1}}>›</button>
+          {!isCurrentMonth && (
+            <button onClick={() => { setSelMonth(todayStr.slice(0,7)); setShowMonthPicker(false); }}
+              style={{background:"rgba(143,203,114,.12)",border:`1px solid ${C.accent}`,borderRadius:7,color:C.accent,fontSize:11,fontWeight:700,padding:"7px 12px",cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+              Today
+            </button>
+          )}
+        </div>
+
+        {/* Expandable month grid */}
+        {showMonthPicker && (
+          <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:11,padding:"14px 16px"}}>
+            {/* Group by year */}
+            {[...new Set(monthOptions.map(o => o.yr))].map(yr => (
+              <div key={yr} style={{marginBottom:12}}>
+                <div style={{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:".8px",textTransform:"uppercase",marginBottom:7}}>{yr}</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                  {monthOptions.filter(o => o.yr === yr).map(o => {
+                    const isSel = o.val === selMonth;
+                    const isCur = o.val === todayStr.slice(0,7);
+                    const hasData = revenue.some(r => r.date.slice(0,7) === o.val);
+                    return (
+                      <button key={o.val} onClick={() => { setSelMonth(o.val); setShowMonthPicker(false); }}
+                        style={{
+                          padding:"6px 12px", borderRadius:7, cursor:"pointer",
+                          fontFamily:"inherit", fontSize:12, fontWeight: isSel ? 700 : 500,
+                          border: isSel ? `1px solid ${C.accent}` : isCur ? `1px solid ${C.border}` : `1px solid transparent`,
+                          background: isSel ? "rgba(143,203,114,.18)" : isCur ? C.surfaceAlt : "transparent",
+                          color: isSel ? C.accent : C.text,
+                          position:"relative",
+                        }}>
+                        {o.lbl}
+                        {hasData && !isSel && (
+                          <span style={{position:"absolute",top:3,right:3,width:4,height:4,borderRadius:"50%",background:C.accent}}/>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className={`banner ${status}`}>
@@ -2249,12 +2390,14 @@ function DashboardPage({ revenue, expenses, employees, timesheets, insurance, se
         {statusMsg[status]}
       </div>
 
+      {/* Revenue & Tax cards */}
       <div className="g4">
         {[
-          { lbl:"Today's Revenue",  val:money(todayTot),  cls:"",  sub:"Dine-in + Takeaway + Delivery" },
-          { lbl:"Monthly Revenue",  val:money(totalRev),  cls:"b", sub:`${revenue.length} days tracked` },
-          { lbl:"Est. GST Payable", val:money(gstPay),    cls:gstPay > 2000 ? "r":"y", sub:"Collected minus credits" },
-          { lbl:"Estimated BAS",    val:money(estBAS),    cls:"r", sub:`${quarter} estimate` },
+          { lbl:"Monthly Revenue",  val:money(totalRev),  cls:"b",
+            sub: revDelta ? <span style={{color: revDelta.up ? C.accent : C.red, fontSize:10}}>{revDelta.label}</span> : `${revMonth.length} days tracked` },
+          { lbl:"GST Collected",    val:money(gstColl),   cls:"y", sub:"1/11 of revenue" },
+          { lbl:"GST Payable",      val:money(gstPay),    cls:gstPay > 2000 ? "r":"y", sub:"Collected minus credits" },
+          { lbl:"Est. BAS",         val:money(estBAS),    cls:"r", sub:`${quarter} estimate` },
         ].map((c,i) => (
           <div key={i} className="card">
             <div className="clbl">{c.lbl}</div>
@@ -2264,12 +2407,14 @@ function DashboardPage({ revenue, expenses, employees, timesheets, insurance, se
         ))}
       </div>
 
+      {/* Staff & Wages cards */}
       <div className="g4">
         {[
-          { lbl:"Active Staff",       val:employees.filter(e=>e.id).length, cls:"t", sub:`${employees.length} total employees` },
-          { lbl:"Total Gross Wages",  val:money(totalWages),                cls:"",  sub:"All logged timesheets" },
-          { lbl:"Super Owed (SGC)",    val:money(rows.reduce((s,t)=>s+t.super,0)), cls:"b", sub:"SGC rate on gross wages" },
-          { lbl:"Annual Insurance",   val:money(totalIns),                  cls:"p", sub:`${insurance.length} policies` },
+          { lbl:"Active Staff",     val:employees.length, cls:"t", sub:`${tsMonth.length} timesheet entries` },
+          { lbl:"Gross Wages",      val:money(totalWages),cls:"",
+            sub: wagesDelta ? <span style={{color: wagesDelta.up ? C.red : C.accent, fontSize:10}}>{wagesDelta.label}</span> : "This month" },
+          { lbl:"Super Owed (SGC)", val:money(totalSuper),cls:"b", sub:"SGC on gross wages" },
+          { lbl:"Annual Insurance", val:money(totalIns),  cls:"p", sub:`${insurance.length} policies` },
         ].map((c,i) => (
           <div key={i} className="card">
             <div className="clbl">{c.lbl}</div>
@@ -2281,30 +2426,47 @@ function DashboardPage({ revenue, expenses, employees, timesheets, insurance, se
 
       <div className="g2">
         <div className="bc">
-          <div className="bctit">Revenue Breakdown</div>
+          <div className="bctit">Revenue vs Expenses — {monthLabel}</div>
           <DonutChart data={[
-            { label:"Total Revenue", v:revenue.reduce((s,r)=>s+r.amount,0), c:C.blue },
+            { label:"Revenue",  v:totalRev,                                       c:C.blue },
+            { label:"Expenses", v:expMonth.reduce((s,e)=>s+e.amount,0),           c:C.red  },
+            { label:"Wages",    v:totalWages,                                     c:C.yellow },
           ]}/>
         </div>
         <div className="bc">
-          <div className="bctit">Daily Revenue (Last 5 Days)</div>
-          <BarChart data={revenue.slice(-5).map((r,i) => ({
-            label:`Jul ${i+1}`, v:r.amount
+          <div className="bctit">Daily Revenue — {monthLabel}</div>
+          <BarChart data={revMonth.slice(-7).map(r => ({
+            label: r.date.slice(8), v:r.amount
           }))}/>
         </div>
       </div>
 
       <div className="reserve">
-        <div className="r-lbl">🏦 Weekly Tax Reserve Recommendation</div>
+        <div className="r-lbl">🏦 Weekly Tax Reserve — {monthLabel}</div>
         <div className="r-big">{money(wklyRes)}</div>
-        <div className="r-sub">Set aside <strong>{money(wklyRes)}</strong>/week → <strong>{money(wklyRes*13)}</strong> ready by BAS due date.</div>
+        <div className="r-sub">Set aside <strong>{money(wklyRes)}</strong>/week → <strong>{money(wklyRes*4.33)}</strong> ready by BAS due date.</div>
       </div>
 
-      {flags > 0 && (
+      {expiringPolicies.length > 0 && (
+        <div className="alert al-y" style={{ cursor:"pointer" }} onClick={() => setPage("insurance")}>
+          <span className="al-ico">🛡️</span>
+          <div>
+            <div className="al-ttl">Insurance renewal due soon</div>
+            <div className="al-msg">
+              {expiringPolicies.map(i => {
+                const days = Math.ceil((new Date(i.renewal) - new Date()) / 86400000);
+                return `${i.type} — ${days <= 30 ? `⚠️ ${days} days` : `${days} days`}`;
+              }).join(" · ")} · Click to review →
+            </div>
+          </div>
+        </div>
+      )}
+
+      {totalFlags > 0 && (
         <div className="alert al-y" style={{ cursor:"pointer" }} onClick={() => setPage("taxsaver")}>
           <span className="al-ico">🔍</span>
           <div>
-            <div className="al-ttl">Audit Ready found {flags} issue{flags>1?"s":""} to review</div>
+            <div className="al-ttl">Audit Ready found {totalFlags} issue{totalFlags>1?"s":""} to review</div>
             <div className="al-msg">Missing invoices or unpaid super detected. Click to review →</div>
           </div>
         </div>
@@ -2317,14 +2479,38 @@ function DashboardPage({ revenue, expenses, employees, timesheets, insurance, se
 //  REVENUE PAGE
 // ════════════════════════════════════════════════════════════
 function RevenuePage({ revenue, setRevenue, showToast }) {
-  const [f, setF] = useState({ date:todayStr, amount:"" });
+  const [f,       setF]       = useState({ date:todayStr, amount:"" });
+  const [editId,  setEditId]  = useState(null); // null = add mode, id = edit mode
   const total = parseFloat(f.amount) || 0;
 
-  const add = () => {
+  const save = () => {
     if (!total) return;
-    setRevenue(p => [...p, { id:Date.now(), date:f.date, amount:total }]);
+    if (editId) {
+      setRevenue(p => p.map(r => r.id === editId ? { ...r, date:f.date, amount:total } : r));
+      showToast("Entry updated!");
+      setEditId(null);
+    } else {
+      setRevenue(p => [...p, { id:Date.now(), date:f.date, amount:total }]);
+      showToast("Revenue entry added!");
+    }
     setF({ date:todayStr, amount:"" });
-    showToast("Revenue entry added!");
+  };
+
+  const startEdit = r => {
+    setEditId(r.id);
+    setF({ date:r.date, amount:String(r.amount) });
+    window.scrollTo({ top:0, behavior:"smooth" });
+  };
+
+  const cancelEdit = () => {
+    setEditId(null);
+    setF({ date:todayStr, amount:"" });
+  };
+
+  const del = id => {
+    setRevenue(p => p.filter(x => x.id !== id));
+    if (editId === id) cancelEdit();
+    showToast("Entry deleted.");
   };
 
   const totalAll = revenue.reduce((s,r) => s + r.amount, 0);
@@ -2343,8 +2529,13 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
         ].map((c,i) => <div key={i} className="card"><div className="clbl">{c.lbl}</div><div className={`cval ${c.cls}`}>{c.val}</div></div>)}
       </div>
 
-      <div className="fsec">
-        <div className="ftit">Add Daily Revenue</div>
+      <div className="fsec" style={{ border: editId ? `1px solid ${C.yellow}` : undefined }}>
+        <div className="ftit">{editId ? "✏️ Edit Entry" : "Add Daily Revenue"}</div>
+        {editId && (
+          <div style={{ fontSize:11, color:C.yellow, marginBottom:10, background:"rgba(212,168,67,.08)", borderRadius:6, padding:"6px 10px" }}>
+            Editing existing entry — make your changes and click Save.
+          </div>
+        )}
         <div className="frow2">
           <div className="fg"><label className="flbl">Date</label><input className="inp" type="date" value={f.date} onChange={e => setF({...f,date:e.target.value})}/></div>
           <div className="fg">
@@ -2354,8 +2545,11 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
           </div>
         </div>
         <div className="fbtns">
-          <button className="btn" onClick={add}>Add Entry</button>
-          <button className="btn-g" onClick={() => setF({date:todayStr, amount:""})}>Clear</button>
+          <button className="btn" onClick={save}>{editId ? "Save Changes" : "Add Entry"}</button>
+          {editId
+            ? <button className="btn-g" onClick={cancelEdit}>Cancel</button>
+            : <button className="btn-g" onClick={() => setF({date:todayStr, amount:""})}>Clear</button>
+          }
           <div style={{ marginLeft:"auto" }}>
             <div className="clbl">Total</div>
             <div className="mono" style={{ fontSize:20, fontWeight:700, color:C.green }}>{money(total)}</div>
@@ -2366,16 +2560,19 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
       <div className="bc">
         <div className="bctit">Revenue History</div>
         <table className="tbl">
-          <thead><tr><th>Date</th><th>Total Income</th><th>GST Collected</th><th></th></tr></thead>
+          <thead><tr><th>Date</th><th>Total Income</th><th>GST Collected</th><th style={{textAlign:"center"}}>Actions</th></tr></thead>
           <tbody>
             {revenue.length === 0
               ? <tr><td colSpan={4}><div className="empty-state"><div className="empty-icon">📭</div><div className="empty-txt">No entries yet.</div></div></td></tr>
               : revenue.slice().reverse().map(r => (
-                  <tr key={r.id}>
+                  <tr key={r.id} style={{ background: editId===r.id ? "rgba(212,168,67,.07)" : undefined }}>
                     <td className="mono">{r.date}</td>
                     <td style={{ fontWeight:700 }}>{money(r.amount)}</td>
                     <td style={{ color:C.yellow }}>{money(r.amount/11)}</td>
-                    <td><button className="btn-ic" onClick={() => setRevenue(p => p.filter(x => x.id !== r.id))}>🗑️</button></td>
+                    <td style={{ textAlign:"center", whiteSpace:"nowrap" }}>
+                      <button className="btn-ic" title="Edit" onClick={() => startEdit(r)}>✏️</button>
+                      <button className="btn-ic" title="Delete" onClick={() => del(r.id)}>🗑️</button>
+                    </td>
                   </tr>
                 ))
             }
@@ -2790,6 +2987,18 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
     catSearchRef.current?.focus();
   };
 
+  // One-click direct add — bypasses form, used by templates & recurring with fixed amounts
+  const addDirect = ({ cat, amount, desc, gst, invoice }) => {
+    if (!amount || !desc) return;
+    setExpenses(p => [...p, {
+      id:Date.now(), date:todayStr, cat,
+      amount:parseFloat(amount)||0,
+      desc, gst:!!gst, invoice:!!invoice,
+    }]);
+    trackCatUsage(cat);
+    showToast(`✓ Added: ${desc} — ${money(parseFloat(amount)||0)}`);
+  };
+
   // ── Stats ────────────────────────────────────────────────
   const totalExp    = expenses.reduce((s,e) => s + e.amount, 0);
   const gstCreds    = expenses.filter(e => e.gst && e.invoice).reduce((s,e) => s + e.amount/11, 0);
@@ -2972,38 +3181,25 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
                 <div style={{ flex:1, minWidth:0 }}>
                   <div style={{ fontSize:13, fontWeight:600, textTransform:"capitalize" }}>{rule.label}</div>
                   <div style={{ fontSize:11, color:C.dim, marginTop:1 }}>
-                    {CAT_CONFIG[rule.cat]?.label} · Last: {money(rule.amount)}
-                    {" · "}GST: {rule.gst?"yes":"no"} · Invoice: {rule.invoice?"yes":"no"}
+                    {CAT_CONFIG[rule.cat]?.label} · {money(rule.amount)} · GST: {rule.gst?"yes":"no"} · Invoice: {rule.invoice?"yes":"no"}
                   </div>
                 </div>
-                {confirmingRule?.fp === rule.fp ? (
-                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                    <span style={{ fontSize:11, color:C.dim }}>Amount $</span>
-                    <input type="number" id="recur-confirm-amt"
-                      value={confirmingRule.amount}
-                      onChange={e => setConfirmingRule(r => ({...r, amount: e.target.value}))}
-                      onKeyDown={e => { if(e.key==="Enter") { applyRecurringRule({...rule, amount: parseFloat(confirmingRule.amount)||rule.amount}); } if(e.key==="Escape") setConfirmingRule(null); }}
-                      style={{ width:80, padding:"4px 8px", borderRadius:6, border:`1px solid ${C.border}`, background:C.surfaceAlt, color:C.text, fontSize:13, fontFamily:"DM Mono,monospace" }}
-                      autoFocus/>
-                    <button onClick={() => applyRecurringRule({...rule, amount: parseFloat(confirmingRule.amount)||rule.amount})}
-                      style={{ background:"#3DC9A0", color:"#0C0F0D", border:"none", borderRadius:7, padding:"6px 13px", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>
-                      Fill form ↵
-                    </button>
-                    <button onClick={() => setConfirmingRule(null)}
-                      style={{ background:"none", border:"none", fontSize:12, color:C.muted, cursor:"pointer" }}>✕</button>
-                  </div>
-                ) : (
-                  <div style={{ display:"flex", gap:6 }}>
-                    <button onClick={() => { setConfirmingRule({ fp:rule.fp, amount: String(rule.amount) }); }}
-                      style={{ background:"rgba(61,201,160,.12)", color:"#3DC9A0", border:"1px solid rgba(61,201,160,.35)", borderRadius:7, padding:"6px 13px", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
-                      ✓ Log now
-                    </button>
-                    <button onClick={() => saveRecurringRules(recurringRules.map(r => r.fp===rule.fp ? {...r, active:false} : r))}
-                      style={{ background:"none", border:`1px solid ${C.border}`, borderRadius:7, padding:"6px 9px", fontSize:11, color:C.muted, cursor:"pointer", fontFamily:"inherit" }}>
-                      Pause
-                    </button>
-                  </div>
-                )}
+                <div style={{ display:"flex", gap:6 }}>
+                  {/* ⚡ One-click: add directly with last amount */}
+                  <button onClick={() => addDirect({ cat:rule.cat, amount:rule.amount, desc:rule.label, gst:rule.gst, invoice:rule.invoice })}
+                    style={{ background:"rgba(61,201,160,.15)", color:"#3DC9A0", border:"1px solid rgba(61,201,160,.45)", borderRadius:7, padding:"6px 13px", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
+                    ⚡ {money(rule.amount)}
+                  </button>
+                  {/* Fill form: use different amount */}
+                  <button onClick={() => applyRecurringRule(rule)}
+                    style={{ background:"none", border:`1px solid ${C.border}`, borderRadius:7, padding:"6px 10px", fontSize:11, color:C.muted, cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
+                    Edit →
+                  </button>
+                  <button onClick={() => saveRecurringRules(recurringRules.map(r => r.fp===rule.fp ? {...r, active:false} : r))}
+                    style={{ background:"none", border:`1px solid ${C.border}`, borderRadius:7, padding:"6px 9px", fontSize:11, color:C.dim, cursor:"pointer", fontFamily:"inherit" }}>
+                    Pause
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -3052,24 +3248,47 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
           )}
         </div>
 
-        {/* ── Favourites quick bar (top 4 recently used) ── */}
-        {recentTemplates.length > 0 && !showAllTemplates && (
+        {/* ── Templates quick bar — all templates, sorted by recent use ── */}
+        {templates.length > 0 && (
           <div style={{ marginBottom:14 }}>
-            <div style={{ fontSize:10, color:C.dim, textTransform:"uppercase", letterSpacing:".6px", marginBottom:7 }}>⭐ Quick-add favourites</div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:7 }}>
+              <div style={{ fontSize:10, color:C.dim, textTransform:"uppercase", letterSpacing:".6px" }}>⭐ Templates — click to fill form, ⚡ to add instantly</div>
+              <button onClick={() => setShowAllTemplates(v=>!v)}
+                style={{ fontSize:10, color:C.muted, background:"none", border:"none", cursor:"pointer", fontFamily:"inherit" }}>
+                {showAllTemplates ? "▲ less" : `▼ ${templates.length > 4 ? `show all ${templates.length}` : ""}`}
+              </button>
+            </div>
             <div style={{ display:"flex", gap:7, flexWrap:"wrap" }}>
-              {recentTemplates.map(tpl => (
-                <button key={tpl.id} onClick={() => applyTemplate(tpl)}
-                  style={{ border:`1.5px solid rgba(212,168,67,.4)`, background:"rgba(212,168,67,.07)", color:C.text, borderRadius:9, padding:"7px 13px", fontSize:12, fontFamily:"inherit", cursor:"pointer", display:"flex", alignItems:"center", gap:6, maxWidth:220, transition:"all .15s", position:"relative" }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor=C.yellow; e.currentTarget.style.background="rgba(212,168,67,.12)"; }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor="rgba(212,168,67,.4)"; e.currentTarget.style.background="rgba(212,168,67,.07)"; }}>
-                  <span style={{ fontSize:16 }}>{CAT_CONFIG[tpl.cat]?.emoji}</span>
-                  <div style={{ textAlign:"left" }}>
-                    <div style={{ fontWeight:700, fontSize:12, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:140 }}>{tpl.name}</div>
-                    <div style={{ fontSize:10, color:C.dim, marginTop:1 }}>
-                      {tpl.amount ? `$${tpl.amount} · ` : "variable · "}{CAT_CONFIG[tpl.cat]?.label}
+              {(showAllTemplates ? templates : [...templates].sort((a,b) => {
+                if (b.lastUsed && a.lastUsed) return b.lastUsed.localeCompare(a.lastUsed);
+                if (b.lastUsed) return 1; if (a.lastUsed) return -1;
+                return (b.usageCount||0)-(a.usageCount||0);
+              }).slice(0,8)).map(tpl => (
+                <div key={tpl.id} style={{ display:"flex", borderRadius:9, border:`1.5px solid rgba(212,168,67,.4)`, overflow:"hidden" }}>
+                  {/* Fill form button */}
+                  <button onClick={() => applyTemplate(tpl)}
+                    style={{ background:"rgba(212,168,67,.07)", color:C.text, border:"none", padding:"7px 11px", fontSize:12, fontFamily:"inherit", cursor:"pointer", display:"flex", alignItems:"center", gap:6, transition:"all .15s" }}
+                    onMouseEnter={e => e.currentTarget.style.background="rgba(212,168,67,.15)"}
+                    onMouseLeave={e => e.currentTarget.style.background="rgba(212,168,67,.07)"}>
+                    <span style={{ fontSize:15 }}>{CAT_CONFIG[tpl.cat]?.emoji}</span>
+                    <div style={{ textAlign:"left" }}>
+                      <div style={{ fontWeight:700, fontSize:11, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:120 }}>{tpl.name}</div>
+                      <div style={{ fontSize:9.5, color:C.dim, marginTop:1 }}>
+                        {tpl.amount ? `$${tpl.amount}` : "variable"} · {CAT_CONFIG[tpl.cat]?.label}
+                      </div>
                     </div>
-                  </div>
-                </button>
+                  </button>
+                  {/* ⚡ One-click add (only for fixed amount templates) */}
+                  {tpl.amount && (
+                    <button onClick={() => addDirect({ cat:tpl.cat, amount:tpl.amount, desc:tpl.desc||(tpl.name), gst:tpl.gst==="yes", invoice:tpl.invoice==="yes" })}
+                      title={`Add ${tpl.name} — $${tpl.amount} directly`}
+                      style={{ background:"rgba(212,168,67,.18)", color:C.yellow, border:"none", borderLeft:`1px solid rgba(212,168,67,.35)`, padding:"7px 10px", fontSize:13, cursor:"pointer", fontFamily:"inherit", fontWeight:700 }}
+                      onMouseEnter={e => e.currentTarget.style.background="rgba(212,168,67,.32)"}
+                      onMouseLeave={e => e.currentTarget.style.background="rgba(212,168,67,.18)"}>
+                      ⚡
+                    </button>
+                  )}
+                </div>
               ))}
             </div>
           </div>
@@ -3493,9 +3712,66 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
         )}
       </div>
 
+      {/* ── Monthly trend + category split — always visible ── */}
+      {expenses.length > 0 && (
+        <div className="g2" style={{ marginBottom:16 }}>
+          {/* Monthly spend bar chart */}
+          <div className="bc" style={{ marginBottom:0 }}>
+            <div className="bctit">Monthly Spend — Last 6 Months</div>
+            {monthlyData.every(m => m.v === 0)
+              ? <div style={{ fontSize:12, color:C.dim, padding:"16px 0", textAlign:"center" }}>No data in this period yet.</div>
+              : (
+                <>
+                  <BarChart data={monthlyData}/>
+                  <div style={{ display:"flex", gap:10, marginTop:12, flexWrap:"wrap" }}>
+                    {[
+                      { lbl:"Highest",  val:money(Math.max(...monthlyData.map(m=>m.v))),                                                               col:C.red   },
+                      { lbl:"Lowest",   val:money(Math.min(...monthlyData.filter(m=>m.v>0).map(m=>m.v)) || 0),                                         col:C.green },
+                      { lbl:"Avg/month",val:money(monthlyData.filter(m=>m.v>0).reduce((s,m)=>s+m.v,0) / (monthlyData.filter(m=>m.v>0).length||1)),    col:C.blue  },
+                    ].map((s,i) => (
+                      <div key={i} style={{ background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:8, padding:"8px 12px", flex:"1 1 80px" }}>
+                        <div style={{ fontSize:9.5, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:3 }}>{s.lbl}</div>
+                        <div className="mono" style={{ fontSize:15, fontWeight:700, color:s.col }}>{s.val}</div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )
+            }
+          </div>
+
+          {/* Top categories donut */}
+          <div className="bc" style={{ marginBottom:0 }}>
+            <div className="bctit">Top Categories</div>
+            {byCat.length === 0
+              ? <div style={{ fontSize:12, color:C.dim, padding:"16px 0", textAlign:"center" }}>No data yet.</div>
+              : (
+                <>
+                  <DonutChart data={byCat.slice(0,5).map((d,i) => ({ label:d.label, v:d.v, c:[C.accent,C.teal,C.blue,C.yellow,C.red][i] }))}/>
+                  <div style={{ display:"flex", flexDirection:"column", gap:5, marginTop:10 }}>
+                    {byCat.slice(0,5).map((d,i) => {
+                      const pct  = totalExp > 0 ? (d.v/totalExp*100) : 0;
+                      const cols = [C.accent,C.teal,C.blue,C.yellow,C.red];
+                      return (
+                        <div key={i} style={{ display:"flex", alignItems:"center", gap:8 }}>
+                          <div style={{ width:8, height:8, borderRadius:"50%", background:cols[i], flexShrink:0 }}/>
+                          <div style={{ fontSize:11, color:C.muted, flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{d.label}</div>
+                          <div className="mono" style={{ fontSize:11, fontWeight:700, flexShrink:0 }}>{money(d.v)}</div>
+                          <div style={{ fontSize:10, color:C.dim, width:32, flexShrink:0, textAlign:"right" }}>{pct.toFixed(0)}%</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )
+            }
+          </div>
+        </div>
+      )}
+
       {/* ── Tabs ── */}
       <div style={{ display:"flex", gap:6, marginBottom:14 }}>
-        {[["list","📋 List"],["charts","📊 Charts"]].map(([t,lbl]) => (
+        {[["list","📋 List"],["charts","📊 Full Charts"]].map(([t,lbl]) => (
           <button key={t} onClick={() => setTab(t)} style={{
             padding:"7px 16px", borderRadius:8, fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit",
             background: tab===t ? C.accent : C.surface,
@@ -3672,7 +3948,7 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
 const BLANK_EMP = {
   name:"", email:"", phone:"", dob:"", nok_name:"", nok_phone:"",
   role:"", type:"full-time", rate:"", std_hrs:"38",
-  start:todayStr, tfn:"yes", superfund:"",
+  start:todayStr, tfn:"yes", superfund:"", color:"",
 };
 
 function EmployeeModal({ emp, onSave, onClose }) {
@@ -3706,6 +3982,33 @@ function EmployeeModal({ emp, onSave, onClose }) {
           <div className="fg"><label className="flbl">Email Address</label><input className="inp" type="email" placeholder="name@email.com" value={f.email} onChange={e => setF({...f,email:e.target.value})}/></div>
           <div className="fg"><label className="flbl">Phone Number</label><input className="inp" placeholder="04xx xxx xxx" value={f.phone} onChange={e => setF({...f,phone:e.target.value})}/></div>
           <div className="fg"><label className="flbl">Date of Birth</label><input className="inp" type="date" value={f.dob} onChange={e => setF({...f,dob:e.target.value})}/>{f.dob && <span className="fhint">Age: {calcAge(f.dob)}</span>}</div>
+        </div>
+
+        {/* Avatar colour picker */}
+        <div className="fg" style={{ marginBottom:14 }}>
+          <label className="flbl">Avatar Colour</label>
+          <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap", marginTop:6 }}>
+            {/* Preview */}
+            <div style={{ width:36, height:36, borderRadius:"50%", background: f.color || avatarBg(emp?.id||1, ''), display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:700, color:"#fff", flexShrink:0, boxShadow:"0 0 0 2px rgba(255,255,255,.15)" }}>
+              {f.name ? f.name.split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase() : "?"}
+            </div>
+            {/* Colour swatches */}
+            <div style={{ display:"flex", gap:7, flexWrap:"wrap" }}>
+              {EMP_COLOR_PALETTE.map(({ col, lbl }) => (
+                <button key={col} title={lbl} onClick={() => setF({...f, color: f.color===col ? "" : col})}
+                  style={{ width:26, height:26, borderRadius:"50%", background:col, border: f.color===col ? "2.5px solid #fff" : "2px solid transparent", outline: f.color===col ? `2px solid ${col}` : "none", cursor:"pointer", transition:"all .12s", padding:0 }}/>
+              ))}
+              {/* Custom colour input */}
+              <label title="Custom colour" style={{ width:26, height:26, borderRadius:"50%", background: f.color && !EMP_COLOR_PALETTE.find(p=>p.col===f.color) ? f.color : "conic-gradient(red,yellow,lime,cyan,blue,magenta,red)", border:`2px solid ${C.border}`, cursor:"pointer", overflow:"hidden", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                <input type="color" value={f.color||"#3B82F6"} onChange={e => setF({...f,color:e.target.value})} style={{ opacity:0, position:"absolute", width:0, height:0 }}/>
+              </label>
+            </div>
+            {f.color && (
+              <button onClick={() => setF({...f,color:""})} style={{ fontSize:10, color:C.muted, background:"none", border:"none", cursor:"pointer", fontFamily:"inherit" }}>
+                Reset
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="m-sec">Next of Kin</div>
@@ -3786,8 +4089,16 @@ function EmployeeModal({ emp, onSave, onClose }) {
 // ════════════════════════════════════════════════════════════
 //  TIMESHEET MODAL
 // ════════════════════════════════════════════════════════════
-function TimesheetModal({ employees, onSave, onClose }) {
-  const [f, setF] = useState({ eid:"", week:"2025-W29", std_hrs:"", ot_hrs:"0", wknd_hrs:"0", super_paid:"no" });
+function TimesheetModal({ employees, onSave, onClose, initial }) {
+  const isEdit = !!(initial?.id);
+  const [f, setF] = useState(() => ({
+    eid:       String(initial?.eid  || ""),
+    week:      initial?.week        || "2025-W29",
+    std_hrs:   String(initial?.std_hrs  ?? ""),
+    ot_hrs:    String(initial?.ot_hrs   ?? "0"),
+    wknd_hrs:  String(initial?.wknd_hrs ?? "0"),
+    super_paid: initial?.super_paid ? "yes" : "no",
+  }));
   const emp   = employees.find(e => e.id === parseInt(f.eid));
   const std   = parseFloat(f.std_hrs)  || 0;
   const ot    = parseFloat(f.ot_hrs)   || 0;
@@ -3796,20 +4107,30 @@ function TimesheetModal({ employees, onSave, onClose }) {
 
   const save = () => {
     if (!f.eid || !std) return;
-    onSave({ id:Date.now(), eid:parseInt(f.eid), week:f.week,
-             std_hrs:std, ot_hrs:ot, wknd_hrs:wknd, super_paid:f.super_paid==="yes" });
+    onSave({
+      id:        isEdit ? initial.id : Date.now(),
+      eid:       parseInt(f.eid),
+      week:      f.week,
+      std_hrs:   std,
+      ot_hrs:    ot,
+      wknd_hrs:  wknd,
+      super_paid: f.super_paid === "yes",
+    });
   };
 
   return (
     <div className="overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal" style={{ maxWidth:520 }}>
-        <div className="m-ttl">Log Weekly Hours<button className="btn-ic" style={{ fontSize:17 }} onClick={onClose}>✕</button></div>
-        <div className="m-sub">Record hours for one employee for the selected week.</div>
+        <div className="m-ttl">
+          {isEdit ? "✏️ Edit Timesheet Entry" : "Log Weekly Hours"}
+          <button className="btn-ic" style={{ fontSize:17 }} onClick={onClose}>✕</button>
+        </div>
+        <div className="m-sub">{isEdit ? "Update hours for this entry." : "Record hours for one employee for the selected week."}</div>
 
         <div className="frow2" style={{ marginBottom:11 }}>
           <div className="fg">
             <label className="flbl">Employee *</label>
-            <select className="sel" value={f.eid} onChange={e => setF({...f,eid:e.target.value})}>
+            <select className="sel" value={f.eid} onChange={e => setF({...f,eid:e.target.value})} disabled={isEdit}>
               <option value="">— Select employee —</option>
               {employees.map(e => <option key={e.id} value={e.id}>{e.name} ({e.role})</option>)}
             </select>
@@ -3817,7 +4138,7 @@ function TimesheetModal({ employees, onSave, onClose }) {
           </div>
           <div className="fg">
             <label className="flbl">Week *</label>
-            <input className="inp" type="week" value={f.week} onChange={e => setF({...f,week:e.target.value})}/>
+            <input className="inp" type="week" value={f.week} onChange={e => setF({...f,week:e.target.value})} readOnly={isEdit}/>
             {emp && <span className="fhint">Standard: {emp.std_hrs}h/week</span>}
           </div>
         </div>
@@ -3874,7 +4195,7 @@ function TimesheetModal({ employees, onSave, onClose }) {
         )}
 
         <div className="fbtns" style={{ marginTop:17 }}>
-          <button className="btn" onClick={save}>Log Hours</button>
+          <button className="btn" onClick={save}>{isEdit ? "Save Changes" : "Log Hours"}</button>
           <button className="btn-g" onClick={onClose}>Cancel</button>
         </div>
       </div>
@@ -3885,6 +4206,15 @@ function TimesheetModal({ employees, onSave, onClose }) {
 // ════════════════════════════════════════════════════════════
 //  SHIFT MODAL
 // ════════════════════════════════════════════════════════════
+// Convert "HH:MM" 24h → "9:00am" / "1:30pm"
+const fmt12 = t => {
+  if (!t) return "";
+  const [h, m] = t.split(":").map(Number);
+  const ampm = h >= 12 ? "pm" : "am";
+  const h12  = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return `${h12}:${String(m).padStart(2,"0")}${ampm}`;
+};
+
 function TimePicker({ label, value, onChange }) {
   // value is "HH:MM" 24h, internally converts to/from 12h AM/PM
   const [h24, m] = (value || "09:00").split(":").map(Number);
@@ -3936,19 +4266,21 @@ function TimePicker({ label, value, onChange }) {
   );
 }
 
-function ShiftModal({ employees, initial, onSave, onClose }) {
+function ShiftModal({ employees, initial, onSave, onClose, applyOT, applyWknd }) {
   const [f, setF] = useState({
     id:         initial.id         || null,
     eid:        initial.eid        || (employees[0]?.id || ""),
     date:       initial.date       || todayStr,
     start:      initial.start      || "09:00",
     end:        initial.end        || "17:00",
+    openEnd:    initial.openEnd    || false,
     break_mins: initial.break_mins != null ? initial.break_mins : 30,
     note:       initial.note       || "",
   });
   const upd = k => e => setF(p => ({...p, [k]: e.target.value}));
 
   const netMins = () => {
+    if (f.openEnd) return 0;
     const [sh,sm] = f.start.split(":").map(Number);
     const [eh,em] = f.end.split(":").map(Number);
     return Math.max(0, (eh*60+em) - (sh*60+sm) - (parseInt(f.break_mins)||0));
@@ -3958,7 +4290,8 @@ function ShiftModal({ employees, initial, onSave, onClose }) {
   const er  = emp ? effRate(emp) : 0;
   const day = (() => { const [y,m,d] = f.date.split('-').map(Number); return new Date(y,m-1,d).getDay(); })();
   const isWknd = day === 0 || day === 6;
-  const rate = isWknd ? er * WKND_RATE : er;
+  const wkndMulti = (isWknd && applyWknd) ? WKND_RATE : 1;
+  const rate = er * wkndMulti;
   const gross = rate * hrs;
 
   return (
@@ -3987,7 +4320,32 @@ function ShiftModal({ employees, initial, onSave, onClose }) {
           </div>
           <div className="frow2">
             <TimePicker label="Start Time" value={f.start} onChange={v => setF(p=>({...p,start:v}))}/>
-            <TimePicker label="End Time"   value={f.end}   onChange={v => setF(p=>({...p,end:v}))}/>
+            {f.openEnd
+              ? <div className="fg">
+                  <label className="flbl">End Time</label>
+                  <div style={{background:C.surfaceAlt,border:`1px dashed ${C.border}`,borderRadius:7,padding:"9px 12px",fontSize:12,color:C.muted,display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{fontSize:14}}>🔓</span> Open — no fixed end
+                  </div>
+                </div>
+              : <TimePicker label="End Time" value={f.end} onChange={v => setF(p=>({...p,end:v}))}/>
+            }
+          </div>
+          {/* Open end time toggle */}
+          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:2,padding:"6px 0"}}>
+            <div onClick={() => setF(p=>({...p,openEnd:!p.openEnd}))} style={{
+              width:34, height:18, borderRadius:9, cursor:"pointer",
+              background: f.openEnd ? C.yellow : C.dim,
+              position:"relative", transition:"background .2s", flexShrink:0,
+            }}>
+              <div style={{
+                position:"absolute", top:2, left: f.openEnd ? 18 : 2,
+                width:14, height:14, borderRadius:"50%", background:"#fff",
+                transition:"left .2s",
+              }}/>
+            </div>
+            <span style={{fontSize:11,color:f.openEnd ? C.yellow : C.muted}}>
+              Open end time <span style={{color:C.dim,fontSize:10}}>(employee reports when finished)</span>
+            </span>
           </div>
           {hrs > 0 && emp && (
             <div style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 13px",fontSize:12,lineHeight:1.7,marginTop:2}}>
@@ -3996,7 +4354,11 @@ function ShiftModal({ employees, initial, onSave, onClose }) {
                 <span className="mono" style={{fontWeight:700}}>{hrs.toFixed(2)}h</span>
               </div>
               <div style={{display:"flex",justifyContent:"space-between"}}>
-                <span style={{color:C.muted}}>Rate {isWknd ? <span style={{background:"#FEF3C7",borderRadius:4,padding:"1px 5px",fontSize:10,color:"#92400E"}}>Weekend ×1.75</span> : "Weekday"}</span>
+                <span style={{color:C.muted}}>Rate {isWknd
+                  ? <span style={{background:"#FEF3C7",borderRadius:4,padding:"1px 5px",fontSize:10,color:"#92400E"}}>
+                      {applyWknd ? "Weekend ×1.75" : "Weekend (flat rate)"}
+                    </span>
+                  : "Weekday"}</span>
                 <span className="mono">{money(rate)}/hr</span>
               </div>
               <div style={{display:"flex",justifyContent:"space-between",borderTop:`1px solid ${C.border}`,paddingTop:6,marginTop:4}}>
@@ -4013,7 +4375,8 @@ function ShiftModal({ employees, initial, onSave, onClose }) {
         <div className="modal-footer" style={{display:"flex",justifyContent:"space-between",gap:8}}>
           <button className="btn-b" onClick={onClose}>Cancel</button>
           <button className="btn" onClick={() => {
-            if (!f.eid || !f.date || !f.start || !f.end) return;
+            if (!f.eid || !f.date || !f.start) return;
+            if (!f.openEnd && !f.end) return;
             onSave({...f, eid:parseInt(f.eid), break_mins:parseInt(f.break_mins)||0});
           }}>{f.id ? "Save Changes" : "Add Shift"}</button>
         </div>
@@ -4027,79 +4390,72 @@ const renderRosterPDF = ({ employees, weekShifts, weekDays, weekStart, weekEnd, 
   const pdf = new MiniPDF(true);   // landscape: 842 × 595
   const W = pdf.W, H = pdf.H, M = pdf.M;
   const DAY_SHORT = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
-  // ASCII-safe — MiniPDF drops anything above 0x7E
-  const safe    = str => String(str||'').replace(/[\u2013\u2014]/g,'-').replace(/[^\x20-\x7E]/g,'');
-  const safeDt  = d   => {
+  const safe   = str => String(str||'').replace(/[\u2013\u2014]/g,'-').replace(/[^\x20-\x7E]/g,'');
+  const safeDt = d => {
     const dd = String(d.getDate()).padStart(2,'0');
-    const mo  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
+    const mo = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
     return `${dd} ${mo}`;
   };
 
-  // ── Compact landscape header ───────────────────────────
-  // Logo block (left)
-  pdf.rect(M, 14, 28, 28, { fill:'#8FCB72' });
-  pdf.text(M+5, 17, 'M', { size:14, bold:true, color:'#0C0F0D' });
-  pdf.text(M+34, 17, 'Mise', { size:11, bold:true, color:'#0C0F0D' });
-  pdf.text(M+34, 29, 'HOSPITALITY FINANCE', { size:6, color:'#9CA3AF' });
-  // Centre title
-  pdf.text(W/2, 14, 'STAFF SCHEDULE', { size:7.5, color:'#9CA3AF', align:'center' });
-  pdf.text(W/2, 25, 'Weekly Roster', { size:16, bold:true, color:'#111111', align:'center' });
-  // Right: week + date
-  pdf.text(W-M, 14, safe(`${weekStart} - ${weekEnd}`), { size:9,   bold:true, color:'#111111', align:'right' });
-  pdf.text(W-M, 26, `Generated: ${todayStr}`,           { size:7,   color:'#9CA3AF',           align:'right' });
-  // Separator
-  pdf.line(M, 48, W-M, 48, { color:'#E5E7EB', w:1.2 });
-  let y = 56;
+  // ── Header ────────────────────────────────────────────────
+  pdf.rect(M, 12, 34, 34, { fill:'#8FCB72' });
+  pdf.text(M+6,  16, 'M',                    { size:18, bold:true, color:'#0C0F0D' });
+  pdf.text(M+42, 16, 'Mise',                 { size:14, bold:true, color:'#111111' });
+  pdf.text(M+42, 32, 'HOSPITALITY FINANCE',  { size:7,             color:'#9CA3AF' });
+  pdf.text(W/2,  14, 'STAFF SCHEDULE',       { size:8,             color:'#9CA3AF', align:'center' });
+  pdf.text(W/2,  28, 'Weekly Roster',        { size:20, bold:true, color:'#111111', align:'center' });
+  pdf.text(W-M,  14, safe(`${weekStart} - ${weekEnd}`), { size:11, bold:true, color:'#111111', align:'right' });
+  pdf.text(W-M,  30, `Generated: ${todayStr}`,          { size:8,             color:'#9CA3AF', align:'right' });
+  pdf.line(M, 54, W-M, 54, { color:'#E5E7EB', w:1.5 });
+  let y = 62;
 
-  // ── Table layout ────────────────────────────────────────
-  // nameW wide enough for name + role; dayW fills the rest evenly across 7 days
-  const nameW = 110;
+  // ── Table layout ─────────────────────────────────────────
+  const nameW  = 120;
   const usable = W - M*2 - nameW;
   const dayW   = Math.floor(usable / 7);
   const tableW = nameW + dayW * 7;
 
-  // Estimate row heights to see if everything fits on one page
+  // Row height — scale to fit, but keep a generous minimum
   const rowHeights = employees.map(emp => {
-    const max = Math.max(1, ...weekDays.map(d =>
+    const maxSlots = Math.max(1, ...weekDays.map(d =>
       weekShifts.filter(s => s.eid===emp.id && s.date===isoDate(d)).length
     ));
-    return Math.max(44, max * 36 + 10);
+    return Math.max(52, maxSlots * 46 + 12);
   });
-  const hdrH   = 32;
+  const hdrH      = 38;
   const totalTblH = hdrH + rowHeights.reduce((s,h) => s+h, 0);
-  // If it all fits in remaining space, keep y; else scale row heights down
-  const availH  = H - y - 40; // leave 40pt for disclaimer
-  const scale   = totalTblH > availH ? availH / totalTblH : 1;
-  const scaledRows = rowHeights.map(h => Math.max(30, Math.round(h * scale)));
+  const availH    = H - y - 36;
+  const scale     = totalTblH > availH ? availH / totalTblH : 1;
+  const scaledRows = rowHeights.map(h => Math.max(40, Math.round(h * scale)));
 
-  // ── Table header ────────────────────────────────────────
+  // ── Table header ─────────────────────────────────────────
   pdf.rect(M, y, tableW, hdrH, { fill:'#111827' });
-  pdf.text(M+8, y+11, 'Staff', { size:9, bold:true, color:'#FFFFFF' });
+  pdf.text(M+10, y+14, 'Staff', { size:11, bold:true, color:'#FFFFFF' });
 
   weekDays.forEach((d, i) => {
     const cx   = M + nameW + i * dayW;
     const wknd = d.getDay()===0 || d.getDay()===6;
     if (wknd) pdf.rect(cx, y, dayW, hdrH, { fill:'#78350F' });
-    pdf.text(cx + dayW/2, y+8,  DAY_SHORT[i], { size:9,   bold:true, color: wknd?'#FDE68A':'#FFFFFF', align:'center' });
-    pdf.text(cx + dayW/2, y+20, safeDt(d),    { size:7.5,            color:'#9CA3AF',                  align:'center' });
+    // Strong amber border around weekend section
+    if (d.getDay()===6) pdf.line(cx, y, cx, y+hdrH, { color:'#F59E0B', w:1.5 });
+    if (d.getDay()===0) pdf.line(cx+dayW, y, cx+dayW, y+hdrH, { color:'#F59E0B', w:1.5 });
+    pdf.text(cx + dayW/2, y+10,  DAY_SHORT[i], { size:11, bold:true, color: wknd?'#FDE68A':'#FFFFFF', align:'center' });
+    pdf.text(cx + dayW/2, y+24,  safeDt(d),    { size:9,             color:'#9CA3AF',                 align:'center' });
   });
   y += hdrH;
 
-  // ── Employee rows ────────────────────────────────────────
+  // ── Employee rows ─────────────────────────────────────────
   employees.forEach((emp, ei) => {
     const rH        = scaledRows[ei];
     const empShifts = weekShifts.filter(s => s.eid === emp.id);
 
-    // Alternating row bg
     if (ei % 2 === 1) pdf.rect(M, y, tableW, rH, { fill:'#F8FAFC' });
-
-    // Left border
     pdf.line(M, y, M, y+rH, { color:'#CBD5E1', w:0.5 });
 
-    // Name + role — vertically centred
+    // Name — bigger, vertically centred
     const nameMid = y + rH/2;
-    pdf.text(M+8,  nameMid-5, safe(emp.name),    { size:10,  bold:true, color:'#111111' });
-    pdf.text(M+8,  nameMid+7, safe(emp.role||''), { size:7.5,            color:'#94A3B8' });
+    pdf.text(M+10, nameMid-7,  safe(emp.name),     { size:12, bold:true, color:'#111111' });
+    pdf.text(M+10, nameMid+8,  safe(emp.role||''), { size:9,             color:'#94A3B8' });
 
     // Day cells
     weekDays.forEach((d, di) => {
@@ -4108,45 +4464,59 @@ const renderRosterPDF = ({ employees, weekShifts, weekDays, weekStart, weekEnd, 
       const dayShifts = empShifts.filter(s => s.date === isoDate(d));
 
       pdf.line(cx, y, cx, y+rH, { color:'#CBD5E1', w:0.4 });
-      if (wknd) pdf.rect(cx, y, dayW, rH, { fill: ei%2===1 ? '#FEF9EC' : '#FFFBEB' });
+      if (wknd) {
+        pdf.rect(cx, y, dayW, rH, { fill: ei%2===1 ? '#FEF9EC' : '#FFFBEB' });
+        // Strong left border on first weekend col (Sat), right border on Sun
+        const isSat = d.getDay()===6;
+        const isSun = d.getDay()===0;
+        if (isSat) pdf.line(cx, y, cx, y+rH, { color:'#F59E0B', w:1.5 });
+        if (isSun) pdf.line(cx+dayW, y, cx+dayW, y+rH, { color:'#F59E0B', w:1.5 });
+      }
 
       if (dayShifts.length === 0) {
-        // subtle dash
-        pdf.text(cx + dayW/2, y + rH/2 - 4, '-', { size:10, color:'#CBD5E1', align:'center' });
+        pdf.text(cx + dayW/2, y + rH/2 - 3, '-', { size:12, color:'#D1D5DB', align:'center' });
       } else {
-        const slotH   = rH / dayShifts.length;
+        const slotH = rH / dayShifts.length;
         dayShifts.forEach((sh, si) => {
           const sy      = y + si * slotH;
           const hrs     = shiftHrs(sh);
-          const timeStr = safe(`${sh.start}-${sh.end}`);
-          const hrsStr  = `${hrs.toFixed(1)}h`;
+          // 12h format helper for PDF
+          const p12 = t => {
+            if (!t) return "";
+            const [h,m] = t.split(":").map(Number);
+            const ap = h>=12?"pm":"am";
+            const h12 = h===0?12:h>12?h-12:h;
+            return `${h12}:${String(m).padStart(2,"0")}${ap}`;
+          };
+          const timeStr = sh.openEnd
+            ? safe(`${p12(sh.start)} ->`)
+            : safe(`${p12(sh.start)}-${p12(sh.end)}`);
+          const hrsStr  = sh.openEnd ? "open" : `${hrs.toFixed(1)}h`;
           const fillC   = wknd ? '#FEF3C7' : '#F0FDF4';
           const bordC   = wknd ? '#F59E0B' : '#34D399';
           const timeC   = wknd ? '#92400E' : '#065F46';
           const hrsC    = wknd ? '#B45309' : '#059669';
-          // Pill — 4pt inset all sides
-          const pH = Math.max(22, slotH - 8);
+          // Pill with generous vertical padding
+          const pH = Math.max(30, slotH - 10);
           const py = sy + (slotH - pH) / 2;
-          pdf.rect(cx+4, py, dayW-8, pH, { fill:fillC, stroke:bordC });
-          // Time — bigger, prominent
-          pdf.text(cx + dayW/2, py + pH*0.32, timeStr, { size:9,   bold:true, color:timeC, align:'center' });
-          // Hours — smaller, below
-          pdf.text(cx + dayW/2, py + pH*0.68, hrsStr,  { size:7.5,            color:hrsC,  align:'center' });
+          pdf.rect(cx+5, py, dayW-10, pH, { fill:fillC, stroke:bordC });
+          // Time — large and bold
+          pdf.text(cx + dayW/2, py + pH*0.33, timeStr, { size:11, bold:true, color:timeC, align:'center' });
+          // Hours — clear and readable
+          pdf.text(cx + dayW/2, py + pH*0.70, hrsStr,  { size:9,             color:hrsC,  align:'center' });
         });
       }
     });
 
-    // Right border
     pdf.line(M+tableW, y, M+tableW, y+rH, { color:'#CBD5E1', w:0.5 });
-    // Row bottom
-    pdf.line(M, y+rH, M+tableW, y+rH, { color:'#CBD5E1', w: ei===employees.length-1 ? 1 : 0.5 });
+    pdf.line(M, y+rH, M+tableW, y+rH, { color:'#CBD5E1', w: ei===employees.length-1 ? 1.2 : 0.5 });
     y += rH;
   });
 
-  // ── Footer disclaimer (minimal — this is for employees) ──
+  // ── Footer ────────────────────────────────────────────────
   y += 10;
-  pdf.text(M, y, 'This roster is subject to change. Contact your manager with any queries.', { size:7, color:'#9CA3AF' });
-  pdf.text(W-M, y, `Mise Hospitality Finance  |  ${todayStr}`, { size:7, color:'#CBD5E1', align:'right' });
+  pdf.text(M,   y, 'This roster is subject to change. Contact your manager with any queries.', { size:8, color:'#9CA3AF' });
+  pdf.text(W-M, y, `Mise Hospitality Finance  |  ${todayStr}`, { size:8, color:'#CBD5E1', align:'right' });
 
   return pdf;
 };
@@ -4164,6 +4534,9 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
     return d;
   });
   const [shiftModal, setShiftModal] = useState(null); // null | {date,eid?} | shift
+  // ── Pay rate settings ─────────────────────────────────────
+  const [applyOT,   setApplyOT]   = useState(true);  // apply ×1.5 OT rate
+  const [applyWknd, setApplyWknd] = useState(true);  // apply ×1.75 weekend rate
 
   const addDays = (base, n) => { const d = new Date(base); d.setDate(d.getDate()+n); return d; };
   // Use LOCAL date parts — toISOString() returns UTC which shifts date by timezone offset
@@ -4189,6 +4562,7 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
 
   // ── Shift helpers ─────────────────────────────────────────
   const shiftNetMins = s => {
+    if (s.openEnd) return 0;
     const [sh,sm] = s.start.split(":").map(Number);
     const [eh,em] = s.end.split(":").map(Number);
     return Math.max(0, (eh*60+em)-(sh*60+sm)-(s.break_mins||0));
@@ -4223,12 +4597,14 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
 
     sorted.forEach(sh => {
       const hrs = shiftHrs(sh);
+      const wkndMulti = applyWknd ? WKND_RATE : 1;
+      const otMulti   = applyOT   ? OT_RATE   : 1;
       if (isWeekend(sh.date)) {
-        // Weekend: always WKND_RATE, not counted toward weekday OT threshold
+        // Weekend: apply wkndMulti (1.75 or 1.0), not counted toward weekday OT threshold
         result.set(sh.id, {
           stdHrs:0, otHrs:0, wkndHrs:hrs,
-          stdPay:0, otPay:0, wkndPay: er * WKND_RATE * hrs,
-          gross: er * WKND_RATE * hrs,
+          stdPay:0, otPay:0, wkndPay: er * wkndMulti * hrs,
+          gross: er * wkndMulti * hrs,
           isOT: false, isWknd: true,
         });
       } else {
@@ -4237,8 +4613,8 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
         const stdPortion  = Math.max(0, Math.min(hrs, threshold - alreadyUsed));
         const otPortion   = hrs - stdPortion;
         weekdayBucket    += hrs;
-        const stdPay  = er          * stdPortion;
-        const otPay   = er * OT_RATE * otPortion;
+        const stdPay  = er              * stdPortion;
+        const otPay   = er * otMulti    * otPortion;
         result.set(sh.id, {
           stdHrs: stdPortion, otHrs: otPortion, wkndHrs: 0,
           stdPay, otPay, wkndPay: 0,
@@ -4265,7 +4641,7 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
   const shiftCost = (sh) => shiftData(sh)?.gross ?? 0;
 
   // Unique avatar colours per employee
-  const empColor = emp => avatarBg(emp.id);
+  const empColor = emp => avatarBg(emp.id, emp.color);
 
   // ── Save / delete ─────────────────────────────────────────
   const saveShift  = sh => {
@@ -4316,15 +4692,36 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
     showToast("Roster PDF downloaded!");
   };
 
+  // Copy last week's shifts into the current week (+7 days each)
+  const copyLastWeek = () => {
+    const lastWeekDates = weekDays.map(d => isoDate(addDays(d, -7)));
+    const lastWeekShifts = roster.filter(s => lastWeekDates.includes(s.date));
+    if (lastWeekShifts.length === 0) {
+      showToast("No shifts found in the previous week.");
+      return;
+    }
+    // Check if current week already has shifts
+    if (weekShifts.length > 0) {
+      if (!window.confirm(`This week already has ${weekShifts.length} shift(s). Copy last week on top?`)) return;
+    }
+    const copied = lastWeekShifts.map(s => ({
+      ...s,
+      id:   Date.now() + Math.random(),
+      date: isoDate(addDays(new Date(s.date + "T00:00:00"), 7)),
+    }));
+    setRoster(p => [...p, ...copied]);
+    showToast(`Copied ${copied.length} shift${copied.length>1?"s":""} from last week!`);
+  };
+
   // ── Render ────────────────────────────────────────────────
   return (
     <>
       {shiftModal && (
-        <ShiftModal employees={employees} initial={shiftModal} onSave={saveShift} onClose={() => setShiftModal(null)}/>
+        <ShiftModal employees={employees} initial={shiftModal} onSave={saveShift} onClose={() => setShiftModal(null)} applyOT={applyOT} applyWknd={applyWknd}/>
       )}
 
       {/* ── Week navigator ── */}
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,gap:8}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,gap:8,flexWrap:"wrap"}}>
         <div style={{display:"flex",gap:6}}>
           <button className="btn-b" onClick={prevWeek}>← Prev</button>
           <button className="btn-b" onClick={thisWeek}>Today</button>
@@ -4334,6 +4731,7 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
           📅 Week of {weekStart} – {weekEnd}
         </div>
         <div style={{display:"flex",gap:6}}>
+          <button className="btn-b" title="Copy all shifts from last week into this week" onClick={copyLastWeek}>📋 Copy Last Week</button>
           <button className="btn-b" onClick={exportRosterPDF}>⬇️ Export PDF</button>
           <button className="btn" onClick={() => setShiftModal({date:isoDate(weekDays[0])})}>
             + Add Shift
@@ -4420,10 +4818,15 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
                             }}
                               onClick={() => setShiftModal(sh)}
                             >
-                              <div style={{fontSize:10,fontWeight:700,color:borderC,lineHeight:1.2}}>{sh.start}–{sh.end}</div>
-                              <div style={{fontSize:9,color:C.muted,marginTop:1}}>
-                                {shiftHrs(sh).toFixed(1)}h
-                              </div>
+                            <div style={{fontSize:10,fontWeight:700,color:borderC,lineHeight:1.2}}>
+                              {sh.openEnd
+                                ? <>{fmt12(sh.start)} <span style={{opacity:.7}}>→</span></>
+                                : <>{fmt12(sh.start)}–{fmt12(sh.end)}</>
+                              }
+                            </div>
+                            <div style={{fontSize:9,color:C.muted,marginTop:1}}>
+                              {sh.openEnd ? "open end" : `${shiftHrs(sh).toFixed(1)}h`}
+                            </div>
                               {/* OT / Weekend rate badge */}
                               {hasOT && (
                                 <div style={{fontSize:8,fontWeight:700,color:"#DC2626",marginTop:1}}>
@@ -4460,21 +4863,22 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
               );
             })}
             {/* Daily totals row */}
-            <tr style={{background:"#F3F4F6"}}>
-              <td style={{padding:"7px 10px",fontWeight:700,fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:".4px"}}>Day Total</td>
+            <tr style={{background:C.surfaceAlt, borderTop:`2px solid ${C.border}`}}>
+              <td style={{padding:"8px 10px",fontWeight:700,fontSize:10,color:C.accent,textTransform:"uppercase",letterSpacing:".6px"}}>DAY TOTAL</td>
               {weekDays.map((d,di) => {
                 const date = isoDate(d);
                 const dayShifts = weekShifts.filter(s => s.date===date);
                 const dayHrs  = dayShifts.reduce((s,sh)=>s+shiftHrs(sh), 0);
                 const dayCost = dayShifts.reduce((s,sh)=>s+shiftCost(sh), 0);
+                const isWkndCol = d.getDay()===0 || d.getDay()===6;
                 return (
-                  <td key={di} style={{padding:"7px 4px",textAlign:"center",borderLeft:`1px solid ${C.border}`}}>
-                    <div className="mono" style={{fontWeight:700,fontSize:11,color:dayHrs>0?C.text:C.dim}}>{dayHrs>0?`${dayHrs.toFixed(1)}h`:"—"}</div>
+                  <td key={di} style={{padding:"8px 4px",textAlign:"center",borderLeft:`1px solid ${C.border}`, background: isWkndCol ? "rgba(212,168,67,0.08)" : "transparent"}}>
+                    <div className="mono" style={{fontWeight:700,fontSize:12,color:dayHrs>0 ? C.text : C.dim}}>{dayHrs>0?`${dayHrs.toFixed(1)}h`:"—"}</div>
                   </td>
                 );
               })}
-              <td style={{padding:"7px 10px",textAlign:"right",borderLeft:`1px solid ${C.border}`}}>
-                <div className="mono" style={{fontWeight:700,fontSize:12}}>{totHrs.toFixed(1)}h</div>
+              <td style={{padding:"8px 10px",textAlign:"right",borderLeft:`1px solid ${C.border}`}}>
+                <div className="mono" style={{fontWeight:700,fontSize:13,color:C.accent}}>{totHrs.toFixed(1)}h</div>
               </td>
             </tr>
           </tbody>
@@ -4483,9 +4887,41 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
 
       {/* ── Labour Cost Summary ── */}
       <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:13,padding:"18px 20px"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:10}}>
           <div style={{fontWeight:700,fontSize:14}}>💰 Labour Cost Summary — {weekStart} to {weekEnd}</div>
-          <div style={{fontSize:10,color:C.muted}}>Super @ {(superR*100).toFixed(1)}% · ATO 2024-25 progressive PAYG</div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            {/* OT toggle */}
+            <div style={{display:"flex",alignItems:"center",gap:6,background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px"}}>
+              <span style={{fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>OT ×1.5</span>
+              <div onClick={() => setApplyOT(v => !v)} style={{
+                width:34, height:18, borderRadius:9, cursor:"pointer",
+                background: applyOT ? C.accent : "#4B5563",
+                position:"relative", transition:"background .2s", flexShrink:0,
+              }}>
+                <div style={{
+                  position:"absolute", top:2, left: applyOT ? 18 : 2,
+                  width:14, height:14, borderRadius:"50%", background:"#fff",
+                  transition:"left .2s", boxShadow:"0 1px 3px rgba(0,0,0,.3)",
+                }}/>
+              </div>
+            </div>
+            {/* Weekend penalty toggle */}
+            <div style={{display:"flex",alignItems:"center",gap:6,background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px"}}>
+              <span style={{fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>Wknd ×1.75</span>
+              <div onClick={() => setApplyWknd(v => !v)} style={{
+                width:34, height:18, borderRadius:9, cursor:"pointer",
+                background: applyWknd ? C.accent : "#4B5563",
+                position:"relative", transition:"background .2s", flexShrink:0,
+              }}>
+                <div style={{
+                  position:"absolute", top:2, left: applyWknd ? 18 : 2,
+                  width:14, height:14, borderRadius:"50%", background:"#fff",
+                  transition:"left .2s", boxShadow:"0 1px 3px rgba(0,0,0,.3)",
+                }}/>
+              </div>
+            </div>
+            <div style={{fontSize:10,color:C.muted}}>Super @ {(superR*100).toFixed(1)}% · ATO 2024-25 PAYG</div>
+          </div>
         </div>
 
         {/* Stat cards — now includes OT hours */}
@@ -4493,13 +4929,14 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
           {[
             {lbl:"Total Hours",    val:`${totHrs.toFixed(1)}h`,                                           cls:"",  ico:"🕐"},
             {lbl:"Std Hours",      val:`${empSummary.reduce((s,e)=>s+e.stdHrs,0).toFixed(1)}h`,           cls:"",  ico:"📋"},
-            {lbl:"OT Hours ×1.5",  val:`${empSummary.reduce((s,e)=>s+e.otHrs,0).toFixed(1)}h`,           cls:empSummary.some(e=>e.otHrs>0)?"r":"", ico:"⚡"},
-            {lbl:"Wknd Hrs ×1.75", val:`${empSummary.reduce((s,e)=>s+e.wkndHrs,0).toFixed(1)}h`,         cls:"y", ico:"📅"},
+            {lbl:"OT Hours",       val:`${empSummary.reduce((s,e)=>s+e.otHrs,0).toFixed(1)}h`,  cls:empSummary.some(e=>e.otHrs>0)?"r":"", ico:"⚡", sub: applyOT?"×1.5":"flat rate"},
+            {lbl:"Wknd Hours",     val:`${empSummary.reduce((s,e)=>s+e.wkndHrs,0).toFixed(1)}h`, cls:"y", ico:"📅", sub: applyWknd?"×1.75":"flat rate"},
             {lbl:"Total Labour",   val:money(totLabour),                                                  cls:"g", ico:"📊"},
           ].map((c,i) => (
             <div key={i} className="card" style={{display:"flex",flexDirection:"column",gap:4}}>
               <div className="clbl">{c.ico} {c.lbl}</div>
               <div className={`cval ${c.cls}`}>{c.val}</div>
+              {c.sub && <div style={{fontSize:9,color:C.muted}}>{c.sub}</div>}
             </div>
           ))}
         </div>
@@ -4512,8 +4949,8 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
                 <tr>
                   <th style={{textAlign:"left"}}>Employee</th>
                   <th style={{textAlign:"right"}}>Std Hrs</th>
-                  <th style={{textAlign:"right",color:"#DC2626"}}>OT Hrs ×1.5</th>
-                  <th style={{textAlign:"right",color:"#D97706"}}>Wknd Hrs ×1.75</th>
+                  <th style={{textAlign:"right",color:"#DC2626"}}>OT Hrs {applyOT?"×1.5":"(flat)"}</th>
+                  <th style={{textAlign:"right",color:"#D97706"}}>Wknd Hrs {applyWknd?"×1.75":"(flat)"}</th>
                   <th style={{textAlign:"right"}}>Gross Pay</th>
                   <th style={{textAlign:"right"}}>PAYG (ATO)</th>
                   <th style={{textAlign:"right"}}>Super ({(superR*100).toFixed(1)}%)</th>
@@ -4587,7 +5024,7 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
 function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster, setRoster, leave, setLeave, showToast }) {
   const [tab,        setTab]        = useState("roster");
   const [empModal,   setEmpModal]   = useState(null);
-  const [tsModal,    setTsModal]    = useState(false);
+  const [tsModal,    setTsModal]    = useState(null); // null=closed, true=add, {id,...}=edit
   const [dayWorkers, setDayWorkers] = useState([]);
   const [bizName,    setBizName]    = useState("My Restaurant");
   const [bizABN,     setBizABN]     = useState("");
@@ -4606,7 +5043,16 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster,
     setEmpModal(null);
   };
   const delEmp   = id  => { setEmployees(p => p.filter(e => e.id !== id)); setTimesheets(p => p.filter(t => t.eid !== id)); setLeave(p => p.filter(l => l.eid !== id)); showToast("Employee removed."); };
-  const saveTs   = ts  => { setTimesheets(p => [...p, ts]); setTsModal(false); showToast("Hours logged!"); };
+  const saveTs = ts => {
+    if (ts.id && timesheets.find(x => x.id === ts.id)) {
+      setTimesheets(p => p.map(x => x.id === ts.id ? ts : x));
+      showToast("Timesheet updated!");
+    } else {
+      setTimesheets(p => [...p, ts]);
+      showToast("Hours logged!");
+    }
+    setTsModal(null);
+  };
   const markSuper= id  => { setTimesheets(p => p.map(t => t.id === id ? {...t, super_paid:true} : t)); showToast("Super marked as paid!"); };
 
   const addLeave = () => {
@@ -4625,20 +5071,163 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster,
     lieu:     { lbl:"Day in Lieu",          col:C.purple, cls:"pl-p" },
   };
 
+  // ── Leave Balance PDF — clean light theme ─────────────────
+  const exportLeavePDF = () => {
+    const pdf = new MiniPDF();
+    const W = pdf.W, M = pdf.M;
+    const safe = s => String(s||'').replace(/[^\x20-\x7E]/g,'');
+
+    // Palette — light professional
+    const INK    = '#1A1A1A';  // main text
+    const SUB    = '#6B7280';  // subtext / labels
+    const RULE   = '#E5E7EB';  // dividers
+    const STRIPE = '#F9FAFB';  // alternating table row
+    const HDR_BG = '#1F2937';  // employee name bar (dark navy, not green)
+    const HDR_FG = '#FFFFFF';
+    const HDR_SUB= '#9CA3AF';
+    const BOX_BG = '#F8FAFC';  // leave box background (near-white)
+    const BOX_BDR= '#E2E8F0';  // box border
+    const C_ANN  = '#0D9488';  // teal — Annual
+    const C_PER  = '#2563EB';  // blue — Personal
+    const C_LIU  = '#7C3AED';  // purple — Lieu
+    const C_NEG  = '#DC2626';  // red — overdrawn
+    const C_DIM  = '#9CA3AF';
+
+    // ── Header ────────────────────────────────────────────
+    pdf.rect(M, 16, 30, 30, { fill:'#8FCB72' });
+    pdf.text(M+5,  20, 'M',                    { size:15, bold:true, color:'#0C0F0D' });
+    pdf.text(M+38, 19, 'Mise',                 { size:13, bold:true, color:INK });
+    pdf.text(M+38, 34, 'HOSPITALITY FINANCE',  { size:6,             color:C_DIM });
+    pdf.text(W/2,  17, 'LEAVE & ENTITLEMENTS', { size:7.5,           color:C_DIM, align:'center' });
+    pdf.text(W/2,  29, 'Leave Balance Report', { size:17, bold:true, color:INK,   align:'center' });
+    pdf.text(W-M,  19, `Generated: ${todayStr}`,{ size:7.5,          color:C_DIM, align:'right' });
+    pdf.line(M, 56, W-M, 56, { color:RULE, w:1 });
+    let y = 68;
+
+    employees.forEach((emp, ei) => {
+      const accrued  = calcLeaveAccruals(emp, timesheets);
+      const taken    = calcLeaveTaken(emp, leave);
+      const isCasual = emp.type === 'casual';
+      const dpd      = hrsPerDay(emp) || 1;
+
+      if (y > 670) { pdf.addPage(); y = 30; }
+
+      // ── Employee name bar (dark navy) ──────────────────
+      pdf.rect(M, y, W-M*2, 34, { fill:HDR_BG });
+      pdf.text(M+12, y+8,  safe(emp.name),                         { size:12, bold:true, color:HDR_FG });
+      pdf.text(M+12, y+24, safe(`${emp.role||''}  |  ${emp.type}`),{ size:8,             color:HDR_SUB });
+      y += 38;
+
+      // ── Three leave boxes (light background) ───────────
+      const gap  = 8;
+      const boxW = Math.floor((W - M*2 - gap*2) / 3);
+      const boxH = 100;
+      const types = [
+        { lbl:'Annual Leave',     col:C_ANN,  accrued:accrued.annual,   taken:taken.annual,   na:isCasual },
+        { lbl:"Personal/Carer's", col:C_PER,  accrued:accrued.personal, taken:taken.personal, na:isCasual },
+        { lbl:'Day in Lieu',      col:C_LIU,  accrued:accrued.lieu,     taken:taken.lieu,     na:false    },
+      ];
+
+      types.forEach((lt, i) => {
+        const bx  = M + i * (boxW + gap);
+        const bal = lt.accrued - lt.taken;
+        const isNeg = bal < 0;
+        const accentCol = isNeg ? C_NEG : lt.col;
+
+        // Box: light bg, coloured left accent bar
+        pdf.rect(bx,   y,  4,    boxH, { fill:accentCol });        // left accent
+        pdf.rect(bx+4, y,  boxW-4, boxH, { fill:BOX_BG, stroke:BOX_BDR }); // content area
+
+        // Label (8pt) at y+10
+        pdf.text(bx+14, y+10, lt.lbl, { size:8, bold:true, color:accentCol });
+
+        if (lt.na) {
+          pdf.text(bx+14, y+34, 'Not applicable',    { size:9,   color:C_DIM });
+          pdf.text(bx+14, y+48, '(casual employee)', { size:7.5, color:C_DIM });
+        } else {
+          const balDays = (Math.abs(bal)/dpd).toFixed(1);
+          // Balance big number (18pt) at y+24 → ends ~y+42
+          pdf.text(bx+14, y+24, `${isNeg?'-':''}${Math.abs(bal).toFixed(1)}h`, { size:18, bold:true, color:accentCol });
+          // Days (8pt) at y+50 — safely below
+          pdf.text(bx+14, y+50, `${balDays} days balance`, { size:8, color:SUB });
+          // Divider at y+63
+          pdf.line(bx+14, y+63, bx+boxW-8, y+63, { color:RULE, w:0.5 });
+          // Accrued at y+71, Taken at y+85
+          pdf.text(bx+14, y+71, `Accrued:`, { size:7.5, color:SUB });
+          pdf.text(bx+boxW-8, y+71, `${lt.accrued.toFixed(1)}h`, { size:7.5, bold:true, color:INK, align:'right' });
+          pdf.text(bx+14, y+85, `Taken:`,   { size:7.5, color:SUB });
+          pdf.text(bx+boxW-8, y+85, `${lt.taken.toFixed(1)}h`,   { size:7.5, bold:true, color:C_NEG, align:'right' });
+        }
+      });
+      y += boxH + 12;
+
+      // ── Leave history ──────────────────────────────────
+      const empLeave = leave
+        .filter(l => l.eid === emp.id)
+        .sort((a,b) => b.date.localeCompare(a.date));
+
+      if (empLeave.length > 0) {
+        if (y > 720) { pdf.addPage(); y = 30; }
+        // Column header row
+        pdf.rect(M, y, W-M*2, 18, { fill:'#F1F5F9' });
+        pdf.line(M, y,      W-M, y,      { color:BOX_BDR, w:0.5 });
+        pdf.line(M, y+18,   W-M, y+18,   { color:BOX_BDR, w:0.5 });
+        pdf.text(M+8,   y+5, 'Date',        { size:7.5, bold:true, color:SUB });
+        pdf.text(M+76,  y+5, 'Type',        { size:7.5, bold:true, color:SUB });
+        pdf.text(M+200, y+5, 'Hours',       { size:7.5, bold:true, color:SUB });
+        pdf.text(M+248, y+5, 'Days',        { size:7.5, bold:true, color:SUB });
+        pdf.text(M+288, y+5, 'Notes',       { size:7.5, bold:true, color:SUB });
+        y += 20;
+
+        empLeave.forEach((l, li) => {
+          if (y > 750) { pdf.addPage(); y = 30; }
+          const rowH = 17;
+          const typeLabel = { annual:'Annual Leave', personal:"Personal/Carer's", lieu:'Day in Lieu' }[l.type] || l.type;
+          const days = (l.hours / dpd).toFixed(1);
+          if (li % 2 === 0) pdf.rect(M, y, W-M*2, rowH, { fill:STRIPE });
+          pdf.line(M, y+rowH, W-M, y+rowH, { color:BOX_BDR, w:0.3 });
+          pdf.text(M+8,   y+5, safe(l.date),       { size:8,   color:SUB  });
+          pdf.text(M+76,  y+5, safe(typeLabel),     { size:8,   color:INK  });
+          pdf.text(M+200, y+5, `${l.hours}h`,       { size:8,   bold:true, color:INK });
+          pdf.text(M+248, y+5, `${days}d`,          { size:8,   color:SUB  });
+          pdf.text(M+288, y+5, safe(l.notes||'—'), { size:7.5, color:SUB  });
+          y += rowH;
+        });
+        y += 8;
+      }
+
+      // Separator
+      if (ei < employees.length - 1) {
+        if (y > 740) { pdf.addPage(); y = 30; }
+        else { pdf.line(M, y+6, W-M, y+6, { color:RULE, w:0.7 }); y += 20; }
+      }
+    });
+
+    // ── Footer ──────────────────────────────────────────
+    const fy = Math.min(y + 20, 820);
+    pdf.line(M, fy-6, W-M, fy-6, { color:RULE, w:0.5 });
+    pdf.text(M,   fy, 'Leave balances are estimates from timesheet data. Confirm entitlements under the Fair Work Act or applicable Modern Award.', { size:6.5, color:C_DIM });
+    pdf.text(W-M, fy, `Mise Hospitality Finance  |  ${todayStr}`, { size:7, color:C_DIM, align:'right' });
+
+    pdfDownload(pdf, `Leave_Balances_${todayStr}.pdf`);
+    showToast('Leave PDF downloaded!');
+  };
+
   return (
     <>
       {(empModal === "add" || empModal?.id) && (
         <EmployeeModal emp={empModal === "add" ? null : empModal} onSave={saveEmp} onClose={() => setEmpModal(null)}/>
       )}
       {tsModal && (
-        <TimesheetModal employees={employees} onSave={saveTs} onClose={() => setTsModal(false)}/>
+        <TimesheetModal employees={employees} onSave={saveTs} onClose={() => setTsModal(null)} initial={tsModal === true ? {} : tsModal}/>
       )}
 
       <div className="hdr">
         <div className="hdr-left"><div className="ptitle">Staff & Wages</div><div className="psub">Employee profiles, timesheets and labour cost estimates</div></div>
         <div className="hdr-right">
           {tab === "profiles"   && <button className="btn" onClick={() => setEmpModal("add")}>+ Add Employee</button>}
-          {tab === "timesheets" && <button className="btn" onClick={() => setTsModal(true)}>+ Log Hours</button>}        </div>
+          {tab === "timesheets" && <button className="btn" onClick={() => setTsModal(true)}>+ Log Hours</button>}
+          {tab === "leave"      && <button className="btn-b" onClick={exportLeavePDF}>⬇️ Export Leave PDF</button>}</div>
       </div>
 
       <div className="g4">
@@ -4685,7 +5274,7 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster,
                       {/* Header row */}
                       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:13 }}>
                         <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                          <div style={{ width:38, height:38, borderRadius:"50%", background:avatarBg(emp.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:700, color:"#fff", flexShrink:0 }}>
+                          <div style={{ width:38, height:38, borderRadius:"50%", background:avatarBg(emp.id, emp.color), display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:700, color:"#fff", flexShrink:0 }}>
                             {initials(emp.name)}
                           </div>
                           <div>
@@ -4771,7 +5360,7 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster,
                     <tr key={t.id}>
                       <td>
                         <div style={{ display:"flex", alignItems:"center", gap:7 }}>
-                          <div style={{ width:24, height:24, borderRadius:"50%", background:avatarBg(t.emp.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:700, color:"#fff", flexShrink:0 }}>
+                          <div style={{ width:24, height:24, borderRadius:"50%", background:avatarBg(t.emp.id, t.emp.color), display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:700, color:"#fff", flexShrink:0 }}>
                             {initials(t.emp.name)}
                           </div>
                           <div>
@@ -4793,7 +5382,10 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster,
                         ? <span className="pill pl-g">✅ Paid</span>
                         : <button className="btn-t" onClick={() => markSuper(t.id)}>Mark Paid</button>}
                       </td>
-                      <td><button className="btn-ic" onClick={() => setTimesheets(p => p.filter(x => x.id !== t.id))}>🗑️</button></td>
+                      <td style={{whiteSpace:"nowrap"}}>
+                        <button className="btn-ic" title="Edit" onClick={() => setTsModal(timesheets.find(x => x.id === t.id))}>✏️</button>
+                        <button className="btn-ic" title="Delete" onClick={() => setTimesheets(p => p.filter(x => x.id !== t.id))}>🗑️</button>
+                      </td>
                     </tr>
                   ))
               }
@@ -4826,7 +5418,7 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster,
                     <tr key={emp.id}>
                       <td>
                         <div style={{ display:"flex", alignItems:"center", gap:7 }}>
-                          <div style={{ width:26, height:26, borderRadius:"50%", background:avatarBg(emp.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700, color:"#fff" }}>
+                          <div style={{ width:26, height:26, borderRadius:"50%", background:avatarBg(emp.id, emp.color), display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700, color:"#fff" }}>
                             {initials(emp.name)}
                           </div>
                           <div>
@@ -4905,7 +5497,7 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster,
                 <div key={emp.id} className="bc" style={{ marginBottom:0 }}>
                   {/* Employee header */}
                   <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14 }}>
-                    <div style={{ width:34, height:34, borderRadius:"50%", background:avatarBg(emp.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:700, color:"#fff", flexShrink:0 }}>
+                    <div style={{ width:34, height:34, borderRadius:"50%", background:avatarBg(emp.id, emp.color), display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:700, color:"#fff", flexShrink:0 }}>
                       {initials(emp.name)}
                     </div>
                     <div>
@@ -5054,7 +5646,7 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster,
                         <tr key={l.id}>
                           <td>
                             <div style={{ display:"flex", alignItems:"center", gap:7 }}>
-                              <div style={{ width:22, height:22, borderRadius:"50%", background:avatarBg(emp.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:8, fontWeight:700, color:"#fff" }}>
+                              <div style={{ width:22, height:22, borderRadius:"50%", background:avatarBg(emp.id, emp.color), display:"flex", alignItems:"center", justifyContent:"center", fontSize:8, fontWeight:700, color:"#fff" }}>
                                 {initials(emp.name)}
                               </div>
                               <span style={{ fontWeight:500 }}>{emp.name}</span>
@@ -5095,9 +5687,11 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster,
 
 // ── Payslip Tab ──────────────────────────────────────────────
 function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, bizABN, setBizABN }) {
-  const [selEmp,    setSelEmp]    = useState("");
-  const [selWeek,   setSelWeek]   = useState("");
-  const [showPrint, setShowPrint] = useState(false);
+  const [selEmp,      setSelEmp]      = useState("");
+  const [selWeek,     setSelWeek]     = useState("");
+  const [showPrint,   setShowPrint]   = useState(false);
+  const [batchWeek,   setBatchWeek]   = useState("");
+  const [batchExporting, setBatchExporting] = useState(false);
 
   // Build week options from existing timesheets
   const weeks = [...new Set(timesheets.map(t => t.week))].sort().reverse();
@@ -5329,7 +5923,7 @@ function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, biz
           {/* Employee header */}
           <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:13, padding:"16px 20px", marginBottom:12, display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12 }}>
             <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-              <div style={{ width:44, height:44, borderRadius:"50%", background:avatarBg(emp.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, fontWeight:700, color:"#fff" }}>
+              <div style={{ width:44, height:44, borderRadius:"50%", background:avatarBg(emp.id, emp.color), display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, fontWeight:700, color:"#fff" }}>
                 {initials(emp.name)}
               </div>
               <div>
@@ -6511,7 +7105,7 @@ function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimeshe
                   <tr key={t.id}>
                     <td>
                       <div style={{ display:"flex", alignItems:"center", gap:7 }}>
-                        <div style={{ width:22, height:22, borderRadius:"50%", background:avatarBg(t.emp.id), display:"flex", alignItems:"center", justifyContent:"center", fontSize:8, fontWeight:700, color:"#fff" }}>
+                        <div style={{ width:22, height:22, borderRadius:"50%", background:avatarBg(t.emp.id, t.emp.color), display:"flex", alignItems:"center", justifyContent:"center", fontSize:8, fontWeight:700, color:"#fff" }}>
                           {initials(t.emp.name)}
                         </div>
                         <span style={{ fontWeight:500 }}>{t.emp.name}</span>
@@ -7223,7 +7817,7 @@ function IASPage({ timesheets, employees, ias, setIas, showToast }) {
                     <tr key={emp.id}>
                       <td>
                         <div style={{display:"flex",alignItems:"center",gap:7}}>
-                          <div style={{width:22,height:22,borderRadius:"50%",background:avatarBg(emp.id),display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700,color:"#fff",flexShrink:0}}>{initials(emp.name)}</div>
+                          <div style={{width:22,height:22,borderRadius:"50%",background:avatarBg(emp.id, emp.color),display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:700,color:"#fff",flexShrink:0}}>{initials(emp.name)}</div>
                           <span style={{fontWeight:600,fontSize:12}}>{emp.name}</span>
                           {noTFN && <span className="pill pl-r" style={{fontSize:9}}>No TFN</span>}
                         </div>
@@ -7400,23 +7994,69 @@ function IASPage({ timesheets, employees, ias, setIas, showToast }) {
 // ════════════════════════════════════════════════════════════
 //  BAS SUMMARY GENERATOR PAGE
 // ════════════════════════════════════════════════════════════
-function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, documents, showToast }) {
+function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, documents, basHistory, setBasHistory, showToast }) {
   const [selQ,    setSelQ]    = useState(BAS_QUARTERS[0]);
   const [print,   setPrint]   = useState(false);
+  const [tab,     setTab]     = useState("summary"); // "summary" | "history"
+  const [editNotes, setEditNotes] = useState(""); // notes when saving
 
   const d = buildBASData(revenue, expenses, timesheets, employees, insurance, documents, selQ);
+
+  // ── History helpers ────────────────────────────────────────
+  const STATUS_CFG = {
+    draft:     { lbl:"Draft",     col:"#D97706", bg:"rgba(217,119,6,.1)",   border:"rgba(217,119,6,.3)"   },
+    finalised: { lbl:"Finalised", col:"#2563EB", bg:"rgba(37,99,235,.1)",   border:"rgba(37,99,235,.3)"   },
+    lodged:    { lbl:"Lodged ✓",  col:"#059669", bg:"rgba(5,150,105,.1)",   border:"rgba(5,150,105,.3)"   },
+  };
+
+  const existingEntry = basHistory.find(h => h.quarter === selQ);
+
+  const saveToHistory = () => {
+    const entry = {
+      id:         existingEntry?.id || Date.now(),
+      quarter:    selQ,
+      status:     existingEntry?.status || "draft",
+      savedDate:  todayStr,
+      lodgedDate: existingEntry?.lodgedDate || null,
+      notes:      editNotes || existingEntry?.notes || "",
+      // Snapshot key figures
+      totalRev:   d.totalRev,
+      netGST:     d.netGST,
+      totalPayg:  d.totalPayg,
+      totalSuper: d.totalSuper,
+      estBAS:     d.estBAS,
+      totalWages: d.totalWages,
+    };
+    setBasHistory(p => existingEntry
+      ? p.map(h => h.id === existingEntry.id ? entry : h)
+      : [entry, ...p]
+    );
+    setEditNotes("");
+    showToast(`BAS ${selQ} saved to history!`);
+  };
+
+  const updateStatus = (id, status) => {
+    setBasHistory(p => p.map(h => h.id === id
+      ? { ...h, status, lodgedDate: status === "lodged" ? todayStr : h.lodgedDate }
+      : h
+    ));
+    showToast(`Status updated to ${STATUS_CFG[status].lbl}`);
+  };
+
+  const deleteEntry = id => {
+    setBasHistory(p => p.filter(h => h.id !== id));
+    showToast("BAS history entry removed.");
+  };
 
   const PrintContent = () => (
     <div className="pp-page">
       <PPHeader title="BAS Support Summary" subtitle="Quarterly BAS Management Summary" quarter={selQ}/>
-
       {d.warnings.length > 0 && (
         <div className="pp-sec">
           <div className="pp-sec-ttl">⚠️ Warnings & Missing Records</div>
           {d.warnings.map((w,i) => <div key={i} className="pp-warn">⚠️ {w}</div>)}
         </div>
       )}
-
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:22 }}>
         <div className="pp-sec" style={{ marginBottom:0 }}>
           <div className="pp-sec-ttl">GST Calculation</div>
@@ -7428,12 +8068,11 @@ function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, d
         <div className="pp-sec" style={{ marginBottom:0 }}>
           <div className="pp-sec-ttl">Wages & PAYG</div>
           <div className="pp-row"><span className="pp-lbl">Total Gross Wages</span><span className="pp-val">{money(d.totalWages)}</span></div>
-          <div className="pp-row"><span className="pp-lbl">PAYG Withheld Withheld (ATO Scale 2)</span><span className="pp-val">{money(d.totalPayg)}</span></div>
-          <div className="pp-row"><span className="pp-lbl">Super (SGC) (SGC)</span><span className="pp-val">{money(d.totalSuper)}</span></div>
+          <div className="pp-row"><span className="pp-lbl">PAYG Withheld (ATO Scale 2)</span><span className="pp-val">{money(d.totalPayg)}</span></div>
+          <div className="pp-row"><span className="pp-lbl">Super (SGC)</span><span className="pp-val">{money(d.totalSuper)}</span></div>
           <div className="pp-tot"><span>Total Employment Cost</span><span className="pp-tot-v">{money(d.totalWages+d.totalPayg+d.totalSuper)}</span></div>
         </div>
       </div>
-
       <div className="pp-sec">
         <div className="pp-sec-ttl">BAS Estimate Summary</div>
         <div className="pp-row"><span className="pp-lbl">Net GST Payable</span><span className="pp-val">{money(d.netGST)}</span></div>
@@ -7441,24 +8080,6 @@ function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, d
         <div className="pp-row"><span className="pp-lbl">Est. Quarterly Insurance</span><span className="pp-val">{money(d.totalIns)}</span></div>
         <div className="pp-tot"><span>Estimated Total BAS Obligation</span><span className="pp-tot-v">{money(d.estBAS)}</span></div>
       </div>
-
-      <div className="pp-sec">
-        <div className="pp-sec-ttl">Supporting Documents — {selQ}</div>
-        <div className="pp-quarter-grid">
-          {[
-            { lbl:"Verified Documents",  val:d.verifiedDocs, ok:true  },
-            { lbl:"Pending Review",       val:d.pendingDocs,  ok:d.pendingDocs===0 },
-            { lbl:"Missing Documents",    val:d.missingDocs,  ok:d.missingDocs===0 },
-            { lbl:"Missing Tax Invoices", val:d.missingInv,   ok:d.missingInv===0  },
-          ].map((s,i) => (
-            <div key={i} className="pp-q-card">
-              <div className="pp-q-lbl">{s.lbl}</div>
-              <div className="pp-q-val" style={{ color: s.ok ? "#059669" : "#DC2626" }}>{s.val}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
       <PPDisclaimer/>
     </div>
   );
@@ -7469,74 +8090,172 @@ function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, d
         onExport={() => renderBASSummaryPDF({d, quarter:selQ})}><PrintContent/></PrintModal>}
 
       <div className="hdr">
-        <div className="hdr-left"><div className="ptitle">📋 BAS Summary Generator</div><div className="psub">Quarterly BAS support summary — for review before lodgment</div></div>
+        <div className="hdr-left"><div className="ptitle">📋 BAS Summary</div><div className="psub">Quarterly BAS support summary — for review before lodgment</div></div>
         <div className="hdr-right">
           <select className="sel" value={selQ} onChange={e => setSelQ(e.target.value)} style={{ width:140 }}>
             {BAS_QUARTERS.map(q => <option key={q}>{q}</option>)}
           </select>
-          <button className="btn" onClick={() => setPrint(true)}>⬇️ Export PDF</button>
+          <button className="btn-b" onClick={() => setPrint(true)}>⬇️ Export PDF</button>
+          <button className="btn" onClick={saveToHistory}>
+            {existingEntry ? "💾 Update History" : "💾 Save to History"}
+          </button>
         </div>
       </div>
 
-      {d.warnings.length > 0 && d.warnings.map((w,i) => (
-        <div key={i} className="alert al-y"><span className="al-ico">⚠️</span><div><div className="al-msg">{w}</div></div></div>
-      ))}
-
-      <div className="g4">
-        {[
-          { lbl:"Total Sales",         val:money(d.totalRev),   cls:"b" },
-          { lbl:"Net GST Payable",     val:money(d.netGST),     cls:"y" },
-          { lbl:"PAYG Withheld",           val:money(d.totalPayg),  cls:"" },
-          { lbl:"Est. BAS Obligation", val:money(d.estBAS),     cls:"r" },
-        ].map((c,i) => <div key={i} className="card"><div className="clbl">{c.lbl}</div><div className={`cval ${c.cls}`}>{c.val}</div></div>)}
+      {/* Tabs */}
+      <div style={{ display:"flex", gap:6, marginBottom:16, borderBottom:`1px solid ${C.border}`, paddingBottom:0 }}>
+        {[["summary","📊 Summary"],["history","🕐 History"]].map(([id,lbl]) => (
+          <button key={id} onClick={() => setTab(id)}
+            style={{ padding:"8px 16px", fontSize:12, fontWeight:600, fontFamily:"inherit", cursor:"pointer", border:"none", borderBottom: tab===id ? `2px solid ${C.accent}` : "2px solid transparent", background:"none", color: tab===id ? C.accent : C.muted, transition:"all .15s" }}>
+            {lbl}
+            {id==="history" && basHistory.length>0 && (
+              <span style={{ marginLeft:6, background:C.accent, color:"#000", borderRadius:10, padding:"1px 7px", fontSize:10 }}>{basHistory.length}</span>
+            )}
+          </button>
+        ))}
       </div>
 
-      <div className="g2">
-        <div className="bc">
-          <div className="bctit">GST Position</div>
-          <div className="bas-row"><span className="bas-lbl">Total Sales (incl. GST)</span><span className="bas-val">{money(d.totalRev)}</span></div>
-          <div className="bas-row"><span className="bas-lbl">GST on Sales (÷11)</span><span className="bas-val" style={{ color:C.red }}>{money(d.gstColl)}</span></div>
-          <div className="bas-row"><span className="bas-lbl">GST Credits on Purchases</span><span className="bas-val" style={{ color:C.green }}>− {money(d.gstCreds)}</span></div>
-          <div className="bas-tot"><span className="bas-tot-lbl">Net GST Payable</span><span className="bas-tot-val">{money(d.netGST)}</span></div>
-        </div>
-        <div className="bc">
-          <div className="bctit">Wages & Employment</div>
-          <div className="bas-row"><span className="bas-lbl">Total Gross Wages</span><span className="bas-val">{money(d.totalWages)}</span></div>
-          <div className="bas-row"><span className="bas-lbl">PAYG Withheld Withheld (ATO Scale 2)</span><span className="bas-val" style={{ color:C.yellow }}>{money(d.totalPayg)}</span></div>
-          <div className="bas-row"><span className="bas-lbl">Super (SGC) (SGC)</span><span className="bas-val" style={{ color:C.blue }}>{money(d.totalSuper)}</span></div>
-          <div className="bas-row"><span className="bas-lbl">Quarterly Insurance</span><span className="bas-val" style={{ color:C.purple }}>{money(d.totalIns)}</span></div>
-          <div className="bas-tot"><span className="bas-tot-lbl">Total Employment Cost</span><span className="bas-tot-val">{money(d.totalWages+d.totalPayg+d.totalSuper)}</span></div>
-        </div>
-      </div>
+      {/* ── SUMMARY TAB ── */}
+      {tab === "summary" && (
+        <>
+          {d.warnings.length > 0 && d.warnings.map((w,i) => (
+            <div key={i} className="alert al-y"><span className="al-ico">⚠️</span><div><div className="al-msg">{w}</div></div></div>
+          ))}
 
-      <div className="bc">
-        <div className="bctit">📄 Supporting Documents — {selQ}</div>
-        <div className="g4">
-          {[
-            { lbl:"Verified Docs",       val:d.verifiedDocs, cls:"g" },
-            { lbl:"Pending Review",      val:d.pendingDocs,  cls:d.pendingDocs?"y":"g" },
-            { lbl:"Missing Docs",        val:d.missingDocs,  cls:d.missingDocs?"r":"g" },
-            { lbl:"Missing Tax Invoices",val:d.missingInv,   cls:d.missingInv?"r":"g" },
-          ].map((c,i) => <div key={i} className="card"><div className="clbl">{c.lbl}</div><div className={`cval ${c.cls}`}>{c.val}</div></div>)}
-        </div>
-        {d.verifiedDocs === 0 && (
-          <div className="alert al-y" style={{ marginBottom:0 }}>
-            <span className="al-ico">📁</span>
-            <div><div className="al-ttl">No verified documents for {selQ}</div><div className="al-msg">Upload and verify supporting documents in the Document Hub before generating your BAS summary.</div></div>
+          {/* Status badge if already in history */}
+          {existingEntry && (() => {
+            const sc = STATUS_CFG[existingEntry.status];
+            return (
+              <div style={{ background:sc.bg, border:`1px solid ${sc.border}`, borderRadius:9, padding:"9px 14px", marginBottom:14, display:"flex", alignItems:"center", gap:10 }}>
+                <span style={{ fontSize:11, fontWeight:700, color:sc.col }}>{sc.lbl}</span>
+                <span style={{ fontSize:11, color:C.muted }}>Saved {existingEntry.savedDate}{existingEntry.lodgedDate ? ` · Lodged ${existingEntry.lodgedDate}` : ""}</span>
+                {existingEntry.notes && <span style={{ fontSize:11, color:C.muted, fontStyle:"italic" }}>· {existingEntry.notes}</span>}
+              </div>
+            );
+          })()}
+
+          <div className="g4">
+            {[
+              { lbl:"Total Sales",         val:money(d.totalRev),   cls:"b" },
+              { lbl:"Net GST Payable",     val:money(d.netGST),     cls:"y" },
+              { lbl:"PAYG Withheld",       val:money(d.totalPayg),  cls:""  },
+              { lbl:"Est. BAS Obligation", val:money(d.estBAS),     cls:"r" },
+            ].map((c,i) => <div key={i} className="card"><div className="clbl">{c.lbl}</div><div className={`cval ${c.cls}`}>{c.val}</div></div>)}
           </div>
-        )}
-      </div>
 
-      <div className="bc">
-        <div className="bctit">💰 Estimated BAS — {selQ}</div>
-        <div className="bas-row"><span className="bas-lbl">Net GST Payable</span><span className="bas-val">{money(d.netGST)}</span></div>
-        <div className="bas-row"><span className="bas-lbl">PAYG Withholding</span><span className="bas-val">{money(d.totalPayg)}</span></div>
-        <div className="bas-tot"><span className="bas-tot-lbl">Estimated Total BAS</span><span className="bas-tot-val">{money(d.estBAS)}</span></div>
-        <div className="disc" style={{ marginTop:12 }}>
-          <div className="d-ttl">⚠️ Disclaimer</div>
-          <div className="d-txt">This is an estimate for management planning purposes only. It does not constitute a lodged BAS. Review with a registered tax agent before lodging with the ATO.</div>
+          <div className="g2">
+            <div className="bc">
+              <div className="bctit">GST Position</div>
+              <div className="bas-row"><span className="bas-lbl">Total Sales (incl. GST)</span><span className="bas-val">{money(d.totalRev)}</span></div>
+              <div className="bas-row"><span className="bas-lbl">GST on Sales (÷11)</span><span className="bas-val" style={{ color:C.red }}>{money(d.gstColl)}</span></div>
+              <div className="bas-row"><span className="bas-lbl">GST Credits on Purchases</span><span className="bas-val" style={{ color:C.green }}>− {money(d.gstCreds)}</span></div>
+              <div className="bas-tot"><span className="bas-tot-lbl">Net GST Payable</span><span className="bas-tot-val">{money(d.netGST)}</span></div>
+            </div>
+            <div className="bc">
+              <div className="bctit">Wages & Employment</div>
+              <div className="bas-row"><span className="bas-lbl">Total Gross Wages</span><span className="bas-val">{money(d.totalWages)}</span></div>
+              <div className="bas-row"><span className="bas-lbl">PAYG Withheld (ATO Scale 2)</span><span className="bas-val" style={{ color:C.yellow }}>{money(d.totalPayg)}</span></div>
+              <div className="bas-row"><span className="bas-lbl">Super (SGC)</span><span className="bas-val" style={{ color:C.blue }}>{money(d.totalSuper)}</span></div>
+              <div className="bas-row"><span className="bas-lbl">Quarterly Insurance</span><span className="bas-val" style={{ color:C.purple }}>{money(d.totalIns)}</span></div>
+              <div className="bas-tot"><span className="bas-tot-lbl">Total Employment Cost</span><span className="bas-tot-val">{money(d.totalWages+d.totalPayg+d.totalSuper)}</span></div>
+            </div>
+          </div>
+
+          <div className="bc">
+            <div className="bctit">📄 Supporting Documents — {selQ}</div>
+            <div className="g4">
+              {[
+                { lbl:"Verified Docs",        val:d.verifiedDocs, cls:"g" },
+                { lbl:"Pending Review",       val:d.pendingDocs,  cls:d.pendingDocs?"y":"g" },
+                { lbl:"Missing Docs",         val:d.missingDocs,  cls:d.missingDocs?"r":"g" },
+                { lbl:"Missing Tax Invoices", val:d.missingInv,   cls:d.missingInv?"r":"g" },
+              ].map((c,i) => <div key={i} className="card"><div className="clbl">{c.lbl}</div><div className={`cval ${c.cls}`}>{c.val}</div></div>)}
+            </div>
+          </div>
+
+          <div className="bc">
+            <div className="bctit">💰 Estimated BAS — {selQ}</div>
+            <div className="bas-row"><span className="bas-lbl">Net GST Payable</span><span className="bas-val">{money(d.netGST)}</span></div>
+            <div className="bas-row"><span className="bas-lbl">PAYG Withholding</span><span className="bas-val">{money(d.totalPayg)}</span></div>
+            <div className="bas-tot"><span className="bas-tot-lbl">Estimated Total BAS</span><span className="bas-tot-val">{money(d.estBAS)}</span></div>
+
+            {/* Save to history form */}
+            <div style={{ marginTop:16, paddingTop:14, borderTop:`1px solid ${C.border}`, display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
+              <input className="inp" style={{ flex:"1 1 200px" }} placeholder="Notes (optional, e.g. lodged via portal)"
+                value={editNotes} onChange={e => setEditNotes(e.target.value)}/>
+              <button className="btn" onClick={saveToHistory} style={{ whiteSpace:"nowrap" }}>
+                {existingEntry ? "💾 Update History" : "💾 Save to History"}
+              </button>
+            </div>
+
+            <div className="disc" style={{ marginTop:12 }}>
+              <div className="d-ttl">⚠️ Disclaimer</div>
+              <div className="d-txt">This is an estimate for management planning purposes only. It does not constitute a lodged BAS. Review with a registered tax agent before lodging with the ATO.</div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ── HISTORY TAB ── */}
+      {tab === "history" && (
+        <div className="bc">
+          <div className="bctit">BAS History
+            <span style={{ fontSize:11, fontWeight:400, color:C.muted, marginLeft:8 }}>{basHistory.length} quarter{basHistory.length!==1?"s":""} recorded</span>
+          </div>
+
+          {basHistory.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-icon">📋</div>
+              <div className="empty-txt">No BAS history yet.</div>
+              <div style={{ fontSize:12, color:C.dim, marginTop:6 }}>Go to the Summary tab, review a quarter, then click "Save to History".</div>
+            </div>
+          ) : (
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>Quarter</th>
+                  <th style={{ textAlign:"right" }}>Total Sales</th>
+                  <th style={{ textAlign:"right" }}>Net GST</th>
+                  <th style={{ textAlign:"right" }}>PAYG</th>
+                  <th style={{ textAlign:"right" }}>Est. BAS</th>
+                  <th>Status</th>
+                  <th>Saved</th>
+                  <th>Notes</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...basHistory].sort((a,b) => BAS_QUARTERS.indexOf(a.quarter) - BAS_QUARTERS.indexOf(b.quarter)).map(h => {
+                  const sc = STATUS_CFG[h.status] || STATUS_CFG.draft;
+                  return (
+                    <tr key={h.id}>
+                      <td style={{ fontWeight:700 }}>{h.quarter}</td>
+                      <td className="mono" style={{ textAlign:"right" }}>{money(h.totalRev)}</td>
+                      <td className="mono" style={{ textAlign:"right", color:C.yellow }}>{money(h.netGST)}</td>
+                      <td className="mono" style={{ textAlign:"right" }}>{money(h.totalPayg)}</td>
+                      <td className="mono" style={{ textAlign:"right", fontWeight:700, color:C.red }}>{money(h.estBAS)}</td>
+                      <td>
+                        <select value={h.status} onChange={e => updateStatus(h.id, e.target.value)}
+                          style={{ background:sc.bg, color:sc.col, border:`1px solid ${sc.border}`, borderRadius:6, padding:"3px 8px", fontSize:11, fontWeight:700, fontFamily:"inherit", cursor:"pointer" }}>
+                          <option value="draft">Draft</option>
+                          <option value="finalised">Finalised</option>
+                          <option value="lodged">Lodged ✓</option>
+                        </select>
+                      </td>
+                      <td className="mono" style={{ fontSize:11, color:C.muted }}>{h.savedDate}</td>
+                      <td style={{ fontSize:11, color:C.muted, maxWidth:150, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{h.notes||"—"}</td>
+                      <td style={{ whiteSpace:"nowrap" }}>
+                        <button className="btn-ic" title="View" onClick={() => { setSelQ(h.quarter); setTab("summary"); }}>👁️</button>
+                        <button className="btn-ic" title="Delete" onClick={() => deleteEntry(h.id)}>🗑️</button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
         </div>
-      </div>
+      )}
     </>
   );
 }
@@ -8040,15 +8759,22 @@ export default function App() {
   const [insurance,  setInsurance]  = useState(SEED_INSURANCE);
   const [leave,      setLeave]      = useState(SEED_LEAVE);
   const [ias,        setIas]        = useState(SEED_IAS);
+  const [basHistory, setBasHistory] = useState([]);  // [{id, quarter, data, status, savedDate, lodgedDate, notes}]
   const [documents,  setDocuments]  = useState(SEED_DOCUMENTS);
   const [toast,      setToast]      = useState(null);
 
   const showToast = msg => { setToast(msg); setTimeout(() => setToast(null), 2800); };
 
   const analysed  = analyseExpenses(expenses);
+  const insExpiring = insurance.filter(i => {
+    if (!i.renewal) return false;
+    const days = Math.ceil((new Date(i.renewal) - new Date()) / 86400000);
+    return days <= 60 && days >= 0;
+  }).length;
   const flagCount = analysed.filter(e => e.gstStatus === "missing-invoice").length
                   + timesheets.filter(t => !t.super_paid).length
-                  + analysed.filter(e => e.ent).length;
+                  + analysed.filter(e => e.ent).length
+                  + insExpiring;
 
   if (screen === "landing") return (<><style>{CSS}</style><LandingPage onGo={() => setScreen("auth")}/></>);
   if (screen === "auth")    return (<><style>{CSS}</style><AuthPage onLogin={() => setScreen("app")}/></>);
@@ -8068,7 +8794,7 @@ export default function App() {
           {page === "taxsaver"       && <TaxSaverPage  expenses={expenses} setExpenses={setExpenses} employees={employees} timesheets={timesheets} setTimesheets={setTimesheets} showToast={showToast}/>}
           {page === "ias"            && <IASPage        timesheets={timesheets} employees={employees} ias={ias} setIas={setIas} showToast={showToast}/>}
           {page === "documents"      && <DocumentsPage documents={documents} setDocuments={setDocuments} employees={employees} showToast={showToast}/>}
-          {page === "bassummary"     && <BASSummaryPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} showToast={showToast}/>}
+          {page === "bassummary"     && <BASSummaryPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} basHistory={basHistory} setBasHistory={setBasHistory} showToast={showToast}/>}
           {page === "accountantpack" && <AccountantPackPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} showToast={showToast}/>}
           {page === "reports"        && <ReportsPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents}/>}
           {page === "settings"       && <SettingsPage industry={industry} setIndustry={setIndustry} showToast={showToast}/>}

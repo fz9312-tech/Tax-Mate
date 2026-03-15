@@ -923,9 +923,11 @@ const pdfTwoSec = (pdf, startY, left, right) => {
   const M=pdf.M, W=pdf.W, gap=14;
   const colW=(W-M*2-gap)/2;
   const lx=M, rx=M+colW+gap;
-  const ROW_H = 22;   // text size 9 baseline at y+5+9=y+14; separator at y+22; gap=8pt
+  const ROW_H = 22;
+  const MAX_VAL_CHARS = 28; // max chars before truncation
+  const truncate = s => s && s.length > MAX_VAL_CHARS ? s.slice(0, MAX_VAL_CHARS-1)+'.' : s;
 
-  // Section titles: text baseline at startY+9; separator at startY+16; rows start at startY+24
+  // Section titles
   pdf.text(lx, startY, left.title,  {size:9, bold:true, color:'#6B7280'});
   pdf.line(lx, startY+16, lx+colW, startY+16, {color:'#E5E7EB', w:0.8});
   pdf.text(rx, startY, right.title, {size:9, bold:true, color:'#6B7280'});
@@ -933,20 +935,19 @@ const pdfTwoSec = (pdf, startY, left, right) => {
   let ly=startY+24, ry=startY+24;
 
   left.rows.forEach(r=>{
-    pdf.text(lx+4,       ly+5, r.lbl, {size:9, color:'#374151'});
-    pdf.text(lx+colW-4,  ly+5, r.val, {size:9, bold:!!r.bold, color:r.color||'#111111', align:'right'});
+    pdf.text(lx+4,       ly+5, r.lbl,           {size:9, color:'#374151'});
+    pdf.text(lx+colW-4,  ly+5, truncate(r.val), {size:9, bold:!!r.bold, color:r.color||'#111111', align:'right'});
     pdf.line(lx, ly+ROW_H, lx+colW, ly+ROW_H, {color:'#F3F4F6', w:0.5});
     ly+=ROW_H;
   });
   right.rows.forEach(r=>{
-    pdf.text(rx+4,      ry+5, r.lbl, {size:9, color:'#374151'});
-    pdf.text(rx+colW-4, ry+5, r.val, {size:9, bold:!!r.bold, color:r.color||'#111111', align:'right'});
+    pdf.text(rx+4,      ry+5, r.lbl,           {size:9, color:'#374151'});
+    pdf.text(rx+colW-4, ry+5, truncate(r.val), {size:9, bold:!!r.bold, color:r.color||'#111111', align:'right'});
     pdf.line(rx, ry+ROW_H, rx+colW, ry+ROW_H, {color:'#F3F4F6', w:0.5});
     ry+=ROW_H;
   });
 
   const maxY=Math.max(ly,ry)+8;
-  // Total boxes side-by-side
   if(left.total){
     pdf.rect(lx, maxY, colW, 32, {fill:'#F9FAFB', stroke:'#E5E7EB'});
     pdf.text(lx+8,      maxY+10, left.total.lbl,  {size:9.5, bold:true, color:'#111111'});
@@ -1251,10 +1252,28 @@ const renderDocRegisterPDF = ({documents, selFY}) => {
   return pdf;
 };
 
-const renderPayslipPDF = ({emp, rows, totals, payPeriodLabel, bizName, bizABN}) => {
+const renderPayslipPDF = ({emp, rows, totals, payPeriodLabel, bizName, bizABN, showOTWknd=true}) => {
   const pdf=new MiniPDF();
   const W=pdf.W, M=pdf.M;
-  let y=pdfHeader(pdf, 'Employee Payslip', 'Payslip & Wage Summary', payPeriodLabel, bizName||'My Restaurant');
+
+  // PDF period label — must be short and ASCII-only (MiniPDF strips non-ASCII)
+  const safePeriodLabel = (() => {
+    if (!payPeriodLabel) return '-';
+    // Strip all non-ASCII chars first
+    const ascii = payPeriodLabel.replace(/[^\x20-\x7E]/g, ' ').replace(/\s+/g, ' ').trim();
+    // If short enough, use as-is
+    if (ascii.length <= 36) return ascii;
+    // Multiple weeks — show compact week range
+    if (rows.length > 1) {
+      const first = rows[rows.length-1]?.week || '';
+      const last  = rows[0]?.week || '';
+      return `${first} to ${last} (${rows.length} weeks)`;
+    }
+    // Single week — use the week string directly
+    return rows[0]?.week || ascii.slice(0, 36);
+  })();
+
+  let y=pdfHeader(pdf, 'Employee Payslip', 'Payslip & Wage Summary', safePeriodLabel, bizName||'My Restaurant');
 
   if(bizABN) {
     pdf.text(W-M, 35, `ABN: ${bizABN}`, {size:8, color:'#6B7280', align:'right'});
@@ -1266,8 +1285,8 @@ const renderPayslipPDF = ({emp, rows, totals, payPeriodLabel, bizName, bizABN}) 
     { title:'EMPLOYEE DETAILS',
       rows:[
         {lbl:'Name',            val:emp.name},
-        {lbl:'Role',            val:emp.role||'—'},
-        {lbl:'Employment Type', val:emp.type?emp.type.charAt(0).toUpperCase()+emp.type.slice(1):'—'},
+        {lbl:'Role',            val:emp.role||'-'},
+        {lbl:'Employment Type', val:emp.type?emp.type.charAt(0).toUpperCase()+emp.type.slice(1):'-'},
         {lbl:'Base Rate',       val:`$${parseFloat(emp.rate).toFixed(2)}/hr`},
         {lbl:'Effective Rate',  val:`$${effR.toFixed(2)}/hr`},
         {lbl:'Super Fund',      val:emp.superfund||'Not specified'},
@@ -1277,10 +1296,10 @@ const renderPayslipPDF = ({emp, rows, totals, payPeriodLabel, bizName, bizABN}) 
     },
     { title:'PAY PERIOD',
       rows:[
-        {lbl:'Period',            val:payPeriodLabel},
+        {lbl:'Period',            val:safePeriodLabel},
         {lbl:'Standard Hours',    val:`${totals.std_hrs}h`},
-        {lbl:'Overtime Hours',    val:`${totals.ot_hrs}h`},
-        {lbl:'Weekend / PH Hrs',  val:`${totals.wknd_hrs}h`},
+        ...(showOTWknd ? [{lbl:'Overtime Hours',   val:`${totals.ot_hrs}h`}]   : []),
+        ...(showOTWknd ? [{lbl:'Weekend / PH Hrs', val:`${totals.wknd_hrs}h`}] : []),
         {lbl:'Total Hours',       val:`${(totals.std_hrs+totals.ot_hrs+totals.wknd_hrs)}h`, bold:true},
         {lbl:'Gross Pay',         val:`$${totals.gross.toFixed(2)}`, bold:true},
       ],
@@ -1289,29 +1308,65 @@ const renderPayslipPDF = ({emp, rows, totals, payPeriodLabel, bizName, bizABN}) 
   );
   y+=4;
 
-  // Hours breakdown table
+  // Hours breakdown table — only show OT/Wknd columns if any hours were actually logged AND showOTWknd is on
   y=pdfSecTitle(pdf, y, 'HOURS & EARNINGS BREAKDOWN');
-  const cols=[100,50,50,50,75,75,75,0];
-  cols[7]=W-M*2-cols.slice(0,7).reduce((s,c)=>s+c,0);
-  y=pdfTable(pdf, y,
-    ['Pay Week','Std Hrs','OT Hrs','Wknd Hrs','Std Pay','OT Pay','Wknd Pay','Gross'],
-    rows.map(r=>[
-      r.week, `${r.std_hrs}h`, `${r.ot_hrs}h`, `${r.wknd_hrs}h`,
-      `$${(effR*r.std_hrs).toFixed(2)}`,
-      r.ot_hrs>0?`$${(effR*OT_RATE*r.ot_hrs).toFixed(2)}`:'—',
-      r.wknd_hrs>0?`$${(effR*WKND_RATE*r.wknd_hrs).toFixed(2)}`:'—',
-      `$${r.gross.toFixed(2)}`,
-    ]),
-    cols,
-    { footerRow:['TOTAL',`${totals.std_hrs}h`,`${totals.ot_hrs}h`,`${totals.wknd_hrs}h`,'','','',`$${totals.gross.toFixed(2)}`],
-      numCols:[4,5,6,7] }
+  const hasOT   = showOTWknd && rows.some(r => r.ot_hrs   > 0);
+  const hasWknd = showOTWknd && rows.some(r => r.wknd_hrs > 0);
+
+  // Build headers and column widths dynamically
+  const hdrs = ['Pay Week', 'Std Hrs'];
+  if (hasOT)   hdrs.push('OT Hrs');
+  if (hasWknd) hdrs.push('Wknd Hrs');
+  hdrs.push('Std Pay');
+  if (hasOT)   hdrs.push('OT Pay');
+  if (hasWknd) hdrs.push('Wknd Pay');
+  hdrs.push('Gross');
+
+  // Fixed widths for each possible column
+  const W_WEEK=100, W_HRS=50, W_PAY=72;
+  const colsFixed = [W_WEEK, W_HRS];
+  if (hasOT)   colsFixed.push(W_HRS);
+  if (hasWknd) colsFixed.push(W_HRS);
+  colsFixed.push(W_PAY);
+  if (hasOT)   colsFixed.push(W_PAY);
+  if (hasWknd) colsFixed.push(W_PAY);
+  colsFixed.push(0); // Gross fills remainder
+  colsFixed[colsFixed.length-1] = W-M*2 - colsFixed.slice(0,-1).reduce((s,c)=>s+c,0);
+
+  const numColsIdx = [];
+  hdrs.forEach((h,i) => { if(['Std Pay','OT Pay','Wknd Pay','Gross'].includes(h)) numColsIdx.push(i); });
+
+  const footerRow = ['TOTAL', `${totals.std_hrs}h`];
+  if (hasOT)   footerRow.push(`${totals.ot_hrs}h`);
+  if (hasWknd) footerRow.push(`${totals.wknd_hrs}h`);
+  footerRow.push('');
+  if (hasOT)   footerRow.push('');
+  if (hasWknd) footerRow.push('');
+  footerRow.push(`$${totals.gross.toFixed(2)}`);
+
+  y=pdfTable(pdf, y, hdrs,
+    rows.map(r=>{
+      const stdPay  = effR * r.std_hrs;
+      const otPay   = r.ot_hrs   > 0 ? effR * OT_RATE   * r.ot_hrs   : 0;
+      const wkndPay = r.wknd_hrs > 0 ? effR * WKND_RATE * r.wknd_hrs : 0;
+      const row = [r.week, `${r.std_hrs}h`];
+      if (hasOT)   row.push(`${r.ot_hrs}h`);
+      if (hasWknd) row.push(`${r.wknd_hrs}h`);
+      row.push(`$${stdPay.toFixed(2)}`);
+      if (hasOT)   row.push(otPay   > 0 ? `$${otPay.toFixed(2)}`   : '-');
+      if (hasWknd) row.push(wkndPay > 0 ? `$${wkndPay.toFixed(2)}` : '-');
+      row.push(`$${r.gross.toFixed(2)}`);
+      return row;
+    }),
+    colsFixed,
+    { footerRow, numCols:numColsIdx }
   );
   y+=4;
 
   // Pay summary
   y=pdfSecTitle(pdf, y, 'PAY SUMMARY');
   y=pdfRow(pdf, y, 'Gross Pay', `$${totals.gross.toFixed(2)}`);
-  y=pdfRow(pdf, y, `PAYG Withheld (ATO${emp.tfn?' Scale 2':' — no TFN 47%'})`, `- $${totals.payg.toFixed(2)}`, {valColor:'#DC2626'});
+  y=pdfRow(pdf, y, `PAYG Withheld (ATO${emp.tfn?' Scale 2':' - no TFN 47%'})`, `- $${totals.payg.toFixed(2)}`, {valColor:'#DC2626'});
   y+=2;
   y=pdfTotRow(pdf, y, 'Net Pay (Take-Home)', `$${totals.net.toFixed(2)}`);
   y+=4;
@@ -1320,11 +1375,11 @@ const renderPayslipPDF = ({emp, rows, totals, payPeriodLabel, bizName, bizABN}) 
   const superRateDisplay = totals.superR ? `${(totals.superR*100).toFixed(1)}%` : `${(getSuperRate(todayWeekStr)*100).toFixed(1)}%`;
   pdf.rect(M, y, W-M*2, 40, {fill:'#EFF6FF', stroke:'#BFDBFE'});
   pdf.text(M+10, y+10, `Super (${superRateDisplay}): $${totals.super.toFixed(2)} to be paid to ${emp.superfund||'nominated fund'} within 28 days of quarter end.`, {size:8.5, color:'#1D4ED8'});
-  pdf.text(M+10, y+26, 'Late super payments attract the SGC — not tax deductible.', {size:8, color:'#3B82F6'});
+  pdf.text(M+10, y+26, 'Late super payments attract the SGC - not tax deductible.', {size:8, color:'#3B82F6'});
   y+=48;
 
   if(!emp.tfn){
-    y=pdfWarn(pdf, y, `No TFN on file — PAYG withheld at 47%. Ask ${emp.name} to provide their TFN.`);
+    y=pdfWarn(pdf, y, `No TFN on file - PAYG withheld at 47%. Ask ${emp.name} to provide their TFN.`);
   }
 
   pdfDisclaimer(pdf, y);
@@ -4827,13 +4882,13 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
                             <div style={{fontSize:9,color:C.muted,marginTop:1}}>
                               {sh.openEnd ? "open end" : `${shiftHrs(sh).toFixed(1)}h`}
                             </div>
-                              {/* OT / Weekend rate badge */}
-                              {hasOT && (
+                              {/* OT / Weekend rate badge — only show when toggle is on */}
+                              {hasOT && applyOT && (
                                 <div style={{fontSize:8,fontWeight:700,color:"#DC2626",marginTop:1}}>
                                   ⚡ {sd.otHrs.toFixed(1)}h OT ×1.5
                                 </div>
                               )}
-                              {isWknd && (
+                              {isWknd && applyWknd && (
                                 <div style={{fontSize:8,fontWeight:700,color:"#D97706",marginTop:1}}>
                                   ×1.75 Wknd
                                 </div>
@@ -5692,6 +5747,7 @@ function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, biz
   const [showPrint,   setShowPrint]   = useState(false);
   const [batchWeek,   setBatchWeek]   = useState("");
   const [batchExporting, setBatchExporting] = useState(false);
+  const [showOTWknd,  setShowOTWknd]  = useState(true); // show/hide OT & Weekend rows in PDF
 
   // Build week options from existing timesheets
   const weeks = [...new Set(timesheets.map(t => t.week))].sort().reverse();
@@ -6013,14 +6069,29 @@ function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, biz
             )}
           </div>
 
-          {/* Generate button */}
-          <div style={{ display:"flex", gap:10 }}>
+          {/* Generate button + options */}
+          <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
             <button className="btn" style={{ fontSize:14, padding:"12px 28px" }} onClick={() => { setShowPrint(true); showToast(`Payslip ready for ${emp.name} ✅`); }}>
               🖨️ Generate & Print Payslip
             </button>
             <button className="btn-g" onClick={() => { setSelEmp(""); setSelWeek(""); }}>
               Clear
             </button>
+            {/* OT/Weekend toggle */}
+            <div style={{ display:"flex", alignItems:"center", gap:7, marginLeft:"auto", background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:8, padding:"7px 12px" }}>
+              <span style={{ fontSize:11, color:C.muted, whiteSpace:"nowrap" }}>Show OT & Weekend rows</span>
+              <div onClick={() => setShowOTWknd(v => !v)} style={{
+                width:34, height:18, borderRadius:9, cursor:"pointer",
+                background: showOTWknd ? C.accent : C.dim,
+                position:"relative", transition:"background .2s", flexShrink:0,
+              }}>
+                <div style={{
+                  position:"absolute", top:2, left: showOTWknd ? 18 : 2,
+                  width:14, height:14, borderRadius:"50%", background:"#fff",
+                  transition:"left .2s",
+                }}/>
+              </div>
+            </div>
           </div>
         </>
       )}
@@ -6050,7 +6121,7 @@ function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, biz
 
       {showPrint && emp && (
         <PrintModal title={`Payslip — ${emp.name}`} onClose={() => setShowPrint(false)}
-          onExport={() => renderPayslipPDF({emp, rows, totals, payPeriodLabel, bizName, bizABN})}>
+          onExport={() => renderPayslipPDF({emp, rows, totals, payPeriodLabel, bizName, bizABN, showOTWknd})}>
           <PayslipPrint/>
         </PrintModal>
       )}

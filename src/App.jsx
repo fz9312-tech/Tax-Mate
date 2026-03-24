@@ -833,7 +833,116 @@ class MiniPDF {
   }
 }
 
-// ── PDF layout helpers ────────────────────────────────────────
+// ── Minimal ZIP builder (PKZIP 2.0, no compression — store only) ─
+// Builds a valid .zip from an array of {name, blob} entries
+const buildZip = async (files) => {
+  // Helper: 4-byte little-endian
+  const u32 = n => { const b=new Uint8Array(4); new DataView(b.buffer).setUint32(0,n,true); return b; };
+  const u16 = n => { const b=new Uint8Array(2); new DataView(b.buffer).setUint16(0,n,true); return b; };
+
+  // Simple CRC-32
+  const crcTable = (() => {
+    const t = new Uint32Array(256);
+    for (let i=0; i<256; i++) {
+      let c=i;
+      for (let k=0; k<8; k++) c = c&1 ? 0xEDB88320^(c>>>1) : c>>>1;
+      t[i]=c;
+    }
+    return t;
+  })();
+  const crc32 = (buf) => {
+    let c=0xFFFFFFFF;
+    for (let i=0; i<buf.length; i++) c = crcTable[(c^buf[i])&0xff]^(c>>>8);
+    return (c^0xFFFFFFFF)>>>0;
+  };
+
+  const enc = new TextEncoder();
+  const parts = [];
+  const centralDir = [];
+  let offset = 0;
+
+  for (const f of files) {
+    const nameBuf = enc.encode(f.name);
+    const data    = new Uint8Array(await f.blob.arrayBuffer());
+    const crc     = crc32(data);
+    const size    = data.length;
+
+    // Local file header
+    const local = new Uint8Array([
+      0x50,0x4B,0x03,0x04, // signature
+      20,0,                 // version needed
+      0,0,                  // flags
+      0,0,                  // compression (store)
+      0,0,0,0,              // mod time/date
+      ...u32(crc),
+      ...u32(size),
+      ...u32(size),
+      ...u16(nameBuf.length),
+      0,0,                  // extra length
+      ...nameBuf,
+    ]);
+    parts.push(local, data);
+
+    // Central directory entry
+    centralDir.push({ nameBuf, crc, size, offset });
+    offset += local.length + size;
+  }
+
+  // Write central directory
+  let cdSize = 0;
+  const cdParts = [];
+  for (const e of centralDir) {
+    const cd = new Uint8Array([
+      0x50,0x4B,0x01,0x02, // signature
+      20,0,                 // version made by
+      20,0,                 // version needed
+      0,0,                  // flags
+      0,0,                  // compression
+      0,0,0,0,              // mod time/date
+      ...u32(e.crc),
+      ...u32(e.size),
+      ...u32(e.size),
+      ...u16(e.nameBuf.length),
+      0,0,                  // extra
+      0,0,                  // comment
+      0,0,                  // disk start
+      0,0,                  // internal attr
+      0,0,0,0,              // external attr
+      ...u32(e.offset),
+      ...e.nameBuf,
+    ]);
+    cdParts.push(cd);
+    cdSize += cd.length;
+  }
+
+  // End of central directory
+  const eocd = new Uint8Array([
+    0x50,0x4B,0x05,0x06,
+    0,0,0,0,
+    ...u16(files.length),
+    ...u16(files.length),
+    ...u32(cdSize),
+    ...u32(offset),
+    0,0,
+  ]);
+
+  const totalLen = parts.reduce((s,p)=>s+p.length,0)
+                 + cdParts.reduce((s,p)=>s+p.length,0)
+                 + eocd.length;
+  const out = new Uint8Array(totalLen);
+  let pos = 0;
+  for (const p of [...parts, ...cdParts, eocd]) { out.set(p, pos); pos += p.length; }
+  return new Blob([out], { type:'application/zip' });
+};
+
+const zipDownload = (blob, filename) => {
+  const url = URL.createObjectURL(blob);
+  const a   = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+};
 const pdfDownload = (pdf, filename) => {
   // Use Blob + createObjectURL — avoids Chrome's data:application/pdf CSP block
   const blob = pdf.toBlob();
@@ -1374,8 +1483,8 @@ const renderPayslipPDF = ({emp, rows, totals, payPeriodLabel, bizName, bizABN, s
   // Super info box — rate is period-aware (11.5% pre-Jul 2025, 12% from Jul 2025)
   const superRateDisplay = totals.superR ? `${(totals.superR*100).toFixed(1)}%` : `${(getSuperRate(todayWeekStr)*100).toFixed(1)}%`;
   pdf.rect(M, y, W-M*2, 40, {fill:'#EFF6FF', stroke:'#BFDBFE'});
-  pdf.text(M+10, y+10, `Super (${superRateDisplay}): $${totals.super.toFixed(2)} to be paid to ${emp.superfund||'nominated fund'} within 28 days of quarter end.`, {size:8.5, color:'#1D4ED8'});
-  pdf.text(M+10, y+26, 'Late super payments attract the SGC - not tax deductible.', {size:8, color:'#3B82F6'});
+  pdf.text(M+10, y+10, `Super (${superRateDisplay}): $${totals.super.toFixed(2)} to be paid to ${emp.superfund||'nominated fund'} with each pay run (Payday Super from 1 Jul 2026).`, {size:8.5, color:'#1D4ED8'});
+  pdf.text(M+10, y+26, 'Late super attracts the SGC - not tax deductible. From Jul 2026, super must be paid each payday.', {size:8, color:'#3B82F6'});
   y+=48;
 
   if(!emp.tfn){
@@ -1435,7 +1544,7 @@ const renderIASPDF = ({ d, month, bizName, bizABN, adjustment, status }) => {
 
   // Super info (informational, not an IAS W field)
   pdf.rect(M, y, W-M*2, 28, {fill:'#EFF6FF', stroke:'#BFDBFE'});
-  pdf.text(M+10, y+10, `ℹ  Employer super obligation (not IAS): $${d.autoSuper.toFixed(2)} — due to funds within 28 days of quarter end.`, {size:8.5, color:'#1D4ED8'});
+  pdf.text(M+10, y+10, `i  Employer super obligation (not IAS): $${d.autoSuper.toFixed(2)} — from 1 Jul 2026, must be paid each payday under Payday Super rules.`, {size:8.5, color:'#1D4ED8'});
   y += 40;
 
   // Per-employee breakdown
@@ -4442,136 +4551,185 @@ function ShiftModal({ employees, initial, onSave, onClose, applyOT, applyWknd })
 
 // ── Roster PDF renderer — LANDSCAPE, employee-facing ─────
 const renderRosterPDF = ({ employees, weekShifts, weekDays, weekStart, weekEnd, isoDate, shiftHrs }) => {
-  const pdf = new MiniPDF(true);   // landscape: 842 × 595
+  const pdf = new MiniPDF(true);   // landscape: 842 x 595
   const W = pdf.W, H = pdf.H, M = pdf.M;
-  const DAY_SHORT = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
-  const safe   = str => String(str||'').replace(/[\u2013\u2014]/g,'-').replace(/[^\x20-\x7E]/g,'');
+
+  // ── Helpers ───────────────────────────────────────────────
+  const DAY_CAPS = ["MON","TUE","WED","THU","FRI","SAT","SUN"];
+  const safe = str => String(str||'').replace(/[\u2013\u2014]/g,'-').replace(/[^\x20-\x7E]/g,'');
   const safeDt = d => {
     const dd = String(d.getDate()).padStart(2,'0');
-    const mo = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
-    return `${dd} ${mo}`;
+    const mo = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
+    return dd+' '+mo;
+  };
+  const p12 = t => {
+    if (!t) return '';
+    const [h,m] = t.split(':').map(Number);
+    const ap = h>=12?'pm':'am';
+    const h12 = h===0?12:h>12?h-12:h;
+    return h12+':'+String(m).padStart(2,'0')+ap;
   };
 
-  // ── Header ────────────────────────────────────────────────
-  pdf.rect(M, 12, 34, 34, { fill:'#8FCB72' });
-  pdf.text(M+6,  16, 'M',                    { size:18, bold:true, color:'#0C0F0D' });
-  pdf.text(M+42, 16, 'Mise',                 { size:14, bold:true, color:'#111111' });
-  pdf.text(M+42, 32, 'HOSPITALITY FINANCE',  { size:7,             color:'#9CA3AF' });
-  pdf.text(W/2,  14, 'STAFF SCHEDULE',       { size:8,             color:'#9CA3AF', align:'center' });
-  pdf.text(W/2,  28, 'Weekly Roster',        { size:20, bold:true, color:'#111111', align:'center' });
-  pdf.text(W-M,  14, safe(`${weekStart} - ${weekEnd}`), { size:11, bold:true, color:'#111111', align:'right' });
-  pdf.text(W-M,  30, `Generated: ${todayStr}`,          { size:8,             color:'#9CA3AF', align:'right' });
-  pdf.line(M, 54, W-M, 54, { color:'#E5E7EB', w:1.5 });
-  let y = 62;
+  // ── Palette: B (notice board) + C (engineering grid) ─────
+  const INK       = '#0A0A0A';
+  const RULE      = '#1A1A1A';
+  const RULE_LT   = '#C8C8C8';
+  const HDR_FG    = '#FFFFFF';
+  const WKND_FG   = '#F5C518';
+  const WKND_COL  = '#FFFBEB';
+  const WKND_COL2 = '#FFF7D6';
+  const ROW_ALT   = '#F5F5F5';
+  const PILL_WD_BG  = '#FEF08A'; PILL_WK_BG  = '#DCFCE7';
+  const PILL_WD_BD  = '#CA8A04'; PILL_WK_BD  = '#16A34A';
+  const PILL_WD_TXT = '#713F12'; PILL_WK_TXT = '#14532D';
+  const OPEN_BG   = '#F1F5F9';
+  const OPEN_BD   = '#475569';
+  const OPEN_TXT  = '#1E3A5F';
+  const OPEN_LINE = '#94A3B8';
+
+  // ── Full-width black header bar ───────────────────────────
+  pdf.rect(0, 0, W, 60, {fill:'#111111'});
+  // Green logo block
+  pdf.rect(M, 11, 38, 38, {fill:'#8FCB72'});
+  pdf.text(M+7, 15, 'M', {size:22, bold:true, color:'#0A0A0A'});
+  // Centre title
+  pdf.text(W/2, 10, 'WEEKLY STAFF ROSTER',              {size:8.5, color:'#9CA3AF', align:'center'});
+  pdf.text(W/2, 22, safe(weekStart+' - '+weekEnd),      {size:19, bold:true, color:'#FFFFFF', align:'center'});
+  pdf.text(W/2, 44, 'Generated: '+todayStr,              {size:7.5, color:'#6B7280', align:'center'});
+  // Right wordmark
+  pdf.text(W-M, 18, 'Mise',                {size:16, bold:true, color:'#8FCB72', align:'right'});
+  pdf.text(W-M, 36, 'HOSPITALITY FINANCE', {size:6.5,           color:'#4B5563', align:'right'});
+
+  let y = 64;
 
   // ── Table layout ─────────────────────────────────────────
-  const nameW  = 120;
+  const nameW  = 110;
   const usable = W - M*2 - nameW;
   const dayW   = Math.floor(usable / 7);
   const tableW = nameW + dayW * 7;
 
-  // Row height — scale to fit, but keep a generous minimum
+  // Row heights — open-end rows get extra room for handwriting
   const rowHeights = employees.map(emp => {
     const maxSlots = Math.max(1, ...weekDays.map(d =>
       weekShifts.filter(s => s.eid===emp.id && s.date===isoDate(d)).length
     ));
-    return Math.max(52, maxSlots * 46 + 12);
+    const hasOpen = weekShifts.some(s => s.eid===emp.id && s.openEnd);
+    const base = hasOpen ? 68 : 58;
+    return Math.max(base, maxSlots * 56 + 10);
   });
-  const hdrH      = 38;
-  const totalTblH = hdrH + rowHeights.reduce((s,h) => s+h, 0);
-  const availH    = H - y - 36;
-  const scale     = totalTblH > availH ? availH / totalTblH : 1;
-  const scaledRows = rowHeights.map(h => Math.max(40, Math.round(h * scale)));
+  const hdrH      = 44;
+  const totalTblH = hdrH + rowHeights.reduce((s,h)=>s+h,0);
+  const availH    = H - y - 32;
+  const scale     = totalTblH > availH ? availH/totalTblH : 1;
+  const scaledRows = rowHeights.map(h => Math.max(50, Math.round(h*scale)));
 
   // ── Table header ─────────────────────────────────────────
-  pdf.rect(M, y, tableW, hdrH, { fill:'#111827' });
-  pdf.text(M+10, y+14, 'Staff', { size:11, bold:true, color:'#FFFFFF' });
+  pdf.rect(M, y, tableW, hdrH, {fill:'#222222'});
+  pdf.text(M+14, y+18, 'STAFF', {size:8, bold:true, color:'#9CA3AF'});
 
-  weekDays.forEach((d, i) => {
-    const cx   = M + nameW + i * dayW;
+  weekDays.forEach((d,i) => {
+    const cx   = M + nameW + i*dayW;
     const wknd = d.getDay()===0 || d.getDay()===6;
-    if (wknd) pdf.rect(cx, y, dayW, hdrH, { fill:'#78350F' });
-    // Strong amber border around weekend section
-    if (d.getDay()===6) pdf.line(cx, y, cx, y+hdrH, { color:'#F59E0B', w:1.5 });
-    if (d.getDay()===0) pdf.line(cx+dayW, y, cx+dayW, y+hdrH, { color:'#F59E0B', w:1.5 });
-    pdf.text(cx + dayW/2, y+10,  DAY_SHORT[i], { size:11, bold:true, color: wknd?'#FDE68A':'#FFFFFF', align:'center' });
-    pdf.text(cx + dayW/2, y+24,  safeDt(d),    { size:9,             color:'#9CA3AF',                 align:'center' });
+    const isSat = d.getDay()===6;
+    const isSun = d.getDay()===0;
+    if (wknd) {
+      pdf.rect(cx, y, dayW, hdrH, {fill:'#1C1C1C'});
+      // Amber top accent bar
+      pdf.rect(cx, y, dayW, 4, {fill:WKND_FG});
+    }
+    if (isSat) pdf.line(cx, y, cx, y+hdrH, {color:WKND_FG, w:2});
+    else        pdf.line(cx, y, cx, y+hdrH, {color:'#444444', w:0.5});
+    if (isSun)  pdf.line(cx+dayW, y, cx+dayW, y+hdrH, {color:WKND_FG, w:2});
+    pdf.text(cx+dayW/2, y+13, DAY_CAPS[i], {size:13, bold:true, color:wknd?WKND_FG:HDR_FG, align:'center'});
+    pdf.text(cx+dayW/2, y+30, safeDt(d),   {size:9,           color:wknd?'#FCD34D':'#9CA3AF', align:'center'});
   });
+  pdf.line(M, y+hdrH, M+tableW, y+hdrH, {color:RULE, w:1.5});
   y += hdrH;
 
   // ── Employee rows ─────────────────────────────────────────
   employees.forEach((emp, ei) => {
     const rH        = scaledRows[ei];
-    const empShifts = weekShifts.filter(s => s.eid === emp.id);
+    const empShifts = weekShifts.filter(s => s.eid===emp.id);
+    const rowBg     = ei%2===1 ? ROW_ALT : '#FFFFFF';
 
-    if (ei % 2 === 1) pdf.rect(M, y, tableW, rH, { fill:'#F8FAFC' });
-    pdf.line(M, y, M, y+rH, { color:'#CBD5E1', w:0.5 });
+    pdf.rect(M, y, tableW, rH, {fill:rowBg});
 
-    // Name — bigger, vertically centred
-    const nameMid = y + rH/2;
-    pdf.text(M+10, nameMid-7,  safe(emp.name),     { size:12, bold:true, color:'#111111' });
-    pdf.text(M+10, nameMid+8,  safe(emp.role||''), { size:9,             color:'#94A3B8' });
+    // Left colour stripe (engineering: precision accent)
+    pdf.rect(M, y, 4, rH, {fill: ei%2===0 ? '#8FCB72' : '#BBF7D0'});
 
-    // Day cells
+    // Name — large, vertically centred
+    const mid = y + rH/2;
+    pdf.text(M+14, mid-9,  safe(emp.name),     {size:14, bold:true, color:INK});
+    pdf.text(M+14, mid+8,  safe(emp.role||''), {size:8,             color:'#64748B'});
+
     weekDays.forEach((d, di) => {
-      const cx        = M + nameW + di * dayW;
+      const cx        = M + nameW + di*dayW;
       const wknd      = d.getDay()===0 || d.getDay()===6;
-      const dayShifts = empShifts.filter(s => s.date === isoDate(d));
+      const isSat     = d.getDay()===6;
+      const isSun     = d.getDay()===0;
+      const dayShifts = empShifts.filter(s => s.date===isoDate(d));
 
-      pdf.line(cx, y, cx, y+rH, { color:'#CBD5E1', w:0.4 });
-      if (wknd) {
-        pdf.rect(cx, y, dayW, rH, { fill: ei%2===1 ? '#FEF9EC' : '#FFFBEB' });
-        // Strong left border on first weekend col (Sat), right border on Sun
-        const isSat = d.getDay()===6;
-        const isSun = d.getDay()===0;
-        if (isSat) pdf.line(cx, y, cx, y+rH, { color:'#F59E0B', w:1.5 });
-        if (isSun) pdf.line(cx+dayW, y, cx+dayW, y+rH, { color:'#F59E0B', w:1.5 });
-      }
+      if (wknd) pdf.rect(cx, y, dayW, rH, {fill: ei%2===1 ? WKND_COL2 : WKND_COL});
+
+      // Grid lines
+      if (isSat) pdf.line(cx, y, cx, y+rH, {color:WKND_FG, w:2});
+      else        pdf.line(cx, y, cx, y+rH, {color:RULE_LT, w:0.5});
+      if (isSun)  pdf.line(cx+dayW, y, cx+dayW, y+rH, {color:WKND_FG, w:2});
 
       if (dayShifts.length === 0) {
-        pdf.text(cx + dayW/2, y + rH/2 - 3, '-', { size:12, color:'#D1D5DB', align:'center' });
+        pdf.text(cx+dayW/2, y+rH/2-5, '-', {size:15, color:'#D1D5DB', align:'center'});
       } else {
         const slotH = rH / dayShifts.length;
         dayShifts.forEach((sh, si) => {
-          const sy      = y + si * slotH;
-          const hrs     = shiftHrs(sh);
-          // 12h format helper for PDF
-          const p12 = t => {
-            if (!t) return "";
-            const [h,m] = t.split(":").map(Number);
-            const ap = h>=12?"pm":"am";
-            const h12 = h===0?12:h>12?h-12:h;
-            return `${h12}:${String(m).padStart(2,"0")}${ap}`;
-          };
-          const timeStr = sh.openEnd
-            ? safe(`${p12(sh.start)} ->`)
-            : safe(`${p12(sh.start)}-${p12(sh.end)}`);
-          const hrsStr  = sh.openEnd ? "open" : `${hrs.toFixed(1)}h`;
-          const fillC   = wknd ? '#FEF3C7' : '#F0FDF4';
-          const bordC   = wknd ? '#F59E0B' : '#34D399';
-          const timeC   = wknd ? '#92400E' : '#065F46';
-          const hrsC    = wknd ? '#B45309' : '#059669';
-          // Pill with generous vertical padding
-          const pH = Math.max(30, slotH - 10);
-          const py = sy + (slotH - pH) / 2;
-          pdf.rect(cx+5, py, dayW-10, pH, { fill:fillC, stroke:bordC });
-          // Time — large and bold
-          pdf.text(cx + dayW/2, py + pH*0.33, timeStr, { size:11, bold:true, color:timeC, align:'center' });
-          // Hours — clear and readable
-          pdf.text(cx + dayW/2, py + pH*0.70, hrsStr,  { size:9,             color:hrsC,  align:'center' });
+          const sy  = y + si*slotH;
+          const hrs = shiftHrs(sh);
+
+          if (sh.openEnd) {
+            // Open-end: start time left + double-ruled handwriting zone right
+            const pH = Math.max(44, slotH-8);
+            const py = sy + (slotH-pH)/2;
+            // Outer pill — light slate
+            pdf.rect(cx+4, py, dayW-8, pH, {fill:OPEN_BG, stroke:OPEN_BD});
+            // Inner precision border
+            pdf.rect(cx+6, py+2, dayW-12, pH-4, {stroke:'#CBD5E1'});
+            // Start time — large bold left
+            pdf.text(cx+12, py+12, p12(sh.start), {size:14, bold:true, color:OPEN_TXT});
+            pdf.text(cx+12, py+27, '->', {size:9, color:'#64748B'});
+            // FINISH zone — right 55%
+            const zx = cx + Math.round(dayW*0.44);
+            const zw = dayW - Math.round(dayW*0.44) - 10;
+            pdf.text(zx+zw/2, py+10, 'FINISH', {size:6.5, bold:true, color:'#94A3B8', align:'center'});
+            // Double ruled lines for handwriting
+            pdf.line(zx, py+pH-16, zx+zw, py+pH-16, {color:OPEN_LINE, w:1.0});
+            pdf.line(zx, py+pH-7,  zx+zw, py+pH-7,  {color:OPEN_LINE, w:0.4});
+          } else {
+            // Regular shift pill
+            const pH = Math.max(36, slotH-10);
+            const py = sy + (slotH-pH)/2;
+            const bg  = wknd ? PILL_WD_BG  : PILL_WK_BG;
+            const bd  = wknd ? PILL_WD_BD  : PILL_WK_BD;
+            const tc  = wknd ? PILL_WD_TXT : PILL_WK_TXT;
+            pdf.rect(cx+5, py, dayW-10, pH, {fill:bg, stroke:bd});
+            pdf.text(cx+dayW/2, py+pH*0.28, safe(p12(sh.start)+'-'+p12(sh.end)), {size:12, bold:true, color:tc, align:'center'});
+            pdf.text(cx+dayW/2, py+pH*0.68, hrs.toFixed(1)+'h',                  {size:9,             color:tc, align:'center'});
+          }
         });
       }
     });
 
-    pdf.line(M+tableW, y, M+tableW, y+rH, { color:'#CBD5E1', w:0.5 });
-    pdf.line(M, y+rH, M+tableW, y+rH, { color:'#CBD5E1', w: ei===employees.length-1 ? 1.2 : 0.5 });
+    // Row dividers
+    pdf.line(M, y+rH, M+tableW, y+rH, {color: ei===employees.length-1 ? RULE : RULE_LT, w: ei===employees.length-1 ? 1.5 : 0.5});
     y += rH;
   });
 
+  // Outer vertical borders
+  pdf.line(M,          64, M,          y, {color:RULE, w:1.5});
+  pdf.line(M+tableW,   64, M+tableW,   y, {color:RULE, w:1.5});
+
   // ── Footer ────────────────────────────────────────────────
-  y += 10;
-  pdf.text(M,   y, 'This roster is subject to change. Contact your manager with any queries.', { size:8, color:'#9CA3AF' });
-  pdf.text(W-M, y, `Mise Hospitality Finance  |  ${todayStr}`, { size:8, color:'#CBD5E1', align:'right' });
+  y += 9;
+  pdf.text(M,   y, 'Roster subject to change. Contact your manager with any queries.', {size:7.5, color:'#6B7280'});
+  pdf.text(W-M, y, 'Mise Hospitality Finance  |  '+todayStr, {size:7.5, color:'#9CA3AF', align:'right'});
 
   return pdf;
 };
@@ -4861,41 +5019,90 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
                           const hasOT   = sd?.isOT;
                           const isWknd  = sd?.isWknd;
                           const borderC = hasOT ? "#DC2626" : isWknd ? "#D97706" : col;
+
+                          if (sh.openEnd) {
+                            // ── Open-end pill: start time + ruled handwriting zone ──
+                            return (
+                              <div key={sh.id} style={{
+                                background: "#F8FAFC",
+                                border: `1.5px solid #64748B`,
+                                borderRadius: 6,
+                                marginBottom: 3,
+                                cursor: "pointer",
+                                position: "relative",
+                                overflow: "hidden",
+                              }} onClick={() => setShiftModal(sh)}>
+                                {/* Top: start time */}
+                                <div style={{
+                                  padding: "5px 8px 3px 8px",
+                                  borderBottom: "1px solid #CBD5E1",
+                                  display: "flex", alignItems: "center", gap: 4,
+                                }}>
+                                  <span style={{ fontSize:12, fontWeight:800, color:"#1E3A5F", letterSpacing:"-.3px" }}>
+                                    {fmt12(sh.start)}
+                                  </span>
+                                  <span style={{ fontSize:10, color:"#64748B" }}>→</span>
+                                </div>
+                                {/* Bottom: handwriting zone */}
+                                <div style={{ padding:"4px 8px 5px 8px" }}>
+                                  <div style={{ fontSize:7, fontWeight:700, color:"#94A3B8", letterSpacing:".8px", textTransform:"uppercase", marginBottom:3 }}>Finish</div>
+                                  {/* Ruled lines for writing */}
+                                  <div style={{ borderBottom:"1px solid #94A3B8", height:14, marginBottom:2 }}/>
+                                </div>
+                                <button
+                                  style={{position:"absolute",top:2,right:3,background:"none",border:"none",cursor:"pointer",fontSize:9,color:"#DC2626",padding:0,lineHeight:1,opacity:.6}}
+                                  onClick={e => { e.stopPropagation(); deleteShift(sh.id); }}
+                                  title="Remove shift"
+                                >✕</button>
+                              </div>
+                            );
+                          }
+
+                          // ── Regular shift pill ──
                           return (
                             <div key={sh.id} style={{
                               background: (hasOT ? "#DC2626" : isWknd ? "#D97706" : col)+"18",
-                              borderLeft: `3px solid ${borderC}`,
-                              borderRadius:5,
-                              padding:"4px 6px",
-                              marginBottom:3,
-                              cursor:"pointer",
-                              position:"relative",
+                              border: `1.5px solid ${borderC}`,
+                              borderRadius: 6,
+                              padding: "5px 7px 4px 7px",
+                              marginBottom: 3,
+                              cursor: "pointer",
+                              position: "relative",
+                              overflow: "hidden",
                             }}
                               onClick={() => setShiftModal(sh)}
                             >
-                            <div style={{fontSize:10,fontWeight:700,color:borderC,lineHeight:1.2}}>
-                              {sh.openEnd
-                                ? <>{fmt12(sh.start)} <span style={{opacity:.7}}>→</span></>
-                                : <>{fmt12(sh.start)}–{fmt12(sh.end)}</>
-                              }
-                            </div>
-                            <div style={{fontSize:9,color:C.muted,marginTop:1}}>
-                              {sh.openEnd ? "open end" : `${shiftHrs(sh).toFixed(1)}h`}
-                            </div>
-                              {/* OT / Weekend rate badge — only show when toggle is on */}
+                              {/* Time — large, constrained, no wrap */}
+                              <div style={{
+                                fontSize: 11, fontWeight: 800, color: borderC,
+                                lineHeight: 1.15, letterSpacing: "-.3px",
+                                whiteSpace: "nowrap", overflow: "hidden",
+                                textOverflow: "ellipsis", maxWidth: "100%",
+                              }}>
+                                {fmt12(sh.start)}–{fmt12(sh.end)}
+                              </div>
+                              {/* Hours */}
+                              <div style={{ fontSize:9, color:C.muted, marginTop:2, lineHeight:1 }}>
+                                {shiftHrs(sh).toFixed(1)}h
+                              </div>
+                              {/* OT / Weekend rate badges */}
                               {hasOT && applyOT && (
-                                <div style={{fontSize:8,fontWeight:700,color:"#DC2626",marginTop:1}}>
+                                <div style={{fontSize:8,fontWeight:700,color:"#DC2626",marginTop:1,lineHeight:1}}>
                                   ⚡ {sd.otHrs.toFixed(1)}h OT ×1.5
                                 </div>
                               )}
                               {isWknd && applyWknd && (
-                                <div style={{fontSize:8,fontWeight:700,color:"#D97706",marginTop:1}}>
+                                <div style={{fontSize:8,fontWeight:700,color:"#D97706",marginTop:1,lineHeight:1}}>
                                   ×1.75 Wknd
                                 </div>
                               )}
-                              {sh.note && <div style={{fontSize:8.5,color:C.dim,marginTop:1,fontStyle:"italic",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:85}}>{sh.note}</div>}
+                              {sh.note && (
+                                <div style={{fontSize:8,color:C.dim,marginTop:1,fontStyle:"italic",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"100%"}}>
+                                  {sh.note}
+                                </div>
+                              )}
                               <button
-                                style={{position:"absolute",top:2,right:3,background:"none",border:"none",cursor:"pointer",fontSize:9,color:"#DC2626",padding:0,lineHeight:1,opacity:.7}}
+                                style={{position:"absolute",top:2,right:3,background:"none",border:"none",cursor:"pointer",fontSize:9,color:"#DC2626",padding:0,lineHeight:1,opacity:.6}}
                                 onClick={e => { e.stopPropagation(); deleteShift(sh.id); }}
                                 title="Remove shift"
                               >✕</button>
@@ -5747,10 +5954,55 @@ function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, biz
   const [showPrint,   setShowPrint]   = useState(false);
   const [batchWeek,   setBatchWeek]   = useState("");
   const [batchExporting, setBatchExporting] = useState(false);
-  const [showOTWknd,  setShowOTWknd]  = useState(true); // show/hide OT & Weekend rows in PDF
+  const [showOTWknd,  setShowOTWknd]  = useState(true);
 
-  // Build week options from existing timesheets
+  // Build week options from existing timesheets — must be before exportBatch and batchEligible
   const weeks = [...new Set(timesheets.map(t => t.week))].sort().reverse();
+
+  // ── Batch export — individual PDFs bundled into one ZIP ──────
+  const exportBatch = async () => {
+    if (!batchWeek) return;
+    setBatchExporting(true);
+    const zipFiles = [];
+    for (const e of employees) {
+      const empTs = timesheets.filter(t => t.eid === e.id && t.week === batchWeek);
+      if (empTs.length === 0) continue;
+      const empRows = empTs.map(ts => {
+        const gross  = calcGross(e, ts);
+        const superR = getSuperRate(ts.week);
+        const payg   = calcWeeklyPAYG(gross, e.tfn);
+        const net    = gross - payg;
+        return { ...ts, gross, super: gross * superR, superR, payg, net };
+      });
+      const empTotals = {
+        std_hrs:  empRows.reduce((s,r) => s + r.std_hrs,  0),
+        ot_hrs:   empRows.reduce((s,r) => s + r.ot_hrs,   0),
+        wknd_hrs: empRows.reduce((s,r) => s + r.wknd_hrs, 0),
+        gross:    empRows.reduce((s,r) => s + r.gross,     0),
+        super:    empRows.reduce((s,r) => s + r.super,     0),
+        payg:     empRows.reduce((s,r) => s + r.payg,      0),
+        net:      empRows.reduce((s,r) => s + r.net,       0),
+        superR:   empRows[empRows.length-1]?.superR || getSuperRate(batchWeek),
+      };
+      const label = weekLabel(batchWeek);
+      const pdf   = renderPayslipPDF({ emp:e, rows:empRows, totals:empTotals, payPeriodLabel:label, bizName, bizABN, showOTWknd });
+      const safeName = e.name.replace(/[^a-zA-Z0-9 _-]/g,'').replace(/\s+/g,'_');
+      zipFiles.push({ name:`Payslip_${safeName}_${batchWeek}.pdf`, blob: pdf.toBlob() });
+    }
+    if (zipFiles.length === 0) {
+      setBatchExporting(false);
+      showToast("No timesheets found for this week.");
+      return;
+    }
+    const zip = await buildZip(zipFiles);
+    zipDownload(zip, `Payslips_${batchWeek}_${zipFiles.length}_employees.zip`);
+    setBatchExporting(false);
+    showToast(`✅ ${zipFiles.length} payslip${zipFiles.length!==1?'s':''} downloaded as ZIP!`);
+  };
+
+  const batchEligible = batchWeek
+    ? employees.filter(e => timesheets.some(t => t.eid === e.id && t.week === batchWeek))
+    : [];
 
   // Get timesheets for selected employee (optionally filtered by week)
   const empTs = timesheets.filter(t =>
@@ -5843,8 +6095,8 @@ function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, biz
             {infoRow("Period", payPeriodLabel)}
             {infoRow("Weeks", String(rows.length))}
             {infoRow("Standard Hours", `${totals.std_hrs}h`)}
-            {infoRow("Overtime Hours", `${totals.ot_hrs}h`)}
-            {infoRow("Weekend/PH Hours", `${totals.wknd_hrs}h`)}
+            {showOTWknd && infoRow("Overtime Hours", `${totals.ot_hrs}h`)}
+            {showOTWknd && infoRow("Weekend/PH Hours", `${totals.wknd_hrs}h`)}
             {infoRow("Total Hours", `${totals.std_hrs+totals.ot_hrs+totals.wknd_hrs}h`)}
           </div>
         </div>
@@ -5853,19 +6105,25 @@ function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, biz
         <div className="pp-sec-ttl" style={{marginBottom:8}}>Hours &amp; Earnings Breakdown</div>
         <table className="pp-tbl" style={{marginBottom:20}}>
           <thead><tr>
-            <th>Pay Week</th><th style={{textAlign:"right"}}>Std Hrs</th><th style={{textAlign:"right"}}>OT Hrs</th><th style={{textAlign:"right"}}>Wknd Hrs</th>
-            <th style={{textAlign:"right"}}>Std Pay</th><th style={{textAlign:"right"}}>OT Pay</th><th style={{textAlign:"right"}}>Wknd Pay</th><th style={{textAlign:"right"}}>Gross</th>
+            <th>Pay Week</th>
+            <th style={{textAlign:"right"}}>Std Hrs</th>
+            {showOTWknd && <th style={{textAlign:"right"}}>OT Hrs</th>}
+            {showOTWknd && <th style={{textAlign:"right"}}>Wknd Hrs</th>}
+            <th style={{textAlign:"right"}}>Std Pay</th>
+            {showOTWknd && <th style={{textAlign:"right"}}>OT Pay</th>}
+            {showOTWknd && <th style={{textAlign:"right"}}>Wknd Pay</th>}
+            <th style={{textAlign:"right"}}>Gross</th>
           </tr></thead>
           <tbody>
             {rows.map(r => (
               <tr key={r.id}>
                 <td style={{fontSize:11}}>{r.week}</td>
                 <td style={{textAlign:"right"}}>{r.std_hrs}h</td>
-                <td style={{textAlign:"right"}}>{r.ot_hrs}h</td>
-                <td style={{textAlign:"right"}}>{r.wknd_hrs}h</td>
+                {showOTWknd && <td style={{textAlign:"right"}}>{r.ot_hrs}h</td>}
+                {showOTWknd && <td style={{textAlign:"right"}}>{r.wknd_hrs}h</td>}
                 <td style={{textAlign:"right",fontFamily:"DM Mono,monospace"}}>{money(effR * r.std_hrs)}</td>
-                <td style={{textAlign:"right",fontFamily:"DM Mono,monospace"}}>{r.ot_hrs > 0 ? money(effR * OT_RATE * r.ot_hrs) : "—"}</td>
-                <td style={{textAlign:"right",fontFamily:"DM Mono,monospace"}}>{r.wknd_hrs > 0 ? money(effR * WKND_RATE * r.wknd_hrs) : "—"}</td>
+                {showOTWknd && <td style={{textAlign:"right",fontFamily:"DM Mono,monospace"}}>{r.ot_hrs > 0 ? money(effR * OT_RATE * r.ot_hrs) : "—"}</td>}
+                {showOTWknd && <td style={{textAlign:"right",fontFamily:"DM Mono,monospace"}}>{r.wknd_hrs > 0 ? money(effR * WKND_RATE * r.wknd_hrs) : "—"}</td>}
                 <td style={{textAlign:"right",fontFamily:"DM Mono,monospace",fontWeight:700}}>{money(r.gross)}</td>
               </tr>
             ))}
@@ -5873,9 +6131,9 @@ function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, biz
           <tfoot>
             <tr><td style={{fontWeight:700}}>TOTAL</td>
               <td style={{textAlign:"right",fontWeight:700}}>{totals.std_hrs}h</td>
-              <td style={{textAlign:"right",fontWeight:700}}>{totals.ot_hrs}h</td>
-              <td style={{textAlign:"right",fontWeight:700}}>{totals.wknd_hrs}h</td>
-              <td colSpan={3}></td>
+              {showOTWknd && <td style={{textAlign:"right",fontWeight:700}}>{totals.ot_hrs}h</td>}
+              {showOTWknd && <td style={{textAlign:"right",fontWeight:700}}>{totals.wknd_hrs}h</td>}
+              <td colSpan={showOTWknd ? 3 : 1}></td>
               <td style={{textAlign:"right",fontFamily:"DM Mono,monospace",fontWeight:700,fontSize:14}}>{money(totals.gross)}</td>
             </tr>
           </tfoot>
@@ -5919,7 +6177,7 @@ function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, biz
           </div>
         )}
         <div style={{background:"#EFF6FF",border:"1px solid #BFDBFE",borderRadius:8,padding:"11px 14px",fontSize:11.5,color:"#1D4ED8",marginBottom:20}}>
-          💡 <strong>Super note:</strong> {money(totals.super)} (@ {(totals.superR*100).toFixed(1)}%) must be paid to {emp.superfund || "the nominated fund"} within 28 days of quarter end. Late payments attract the Super Guarantee Charge (SGC) — not tax deductible.
+          💡 <strong>Super note:</strong> {money(totals.super)} (@ {(totals.superR*100).toFixed(1)}%) should be paid to {emp.superfund || "the nominated fund"} with each pay run. From 1 July 2026, the ATO <strong>Payday Super</strong> reform requires super to be paid on every payday — not quarterly. Late payments attract the Super Guarantee Charge (SGC) — not tax deductible.
         </div>
 
         <PPDisclaimer/>
@@ -6058,7 +6316,7 @@ function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, biz
             <div style={{ marginTop:12, padding:"12px 14px", background:"rgba(61,201,160,.06)", border:"1px solid rgba(61,201,160,.2)", borderRadius:9, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
               <div>
                 <div style={{ fontSize:10, color:C.dim, textTransform:"uppercase", letterSpacing:".5px" }}>Super — Employer Contribution</div>
-                <div style={{ fontSize:11.5, color:C.muted, marginTop:2 }}>Pay to {emp.superfund || "nominated fund"} within 28 days of quarter end</div>
+                <div style={{ fontSize:11.5, color:C.muted, marginTop:2 }}>Pay with each pay run · Payday Super from 1 Jul 2026</div>
               </div>
               <span className="mono" style={{ fontSize:17, fontWeight:700, color:C.teal }}>{money(totals.super)}</span>
             </div>
@@ -6113,6 +6371,37 @@ function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, biz
           </div>
         </div>
       )}
+
+      {/* ── Batch Export ── */}
+      <div className="bc" style={{ marginBottom:0 }}>
+        <div className="bctit">📦 Batch Payslip Export
+          <span style={{ fontSize:11, fontWeight:400, color:C.muted, marginLeft:8 }}>Generate all employee payslips for one week in one click</span>
+        </div>
+        <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
+          <div className="fg" style={{ flex:"1 1 200px", minWidth:180 }}>
+            <label className="flbl">Select Week</label>
+            <select className="sel" value={batchWeek} onChange={e => setBatchWeek(e.target.value)}>
+              <option value="">— Select a week —</option>
+              {weeks.map(w => <option key={w} value={w}>{weekLabel(w)} ({w})</option>)}
+            </select>
+          </div>
+          <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+            <button className="btn" disabled={!batchWeek || batchExporting || batchEligible.length === 0}
+              onClick={exportBatch}
+              style={{ padding:"10px 22px", fontSize:13, opacity: (!batchWeek || batchEligible.length === 0) ? 0.5 : 1 }}>
+              {batchExporting ? "⏳ Generating..." : `⬇️ Export ${batchEligible.length > 0 ? batchEligible.length : ""} Payslip${batchEligible.length !== 1 ? "s" : ""}`}
+            </button>
+            {batchWeek && batchEligible.length === 0 && (
+              <span style={{ fontSize:11, color:C.red }}>No timesheets found for this week</span>
+            )}
+            {batchWeek && batchEligible.length > 0 && (
+              <span style={{ fontSize:11, color:C.muted }}>
+                {batchEligible.map(e => e.name).join(", ")}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
 
       <div className="disc">
         <div className="d-ttl">⚠️ Payslip Disclaimer</div>
@@ -6218,7 +6507,7 @@ function DayWorkersTab({ showToast, workers, setWorkers }) {
           <div style={{ marginTop:14, borderTop:`1px solid ${C.border}`, paddingTop:14, display:"flex", flexDirection:"column", gap:10 }}>
             {[
               { icon:"🦺", title:"Workers Compensation", col:C.red, text:"Covered automatically under your existing policy. Their wages count towards your annual payroll figure used to calculate your Workers Comp premium. No separate policy needed." },
-              { icon:"💰", title:"Superannuation", col:C.blue, text:"Since 2022, there is NO minimum earnings threshold. Even $50 of wages requires Super at the current SGC rate. You must pay it within 28 days of the end of each quarter." },
+              { icon:"💰", title:"Superannuation", col:C.blue, text:"Since 2022, there is NO minimum earnings threshold. Even $50 of wages requires Super at the current SGC rate. From 1 July 2026 (Payday Super reform), super must be paid on each payday — not quarterly." },
               { icon:"📋", title:"PAYG Withholding", col:C.yellow, text:"If the day worker has provided a TFN, withhold using ATO 2024-25 progressive Scale 2 rates. If no TFN, withhold at 47%. You must report this to the ATO." },
               { icon:"📁", title:"Record Keeping", col:C.teal, text:"ATO requires you to keep all wage records for 7 years — including one-day workers. This page gives you a downloadable CSV for your records." },
             ].map((item, i) => (
@@ -6377,7 +6666,7 @@ function DayWorkersTab({ showToast, workers, setWorkers }) {
         {workers.length > 0 && (
           <div style={{ marginTop:14, padding:"12px 15px", background:"rgba(91,159,212,.08)", border:"1px solid rgba(91,159,212,.2)", borderRadius:9, fontSize:12, color:C.muted, lineHeight:1.7 }}>
             💡 <strong style={{color:C.text}}>Super reminder:</strong> Total Super owed for these day workers is <strong style={{color:C.blue}}>{money(totalSuper)}</strong>. 
-            Super must be paid to each worker's fund within 28 days of the end of each quarter. 
+            From 1 July 2026, super must be paid on each payday (Payday Super). Currently due within 28 days of quarter end. 
             Missing super payments attract a <strong style={{color:C.red}}>Super Guarantee Charge (SGC)</strong> which is not tax deductible.
           </div>
         )}
@@ -6904,6 +7193,33 @@ function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimeshe
         ))}
       </div>
 
+      {/* ── Payday Super Reform Banner ── */}
+      <div style={{
+        background: "linear-gradient(135deg, rgba(37,99,235,.12), rgba(124,58,237,.10))",
+        border: "1.5px solid rgba(37,99,235,.35)",
+        borderRadius: 12,
+        padding: "14px 18px",
+        marginBottom: 16,
+        display: "flex",
+        gap: 14,
+        alignItems: "flex-start",
+      }}>
+        <div style={{ fontSize:22, flexShrink:0, marginTop:1 }}>📢</div>
+        <div>
+          <div style={{ fontSize:13, fontWeight:700, color:"#2563EB", marginBottom:4 }}>
+            ATO Reform: Payday Super — effective 1 July 2026
+          </div>
+          <div style={{ fontSize:12, color:C.muted, lineHeight:1.65 }}>
+            From <strong style={{color:C.text}}>1 July 2026</strong>, employers must pay superannuation <strong style={{color:C.text}}>with every pay run</strong> — not quarterly.
+            This means each time you pay wages, super must be sent to the employee's fund on the <strong style={{color:C.text}}>same day or next business day</strong>.
+            Late payments will attract the <strong style={{color:"#DC2626"}}>Super Guarantee Charge (SGC)</strong>, which is not tax deductible.
+          </div>
+          <div style={{ fontSize:11, color:C.dim, marginTop:6 }}>
+            💡 Action now: Get into the habit of marking super paid with each weekly payrun. Mise tracks this per timesheet — use the Payroll &amp; Super tab to stay on top of it.
+          </div>
+        </div>
+      </div>
+
       {/* OVERVIEW */}
       {tab === "overview" && (
         <>
@@ -6958,7 +7274,7 @@ function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimeshe
                 {missing>0 ? `Request ${missing} missing invoice${missing>1?"s":""}` : suggestions>0 ? `Re-categorise ${suggestions} expense${suggestions>1?"s":""}` : unpaidSup>0 ? "Pay outstanding super this week" : "You're up to date! 🎉"}
               </div>
               <div style={{ fontSize:11, color:C.muted }}>
-                {missing>0 ? `Unlocks ${money(analysed.filter(e=>e.gstStatus==="missing-invoice").reduce((s,e)=>s+e.amount/11,0))} in GST credits` : unpaidSup>0 ? "Avoid SGC penalties — due 28 days after quarter end" : "Keep logging expenses and revenue regularly."}
+                {missing>0 ? `Unlocks ${money(analysed.filter(e=>e.gstStatus==="missing-invoice").reduce((s,e)=>s+e.amount/11,0))} in GST credits` : unpaidSup>0 ? "Avoid SGC penalties — from Jul 2026 super is due each payday (Payday Super)" : "Keep logging expenses and revenue regularly."}
               </div>
             </div>
             <div className="card">
@@ -7150,7 +7466,7 @@ function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimeshe
       {tab === "payroll" && (
         <>
           {unpaidSup > 0
-            ? <div className="alert al-r"><span className="al-ico">🔴</span><div><div className="al-ttl">{unpaidSup} timesheet row{unpaidSup>1?"s":""} with unpaid super — {money(rows.filter(t=>!t.super_paid).reduce((s,t)=>s+t.super,0))} outstanding</div><div className="al-msg">Late super incurs SGC penalty — which is not tax-deductible. Pay within 28 days of quarter end.</div></div></div>
+            ? <div className="alert al-r"><span className="al-ico">🔴</span><div><div className="al-ttl">{unpaidSup} timesheet row{unpaidSup>1?"s":""} with unpaid super — {money(rows.filter(t=>!t.super_paid).reduce((s,t)=>s+t.super,0))} outstanding</div><div className="al-msg">Late super incurs the SGC — not tax deductible. From 1 Jul 2026 (Payday Super), super must be paid with every pay run.</div></div></div>
             : <div className="alert al-g"><span className="al-ico">✅</span><div><div className="al-ttl">All super marked as paid</div></div></div>
           }
 

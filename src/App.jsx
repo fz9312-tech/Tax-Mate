@@ -33,6 +33,14 @@ const GST_THRESHOLD   = 82.50;
 
 // ── ATO Superannuation rate — date-aware (SGC schedule) ──────
 // 11.5% to 30 Jun 2025 → 12.0% from 1 Jul 2025
+// ── Tax rate versioning ────────────────────────────────────────
+// Bump this string when any rate changes (SGC, PAYG brackets, etc.)
+// App compares against localStorage to detect "user hasn't seen new rates"
+const TAX_RATE_VERSION  = "2025-07-01"; // SGC → 12.0%, Stage 3 PAYG cuts active
+const TAX_RATE_NOTES    = "SGC rate increased to 12.0% from 1 Jul 2025. PAYG Stage 3 tax cuts applied.";
+const checkRateVersion  = () => localStorage.getItem("mise_rate_version") === TAX_RATE_VERSION;
+const dismissRateAlert  = () => localStorage.setItem("mise_rate_version", TAX_RATE_VERSION);
+
 const getSuperRate = (weekStr) => {
   if (!weekStr) return 0.12;
   const [yr, wk] = weekStr.split('-W').map(Number);
@@ -540,6 +548,73 @@ const DOC_CATEGORIES = [
 const BAS_QUARTERS = ["Q1 FY2026","Q2 FY2026","Q3 FY2026","Q4 FY2026","Q1 FY2025","Q2 FY2025","Q3 FY2025","Q4 FY2025"];
 const FIN_YEARS    = ["FY2026","FY2025","FY2024"];
 
+// ATO quarter date ranges (Australian financial year: Jul–Jun)
+// Q1=Jul-Sep, Q2=Oct-Dec, Q3=Jan-Mar, Q4=Apr-Jun
+const QUARTER_DATES = {
+  "Q1 FY2026": { from:"2025-07-01", to:"2025-09-30" },
+  "Q2 FY2026": { from:"2025-10-01", to:"2025-12-31" },
+  "Q3 FY2026": { from:"2026-01-01", to:"2026-03-31" },
+  "Q4 FY2026": { from:"2026-04-01", to:"2026-06-30" },
+  "Q1 FY2025": { from:"2024-07-01", to:"2024-09-30" },
+  "Q2 FY2025": { from:"2024-10-01", to:"2024-12-31" },
+  "Q3 FY2025": { from:"2025-01-01", to:"2025-03-31" },
+  "Q4 FY2025": { from:"2025-04-01", to:"2025-06-30" },
+};
+const FY_DATES = {
+  "FY2026": { from:"2025-07-01", to:"2026-06-30" },
+  "FY2025": { from:"2024-07-01", to:"2025-06-30" },
+  "FY2024": { from:"2023-07-01", to:"2024-06-30" },
+};
+
+// Categories that represent Cost of Goods Sold (COGS)
+// These are direct costs that move with revenue — not operating expenses
+// GST default by category — most business costs in Australia are GST-inclusive
+// Exceptions: wages (no GST), bank interest (input-taxed), council rates (no GST)
+// Used to suggest correct GST selection when adding expenses
+const CAT_GST_DEFAULT = {
+  ingredients: true,  food_stock: true,   coffee_supplies: true,  bakery_supplies: true,
+  spirit_stock: true, beer_wine_stock: true, eco_packaging: true, packaging: true,
+  delivery_fees: true, cleaning: true,     software: true,        advertising: true,
+  accounting: true,   staff_uniforms: true, repairs: true,        equipment: true,
+  smallwares: true,   linen: true,         music_ent: true,       rent: true,
+  utilities: true,    motor_vehicle: true, insurance_expense: true, legal: true,
+  license_fees: true, freight: true,       merchant_fees: true,   telephone_internet: true,
+  // No GST / input-taxed:
+  bank_fees: false,   interest_expense: false, loan_repayment: false, council_rates: false,
+  entertainment: false, // often no GST on entertainment cap
+  other: true, // default to yes — safer to flag than miss
+};
+
+const COGS_CATS = new Set([
+  "ingredients","food_stock","coffee_supplies","bakery_supplies",
+  "spirit_stock","beer_wine_stock","eco_packaging","packaging","delivery_fees",
+]);
+
+// Helper: filter by date range
+const inRange = (dateStr, from, to) => dateStr >= from && dateStr <= to;
+
+// Revenue total — handles both old {amount} and new {dine_in, takeaway, delivery} structure
+const revTotal = r => r.amount != null
+  ? r.amount
+  : (r.dine_in || 0) + (r.takeaway || 0) + (r.delivery || 0);
+
+// GST-taxable revenue — delivery platforms remit GST themselves, so exclude delivery from owner's GST calc
+// Dine-in and Takeaway: owner collects GST → declare ÷11
+// Delivery (Uber Eats, DoorDash etc): platform collects & remits GST → owner gets net, no GST to declare
+const revGSTTaxable = r => r.amount != null
+  ? r.amount                    // legacy: treat all as taxable (old entries)
+  : (r.dine_in || 0) + (r.takeaway || 0); // delivery excluded
+
+// Timesheets use ISO week — convert week to a date (Monday of that week)
+const weekToDate = w => {
+  if (!w) return "";
+  const [yr, wk] = w.split("-W").map(Number);
+  const jan4 = new Date(yr, 0, 4);
+  const mon = new Date(jan4);
+  mon.setDate(jan4.getDate() - ((jan4.getDay()+6)%7) + (wk-1)*7);
+  return mon.toISOString().slice(0,10);
+};
+
 // IAS: generate rolling 18-month list (current month back 17)
 const IAS_MONTHS = Array.from({length:18}, (_,i) => {
   const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
@@ -581,11 +656,11 @@ const DOC_STATUS = { verified:"Verified", pending:"Pending Review", missing:"Mis
 //  SEED DATA
 // ════════════════════════════════════════════════════════════
 const SEED_REVENUE = [
-  { id:1, date:"2025-07-01", amount:2670 },
-  { id:2, date:"2025-07-02", amount:2510 },
-  { id:3, date:"2025-07-03", amount:2720 },
-  { id:4, date:"2025-07-04", amount:3720 },
-  { id:5, date:"2025-07-05", amount:3290 },
+  { id:1, date:"2025-07-01", dine_in:1400, takeaway:820,  delivery:450 },
+  { id:2, date:"2025-07-02", dine_in:980,  takeaway:960,  delivery:570 },
+  { id:3, date:"2025-07-03", dine_in:1650, takeaway:740,  delivery:330 },
+  { id:4, date:"2025-07-04", dine_in:2100, takeaway:890,  delivery:730 },
+  { id:5, date:"2025-07-05", dine_in:1820, takeaway:1040, delivery:430 },
 ];
 
 const SEED_EXPENSES = [
@@ -733,6 +808,13 @@ const SEED_DOCUMENTS = [
   { id:10, name:"Facebook_Ads_Receipt.pdf",    size:61440,  type:"application/pdf",   cat:"Receipt",           supplier:"Meta Platforms",        emp_id:null, quarter:"Q1 FY2026", fy:"FY2026", gst:true,  status:"missing",  date:"2025-07-08", notes:"Facebook ads — invoice not yet received" },
   { id:11, name:"Jul_Bank_Statement.pdf",      size:425984, type:"application/pdf",   cat:"Bank Statement",    supplier:"Commonwealth Bank",     emp_id:null, quarter:"Q1 FY2026", fy:"FY2026", gst:false, status:"verified", date:"2025-07-31", notes:"July business account statement" },
   { id:12, name:"Xero_Subscription.pdf",       size:32768,  type:"application/pdf",   cat:"Invoice",           supplier:"Xero",                  emp_id:null, quarter:"Q1 FY2026", fy:"FY2026", gst:true,  status:"verified", date:"2025-07-07", notes:"Monthly subscription" },
+];
+
+// Stock takes — opening/closing inventory per quarter for true COGS calculation
+// COGS = opening_stock + purchases_in_period - closing_stock
+const SEED_INVENTORY = [
+  { id:1, quarter:"Q1 FY2026", opening:4200, closing:3800, notes:"End of July stocktake" },
+  { id:2, quarter:"Q4 FY2025", opening:3900, closing:4200, notes:"End of June stocktake" },
 ];
 
 // ════════════════════════════════════════════════════════════
@@ -1142,10 +1224,88 @@ const pdfDisclaimer = (pdf, y) => {
 
 // ── PDF render functions ──────────────────────────────────────
 
-const renderBASSummaryPDF = ({d, quarter}) => {
+const renderPnLPDF = ({ bizName, bizABN, label, period,
+  plRev, plGST, plRevExGST,
+  openingStock, plPurchases, closingStock, trueCOGS,
+  grossProfit, grossMargin,
+  plWages, plSuper, plInsQ, plOpExp, totalOpex,
+  operatingProfit, operatingMargin,
+  plExpByCat
+}) => {
+  const pdf = new MiniPDF();
+  const W=pdf.W, M=pdf.M;
+  let y = pdfHeader(pdf, bizName||'Profit & Loss Statement', `Period: ${label}`, bizABN||'');
+
+  // ── Revenue ──
+  y = pdfSecTitle(pdf, y, 'REVENUE');
+  y = pdfTwoSec(pdf, y,
+    { title:'REVENUE BREAKDOWN',
+      rows:[
+        {lbl:'Total Sales (incl. GST)',     val:`$${plRev.toFixed(2)}`},
+        {lbl:'Less GST Collected (1/11)',   val:`-$${plGST.toFixed(2)}`},
+      ],
+      total:{lbl:'Net Revenue (ex-GST)',    val:`$${plRevExGST.toFixed(2)}`, color:'#3DD3C8'},
+    },
+    { title:'COST OF GOODS SOLD',
+      rows:[
+        ...(openingStock>0 ? [{lbl:'Opening Stock',val:`$${openingStock.toFixed(2)}`}] : []),
+        {lbl:'Purchases (food/packaging/delivery)', val:`$${plPurchases.toFixed(2)}`},
+        ...(closingStock>0 ? [{lbl:'Less Closing Stock',val:`-$${closingStock.toFixed(2)}`}] : []),
+      ],
+      total:{lbl:'Total COGS', val:`$${trueCOGS.toFixed(2)}`, color:'#D97706'},
+    }
+  );
+  y += 8;
+
+  // ── Gross Profit ──
+  y = pdfSecTitle(pdf, y, 'GROSS PROFIT');
+  y = pdfStatCards(pdf, y, [
+    {lbl:'Net Revenue (ex-GST)', val:`$${plRevExGST.toFixed(2)}`,   color:'#3DD3C8'},
+    {lbl:'Total COGS',           val:`$${trueCOGS.toFixed(2)}`,     color:'#D97706'},
+    {lbl:'Gross Profit',         val:`$${grossProfit.toFixed(2)}`,  color:grossProfit>=0?'#16A34A':'#DC2626'},
+    {lbl:'Gross Margin',         val:`${grossMargin.toFixed(1)}%`,  color:grossMargin>=50?'#16A34A':grossMargin>=30?'#D97706':'#DC2626'},
+  ]);
+  y += 6;
+
+  // ── Operating Expenses ──
+  y = pdfSecTitle(pdf, y, 'OPERATING EXPENSES');
+  y = pdfTwoSec(pdf, y,
+    { title:'LABOUR & FIXED',
+      rows:[
+        {lbl:'Gross Wages',           val:`$${plWages.toFixed(2)}`},
+        {lbl:'Superannuation (SGC)',  val:`$${plSuper.toFixed(2)}`},
+        {lbl:'Insurance (quarterly)', val:`$${plInsQ.toFixed(2)}`},
+        {lbl:'Other Operating Exp',   val:`$${plOpExp.toFixed(2)}`},
+      ],
+      total:{lbl:'Total OPEX', val:`$${totalOpex.toFixed(2)}`, color:'#DC2626'},
+    },
+    { title:'EXPENSE BY CATEGORY',
+      rows: plExpByCat.slice(0,6).map(c=>({
+        lbl: `${c.cfg?.label||c.cat}${c.isCOGS?' (COGS)':''}`,
+        val: `$${c.amount.toFixed(2)}`
+      })),
+      total: plExpByCat.length>6 ? {lbl:`+ ${plExpByCat.length-6} more categories`,val:''} : undefined,
+    }
+  );
+  y += 10;
+
+  // ── Operating Profit (EBIT) ──
+  y = pdfSecTitle(pdf, y, 'OPERATING PROFIT (EBIT)');
+  y = pdfStatCards(pdf, y, [
+    {lbl:'Gross Profit',       val:`$${grossProfit.toFixed(2)}`,      color:grossProfit>=0?'#16A34A':'#DC2626'},
+    {lbl:'Total OPEX',         val:`$${totalOpex.toFixed(2)}`,        color:'#DC2626'},
+    {lbl:'Operating Profit',   val:`$${operatingProfit.toFixed(2)}`,  color:operatingProfit>=0?'#16A34A':'#DC2626'},
+    {lbl:'Operating Margin',   val:`${operatingMargin.toFixed(1)}%`,  color:operatingMargin>=15?'#16A34A':operatingMargin>=5?'#D97706':'#DC2626'},
+  ]);
+
+  pdfDisclaimer(pdf, y+10);
+  return pdf;
+};
+
+const renderBASSummaryPDF = ({d, quarter, bizName, bizABN}) => {
   const pdf=new MiniPDF();
   const W=pdf.W, M=pdf.M;
-  let y=pdfHeader(pdf, 'BAS Support Summary', 'Quarterly BAS Management Summary', quarter);
+  let y=pdfHeader(pdf, bizName||'BAS Support Summary', 'Quarterly BAS Management Summary', quarter);
 
   // Warnings
   if(d.warnings.length>0){
@@ -1167,8 +1327,8 @@ const renderBASSummaryPDF = ({d, quarter}) => {
     { title:'WAGES & PAYG',
       rows:[
         {lbl:'Total Gross Wages',          val:`$${d.totalWages.toFixed(2)}`},
-        {lbl:'PAYG Withheld Withheld (ATO Scale 2)',val:`$${d.totalPayg.toFixed(2)}`},
-        {lbl:'Super (SGC) (SGC)',          val:`$${d.totalSuper.toFixed(2)}`},
+        {lbl:'PAYG Withheld (ATO Scale 2)',val:`$${d.totalPayg.toFixed(2)}`},
+        {lbl:'Super (SGC)',          val:`$${d.totalSuper.toFixed(2)}`},
       ],
       total:{lbl:'Total Employment Cost', val:`$${(d.totalWages+d.totalPayg+d.totalSuper).toFixed(2)}`, color:'#8FCB72'},
     }
@@ -1230,42 +1390,110 @@ const renderExpenseReportPDF = ({filtered, totalExp, gstCreds, missingCred, hasF
   return pdf;
 };
 
-const renderAccountantPackPDF = ({d, selFY}) => {
+const renderAccountantPackPDF = ({d, selFY, revenue, expenses, timesheets, employees, bizName, bizABN}) => {
   const pdf=new MiniPDF();
   const W=pdf.W, M=pdf.M;
-  let y=pdfHeader(pdf, 'Annual Accountant Pack', 'Financial Year Summary', selFY);
+  let y=pdfHeader(pdf, bizName||'Annual Accountant Pack', `Financial Year Summary — ${selFY}`, bizABN||'');
 
   if(d.warnings.length>0){
     d.warnings.forEach(w=>{ y=pdfWarn(pdf, y, w); });
     y+=4;
   }
 
-  // Annual summary — two column: Revenue/Expenses | Wages/Obligations
+  // ── P&L Summary ─────────────────────────────────────────
+  const revExGST = d.totalRev - d.totalRev/11;
+  const cogsPurch= d.totalExp > 0
+    ? EXP_CATEGORIES.filter(c=>COGS_CATS.has(c)).reduce((s,c)=>s+d.bycat[c],0)
+    : 0;
+  const grossProfit  = revExGST - cogsPurch;
+  const opex         = d.totalExp - cogsPurch;
+  const operProfit   = grossProfit - opex - d.totalWages - d.totalSuper - d.totalIns;
+  const grossMargin  = revExGST>0 ? (grossProfit/revExGST*100) : 0;
+
   y=pdfTwoSec(pdf, y,
-    { title:'REVENUE & EXPENSES',
+    { title:'P&L SUMMARY',
       rows:[
-        {lbl:'Total Revenue',   val:`$${d.totalRev.toFixed(2)}`},
-        {lbl:'Total Expenses',  val:`$${d.totalExp.toFixed(2)}`},
-        {lbl:'Insurance',       val:`$${d.totalIns.toFixed(2)}`},
+        {lbl:'Total Revenue (incl. GST)',   val:`$${d.totalRev.toFixed(2)}`},
+        {lbl:'GST Collected (1/11)',         val:`-$${(d.totalRev/11).toFixed(2)}`},
+        {lbl:'Net Revenue (ex-GST)',         val:`$${revExGST.toFixed(2)}`, bold:true},
+        {lbl:'COGS (food/packaging/delivery)',val:`-$${cogsPurch.toFixed(2)}`},
+        {lbl:'Gross Profit',                 val:`$${grossProfit.toFixed(2)}`, bold:true},
+        {lbl:'Gross Margin',                 val:`${grossMargin.toFixed(1)}%`, color:grossMargin>=50?'#16A34A':'#D97706'},
       ],
-      total:{lbl:'Gross Profit', val:`$${(d.totalRev-d.totalExp).toFixed(2)}`, color:'#8FCB72'},
+      total:{lbl:'Operating Profit (EBIT)', val:`$${operProfit.toFixed(2)}`, color:operProfit>=0?'#16A34A':'#DC2626'},
     },
     { title:'WAGES & OBLIGATIONS',
       rows:[
-        {lbl:'Total Wages Paid',     val:`$${d.totalWages.toFixed(2)}`},
+        {lbl:'Total Gross Wages',    val:`$${d.totalWages.toFixed(2)}`},
         {lbl:'Total PAYG Withheld',  val:`$${d.totalPayg.toFixed(2)}`},
-        {lbl:'Total Super (SGC)',  val:`$${d.totalSuper.toFixed(2)}`},
+        {lbl:'Total Super (SGC)',     val:`$${d.totalSuper.toFixed(2)}`},
+        {lbl:'Annual Insurance',     val:`$${d.totalIns.toFixed(2)}`},
+        {lbl:'Total Operating Exp',  val:`$${opex.toFixed(2)}`},
       ],
-      total:{lbl:'Total Labour Cost', val:`$${(d.totalWages+d.totalSuper).toFixed(2)}`, color:'#8FCB72'},
+      total:{lbl:'Total Labour Cost', val:`$${(d.totalWages+d.totalSuper).toFixed(2)}`},
     }
   );
   y+=8;
 
-  // Expenses by category
+  // ── Monthly Revenue Breakdown ─────────────────────────
+  const fyDates = FY_DATES[selFY] || {};
+  const months12 = Array.from({length:12},(_,i)=>{
+    const base = new Date(fyDates.from||'2025-07-01');
+    const d2   = new Date(base.getFullYear(), base.getMonth()+i, 1);
+    const key  = `${d2.getFullYear()}-${String(d2.getMonth()+1).padStart(2,'0')}`;
+    const lbl  = d2.toLocaleString('en-AU',{month:'short',year:'2-digit'});
+    const rev  = revenue.filter(r=>r.date.slice(0,7)===key).reduce((s,r)=>s+revTotal(r),0);
+    const exp  = expenses.filter(e=>e.date.slice(0,7)===key).reduce((s,e)=>s+e.amount,0);
+    const ts   = annotateTimesheets(employees,timesheets.filter(t=>weekToMonth(t.week)===key));
+    const wg   = ts.reduce((s,t)=>s+t.gross,0);
+    return {lbl, rev, exp, wg, net:rev-exp-wg};
+  }).filter(m=>m.rev>0||m.exp>0||m.wg>0);
+
+  if(months12.length>0){
+    pdf.checkPage && (y=pdf.checkPage(y,60)||y);
+    y=pdfSecTitle(pdf, y, 'MONTHLY BREAKDOWN');
+    const mCols=[50,75,75,75,0];
+    mCols[4]=W-M*2-mCols.slice(0,4).reduce((s,c)=>s+c,0);
+    y=pdfTable(pdf, y,
+      ['Month','Revenue','Expenses','Wages','Net'],
+      months12.map(m=>[m.lbl,`$${m.rev.toFixed(0)}`,`$${m.exp.toFixed(0)}`,`$${m.wg.toFixed(0)}`,
+        {text:`$${m.net.toFixed(0)}`,color:m.net>=0?'#16A34A':'#DC2626'}]),
+      mCols,
+      { rowH:16, footerRow:['TOTAL',
+          `$${months12.reduce((s,m)=>s+m.rev,0).toFixed(0)}`,
+          `$${months12.reduce((s,m)=>s+m.exp,0).toFixed(0)}`,
+          `$${months12.reduce((s,m)=>s+m.wg,0).toFixed(0)}`,
+          `$${months12.reduce((s,m)=>s+m.net,0).toFixed(0)}`],
+        numCols:[1,2,3,4] }
+    );
+    y+=8;
+  }
+
+  // ── Revenue channel split ─────────────────────────────
+  const totDineIn   = revenue.reduce((s,r)=>s+(r.dine_in||0),0);
+  const totTakeaway = revenue.reduce((s,r)=>s+(r.takeaway||0),0);
+  const totDelivery = revenue.reduce((s,r)=>s+(r.delivery||0),0);
+  if(totDineIn+totTakeaway+totDelivery>0){
+    y=pdfSecTitle(pdf, y, 'REVENUE BY CHANNEL');
+    y=pdfTable(pdf, y,
+      ['Channel','Amount (AUD)','% of Total'],
+      [
+        ['Dine-in',   `$${totDineIn.toFixed(2)}`,   `${d.totalRev>0?(totDineIn/d.totalRev*100).toFixed(1):0}%`],
+        ['Takeaway',  `$${totTakeaway.toFixed(2)}`,  `${d.totalRev>0?(totTakeaway/d.totalRev*100).toFixed(1):0}%`],
+        ['Delivery',  `$${totDelivery.toFixed(2)}`,  `${d.totalRev>0?(totDelivery/d.totalRev*100).toFixed(1):0}%`],
+      ],
+      [W-M*2-180,90,90],
+      { rowH:14, footerRow:['TOTAL',`$${d.totalRev.toFixed(2)}`,'100%'], numCols:[1,2] }
+    );
+    y+=8;
+  }
+
+  // ── Expenses by category ──────────────────────────────
   y=pdfSecTitle(pdf, y, 'EXPENSES BY CATEGORY');
   const catRows=EXP_CATEGORIES.filter(c=>d.bycat[c]>0).map(c=>{
     const cfg=CAT_CONFIG[c];
-    return [cfg?`${cfg.label}`:c, `$${d.bycat[c].toFixed(2)}`];
+    const isCOGS=COGS_CATS.has(c);
+    return [`${cfg?.label||c}${isCOGS?' (COGS)':''}`, `$${d.bycat[c].toFixed(2)}`];
   });
   y=pdfTable(pdf, y, ['Category','Amount (AUD)'], catRows, [W-M*2-90,90],
     { rowH:14, footerRow:['TOTAL',`$${d.totalExp.toFixed(2)}`], numCols:[1] }
@@ -1384,8 +1612,9 @@ const renderPayslipPDF = ({emp, rows, totals, payPeriodLabel, bizName, bizABN, s
 
   let y=pdfHeader(pdf, 'Employee Payslip', 'Payslip & Wage Summary', safePeriodLabel, bizName||'My Restaurant');
 
+  // Employer ABN — Fair Work Act requires ABN on payslips (Fair Work Regulations r.3.47)
   if(bizABN) {
-    pdf.text(W-M, 35, `ABN: ${bizABN}`, {size:8, color:'#6B7280', align:'right'});
+    pdf.text(W-M, 21, `ABN: ${bizABN}`, {size:7.5, color:'#6B7280', align:'right'});
   }
 
   // Employee info + period side-by-side
@@ -1598,9 +1827,12 @@ const calcAge = dob => {
   return a;
 };
 
-// Effective hourly rate (casual gets +25% loading)
-const effRate = emp =>
-  emp.type === "casual" ? emp.rate * (1 + CASUAL_LOADING) : emp.rate;
+// Effective hourly rate
+// Casual employees get +25% loading UNLESS rate_includes_loading is true (all-in rate already set)
+const effRate = emp => {
+  if (emp.type !== "casual") return emp.rate;
+  return emp.rate_includes_loading ? emp.rate : emp.rate * (1 + CASUAL_LOADING);
+};
 
 // Gross wages for a single timesheet row
 const calcGross = (emp, ts) =>
@@ -1614,34 +1846,76 @@ const annotateTimesheets = (employees, timesheets) =>
     const emp = employees.find(e => e.id === ts.eid);
     if (!emp) return null;
     const gross  = calcGross(emp, ts);
-    const superR = getSuperRate(ts.week);          // 11.5% pre-Jul 2025, 12% from Jul 2025
-    const super_ = gross * superR;
-    const payg   = calcWeeklyPAYG(gross, emp.tfn); // ATO 2024-25 Scale 2 progressive
-    return { ...ts, emp, gross, super: super_, superR, payg,
-             labour: gross + super_,               // labour cost = gross + super (PAYG is employee's)
+    const superR = getSuperRate(ts.week);
+    // ── OTE (Ordinary Time Earnings) for SGC super ────────────
+    // Per ATO SGAA s.6: OTE excludes overtime penalty payments
+    // OT hours use ×1.5 rate — the ORDINARY component of OT is at base rate (×1.0)
+    // Super is only owed on the base-rate component, not the 0.5x OT penalty loading
+    // weekend/PH hours: these are rostered ordinary shifts for casuals, so base rate applies
+    const oteEarnings = effRate(emp) * ts.std_hrs          // ordinary hours at base rate
+                      + effRate(emp) * ts.wknd_hrs;        // weekend/PH = ordinary shift (not OT loading)
+    // OT ordinary component: effRate × ot_hrs (not the 1.5x — only the ×1 base)
+    const oteOT      = effRate(emp) * ts.ot_hrs;           // base component of OT
+    const ote        = oteEarnings + oteOT;
+    const superOTE   = ote * superR;                       // SGC on OTE only
+    // ── No $450/month OTE minimum — threshold removed 1 Jul 2022 ──
+    // From 1 July 2022 (Treasury Laws Amendment Act 2022), the previous $450/month
+    // minimum OTE threshold for SGC eligibility was ABOLISHED.
+    // All employees now accrue super regardless of earnings. Do NOT reinstate this check.
+    // Ref: ATO — Changes to super for low income employees (ato.gov.au/superchanges2022)
+    const super_     = superOTE;
+    const payg       = calcWeeklyPAYG(gross, emp.tfn);
+    return { ...ts, emp, gross, super: super_, superOTE, superR, payg,
+             ote, labour: gross + super_,
              total_hrs: ts.std_hrs + ts.ot_hrs + ts.wknd_hrs };
   }).filter(Boolean);
 
-// ── Leave accrual ──────────────────────────────────────────
-// Annual leave:   FT/PT only — 4 weeks (152 hrs) per year = 152/52 hrs per week of std_hrs
-// Personal leave: FT/PT only — 10 days (76 hrs) per year  = 76/52  hrs per week of std_hrs
-// Day in Lieu:    All types  — accrues hour-for-hour from OT + weekend/PH hours worked
-const ANNUAL_ACCRUAL_PER_WEEK  = 152 / 52;   // ~2.923 hrs per week
-const PERSONAL_ACCRUAL_PER_WEEK = 76 / 52;   // ~1.462 hrs per week
-
-// hrs per working day for an employee (std_hrs / 5 days)
-const hrsPerDay = emp => emp.std_hrs / 5;
+// ── Leave accrual — Fair Work Act compliant ────────────────
+// Annual leave:   FT/PT — accrues at rate of 4 weeks per year of ordinary HOURS WORKED
+//                = (hours_worked / std_annual_hours) * 152 hrs
+//                Fair Work: s.87 — "4 weeks of paid annual leave"
+// Personal leave: FT/PT — 10 days per year of ordinary hours worked
+//                = (hours_worked / std_annual_hours) * 76 hrs
+// Day in Lieu:    All — hour-for-hour from OT + weekend/PH hours actually worked
+// Casual:         NOT entitled to annual or personal leave (s.87, s.96 Fair Work Act)
+// Part-time:      Pro-rated — same formula, naturally scales with actual hours worked
 
 function calcLeaveAccruals(emp, timesheets) {
-  const empTs = timesheets.filter(t => t.eid === emp.id);
+  const empTs    = timesheets.filter(t => t.eid === emp.id);
   const isCasual = emp.type === "casual";
-  // Each timesheet row = 1 week worked
-  const weeksWorked = empTs.length;
-  const annual   = isCasual ? 0 : weeksWorked * ANNUAL_ACCRUAL_PER_WEEK;
-  const personal = isCasual ? 0 : weeksWorked * PERSONAL_ACCRUAL_PER_WEEK;
-  const lieu     = empTs.reduce((s,t) => s + t.ot_hrs + t.wknd_hrs, 0); // hour for hour
+
+  if (isCasual) {
+    // Casuals accrue no annual or personal leave
+    const lieu = empTs.reduce((s,t) => s + (t.ot_hrs||0) + (t.wknd_hrs||0), 0);
+    return { annual:0, personal:0, lieu };
+  }
+
+  // Sum actual ordinary hours worked from timesheets
+  // Timesheets store std_hrs (ordinary hours for that week), ot_hrs, wknd_hrs
+  // Ordinary hours = std_hrs from each timesheet row (this IS the actual ordinary hours worked)
+  // ot_hrs and wknd_hrs are penalty-rate hours, NOT ordinary hours for leave purposes
+  const ordinaryHrsWorked = empTs.reduce((s,t) => {
+    const hrs = t.std_hrs != null
+      ? t.std_hrs                              // use actual ordinary hours from timesheet
+      : (emp.std_hrs || 38);                   // fallback to contracted weekly hours
+    return s + hrs;
+  }, 0);
+
+  // Annual hours in a full year for this employee
+  const stdAnnualHrs = (emp.std_hrs || 38) * 52;
+
+  // Accrue proportionally to hours worked
+  const annual   = (ordinaryHrsWorked / stdAnnualHrs) * 152;  // 4 weeks = 152 hrs/yr
+  const personal = (ordinaryHrsWorked / stdAnnualHrs) * 76;   // 10 days = 76 hrs/yr
+
+  // Day in Lieu: hour-for-hour from OT + weekend/PH
+  const lieu = empTs.reduce((s,t) => s + (t.ot_hrs||0) + (t.wknd_hrs||0), 0);
+
   return { annual, personal, lieu };
 }
+
+// hrs per working day for this employee (std_hrs ÷ 5 days/week)
+const hrsPerDay = emp => (emp.std_hrs || 38) / 5;
 
 function calcLeaveTaken(emp, leaveRecords) {
   const el = leaveRecords.filter(l => l.eid === emp.id);
@@ -1667,12 +1941,15 @@ const analyseExpenses = expenses =>
     else if (e.gst && !e.invoice && e.amount > GST_THRESHOLD) gstStatus = "missing-invoice";
     else if (e.gst && !e.invoice)                             gstStatus = "claimable";
     else if (!e.gst && !ent && e.amount > GST_THRESHOLD)      gstStatus = "review";
+    // GST mismatch: category default says GST should apply but user marked none (or vice versa)
+    const catGstExpected = CAT_GST_DEFAULT[e.cat];
+    const gstMismatch = catGstExpected != null && catGstExpected !== e.gst && e.amount > GST_THRESHOLD;
     const entFlag = ent
       ? (e.amount >= 300
           ? { level:"red",    msg:"High-value entertainment — FBT may apply. Review with your accountant." }
           : { level:"yellow", msg:"Entertainment expenses have limited GST and income tax deductibility." })
       : null;
-    return { ...e, gstStatus, suggestion, ent, entFlag };
+    return { ...e, gstStatus, suggestion, ent, entFlag, gstMismatch };
   });
 
 // Avatar
@@ -1723,37 +2000,59 @@ function buildIASMonthData(timesheets, employees, month) {
   return { empData, autoW1, autoW2, autoSuper, weekCount, noTFNCount, dueDate };
 }
 
-function buildBASData(revenue, expenses, timesheets, employees, insurance, docs, quarter) {
+function buildBASData(revenue, expenses, timesheets, employees, insurance, docs, quarter, ias = []) {
   const ts   = annotateTimesheets(employees, timesheets);
-  const totalRev  = revenue.reduce((s,r) => s + r.amount, 0);
-  const gstColl   = totalRev / 11;
-  const gstCreds  = expenses.filter(e => e.gst).reduce((s,e) => s + e.amount/11, 0);
-  const netGST    = gstColl - gstCreds;
-  const totalWages= ts.reduce((s,t) => s + t.gross,  0);
-  const totalPayg = ts.reduce((s,t) => s + t.payg,   0);
-  const totalSuper= ts.reduce((s,t) => s + t.super,  0);
-  const totalIns  = insurance.reduce((s,i) => s + i.annual/4, 0); // quarterly
-  const totalExp  = expenses.reduce((s,e) => s + e.amount, 0);
-  const missingInv= expenses.filter(e => e.gst && !e.invoice && e.amount > GST_THRESHOLD).length;
+  const qd   = QUARTER_DATES[quarter] || {};
+  const { from="", to="9999-99-99" } = qd;
+
+  const qRev = revenue.filter(r => inRange(r.date, from, to));
+  const qExp = expenses.filter(e => inRange(e.date, from, to));
+  const qTs  = ts.filter(t => { const d = weekToDate(t.week); return d && inRange(d, from, to); });
+
+  const totalRev   = qRev.reduce((s,r) => s + revTotal(r), 0);
+  const gstTaxable = qRev.reduce((s,r) => s + revGSTTaxable(r), 0);
+  const gstColl    = gstTaxable / 11;
+  const gstCreds   = qExp.filter(e => e.gst).reduce((s,e) => s + e.amount/11, 0);
+  const netGST     = gstColl - gstCreds;
+  const totalWages = qTs.reduce((s,t) => s + t.gross,  0);
+  const totalPayg  = qTs.reduce((s,t) => s + t.payg,   0);
+  const totalSuper = qTs.reduce((s,t) => s + t.superOTE, 0); // OTE-based super
+  const totalIns   = insurance.reduce((s,i) => s + i.annual/4, 0);
+  const totalExp   = qExp.reduce((s,e) => s + e.amount, 0);
+  const missingInv = qExp.filter(e => e.gst && !e.invoice && e.amount > GST_THRESHOLD).length;
   const missingDocs= docs.filter(d => d.status === "missing" && d.quarter === quarter).length;
   const pendingDocs= docs.filter(d => d.status === "pending" && d.quarter === quarter).length;
   const verifiedDocs=docs.filter(d => d.status === "verified" && d.quarter === quarter).length;
-  const estBAS    = netGST + totalPayg;
-  // Warnings
+
+  // ── IAS bridge: subtract PAYG already lodged via Monthly IAS ──
+  const qMonths = [];
+  if (from) {
+    const d = new Date(from); d.setDate(1);
+    const end = new Date(to);
+    while (d <= end) { qMonths.push(d.toISOString().slice(0,7)); d.setMonth(d.getMonth()+1); }
+  }
+  const iasPrePaidPAYG = ias
+    .filter(r => qMonths.includes(r.month) && r.status === "lodged")
+    .reduce((s,r) => s + (r.adjustW2 || 0), 0);
+  const basPayg = Math.max(0, totalPayg - iasPrePaidPAYG);
+  const estBAS  = netGST + basPayg;
+
   const warnings = [];
-  if (missingInv > 0)  warnings.push(`${missingInv} expense${missingInv>1?"s":""} missing a tax invoice — GST credits may be reduced.`);
-  if (missingDocs > 0) warnings.push(`${missingDocs} document${missingDocs>1?"s":""} marked as missing for this quarter.`);
-  if (pendingDocs > 0) warnings.push(`${pendingDocs} document${pendingDocs>1?"s":""} awaiting review.`);
-  if (timesheets.filter(t=>!t.super_paid).length > 0) warnings.push("Some super contributions have not been marked as paid.");
-  if (totalRev === 0) warnings.push("No revenue has been entered for this period.");
-  return { totalRev, gstColl, gstCreds, netGST, totalWages, totalPayg, totalSuper,
-           totalIns, totalExp, missingInv, missingDocs, pendingDocs, verifiedDocs,
-           estBAS, warnings, docCount: verifiedDocs };
+  if (missingInv > 0)   warnings.push(`${missingInv} expense${missingInv>1?"s":""} missing a tax invoice — GST credits may be reduced.`);
+  if (missingDocs > 0)  warnings.push(`${missingDocs} document${missingDocs>1?"s":""} marked as missing for this quarter.`);
+  if (pendingDocs > 0)  warnings.push(`${pendingDocs} document${pendingDocs>1?"s":""} awaiting review.`);
+  if (qTs.filter(t=>!t.super_paid).length > 0) warnings.push("Some super contributions have not been marked as paid.");
+  if (totalRev === 0)   warnings.push("No revenue has been entered for this period.");
+  if (iasPrePaidPAYG > 0) warnings.push(`${money(iasPrePaidPAYG)} PAYG already lodged via Monthly IAS — deducted from BAS PAYG.`);
+
+  return { totalRev, gstColl, gstCreds, netGST, totalWages, totalPayg, basPayg,
+           iasPrePaidPAYG, totalSuper, totalIns, totalExp, missingInv, missingDocs,
+           pendingDocs, verifiedDocs, estBAS, warnings, docCount: verifiedDocs, from, to };
 }
 
 function buildAnnualData(revenue, expenses, timesheets, employees, insurance, docs) {
   const ts       = annotateTimesheets(employees, timesheets);
-  const totalRev = revenue.reduce((s,r) => s + r.amount, 0);
+  const totalRev = revenue.reduce((s,r) => s + revTotal(r), 0);
   const totalExp = expenses.reduce((s,e) => s + e.amount, 0);
   const bycat    = EXP_CATEGORIES.reduce((acc,c) => {
     acc[c] = expenses.filter(e=>e.cat===c).reduce((s,e)=>s+e.amount,0); return acc;
@@ -1833,6 +2132,39 @@ body { background: ${C.bg}; color: ${C.text}; font-family: 'DM Sans', sans-serif
 .g2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-bottom: 16px; }
 .g3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 16px; }
 .g4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+
+/* ── Mobile responsive ── */
+.btab { display: none; }
+@media (max-width: 720px) {
+  .sidebar { display: none; }
+  .main    { margin-left: 0; padding: 14px 12px 80px; }
+  .g2, .g3, .g4 { grid-template-columns: repeat(2, 1fr); gap: 9px; }
+  .hdr-left .ptitle { font-size: 16px; }
+  .hdr { margin-bottom: 14px; }
+  /* Compress large banners on mobile */
+  .mob-compress { flex-direction: column !important; gap: 8px !important; padding: 14px 14px !important; }
+  .mob-compress .mono { font-size: 26px !important; }
+  .mob-hide { display: none !important; }
+  .mob-full { width: 100% !important; flex: 1 1 100% !important; }
+  /* iOS keyboard safe area — prevents keyboard covering form buttons */
+  .fsec, .bc { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+  .fbtns { padding-top: 10px; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+  /* Bottom tab bar */
+  .btab {
+    display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+    background: ${C.surface}; border-top: 1px solid ${C.border};
+    padding: 6px 0 max(6px, env(safe-area-inset-bottom));
+    box-shadow: 0 -4px 16px rgba(0,0,0,.12);
+  }
+  .btab-item {
+    flex: 1; display: flex; flex-direction: column; align-items: center;
+    gap: 2px; padding: 4px 0; cursor: pointer; border: none; background: none;
+    font-family: inherit;
+  }
+  .btab-ico  { font-size: 20px; line-height: 1; }
+  .btab-lbl  { font-size: 9px; font-weight: 600; color: ${C.muted}; text-transform: uppercase; letter-spacing: .4px; }
+  .btab-item.on .btab-lbl  { color: ${C.accent}; }
+}
 
 /* ── Stat cards ── */
 .card  { background: ${C.surface}; border: 1px solid ${C.border}; border-radius: 13px; padding: 17px; }
@@ -2185,81 +2517,107 @@ function LandingPage({ onGo }) {
         </div>
       </nav>
 
+      {/* Hero */}
       <div className="hero">
-        <div className="h-badge">🇦🇺 Built for Australian Hospitality & Food Business</div>
-        <h1 className="h-ttl">Your business finances,<br/><span>everything in its place.</span></h1>
-        <p className="h-sub">Mise handles GST, wages, super, expenses and BAS — built specifically for how Australian hospitality businesses actually operate. Restaurants, cafés, bars, takeaways and food businesses.</p>
+        <div className="h-badge">🇦🇺 Built for Australian Restaurants, Cafés & Bars</div>
+        <h1 className="h-ttl">Run your floor.<br/><span>We'll run the books.</span></h1>
+        <p className="h-sub">Roster your staff. Track your takings. Know your P&L. Lodge your BAS with confidence. Mise is the only finance tool built around how hospitality actually works — not how accountants think it should.</p>
         <div className="h-btns">
           <button className="h-btn"   onClick={onGo}>Start for Free →</button>
-          <button className="h-btn-g" onClick={onGo}>See How It Works</button>
+          <button className="h-btn-g" onClick={onGo}>See a Demo</button>
+        </div>
+        {/* Live stat bar */}
+        <div style={{ display:"flex", gap:0, marginTop:28, borderRadius:12, overflow:"hidden", border:`1px solid ${C.border}`, maxWidth:700, margin:"28px auto 0" }}>
+          {[
+            { val:"5 min",    lbl:"to set up" },
+            { val:"$0",       lbl:"to start" },
+            { val:"1 click",  lbl:"BAS summary" },
+            { val:"ATO-ready",lbl:"at all times" },
+          ].map((s,i) => (
+            <div key={i} style={{ flex:1, padding:"13px 0", textAlign:"center", background:i%2===0?C.surface:C.surfaceAlt, borderRight:i<3?`1px solid ${C.border}`:"none" }}>
+              <div style={{ fontSize:16, fontWeight:800, color:C.accent, fontFamily:"'DM Mono',monospace", letterSpacing:"-1px" }}>{s.val}</div>
+              <div style={{ fontSize:10, color:C.muted, marginTop:2, textTransform:"uppercase", letterSpacing:".5px" }}>{s.lbl}</div>
+            </div>
+          ))}
         </div>
       </div>
 
       {/* Industry pills */}
-      <div style={{ textAlign:"center", padding:"4px 0 28px" }}>
-        <div style={{ display:"flex", gap:8, justifyContent:"center", flexWrap:"wrap", marginBottom:12 }}>
-          {["🍽️ Restaurants","☕ Cafés","🍺 Bars & Pubs","🥡 Takeaways","🍕 Food Trucks","✂️ Hair & Beauty","🏪 Retail"].map((l,i) => (
+      <div style={{ textAlign:"center", padding:"4px 0 32px" }}>
+        <div style={{ display:"flex", gap:8, justifyContent:"center", flexWrap:"wrap", marginBottom:10 }}>
+          {["🍽️ Restaurants","☕ Cafés","🍺 Bars & Pubs","🥡 Takeaways","🍕 Food Trucks","🏪 Food Retail"].map((l,i) => (
             <span key={i} style={{ fontSize:11.5, padding:"4px 12px", borderRadius:20, background:C.surfaceAlt, border:`1px solid ${C.border}`, color:C.muted }}>{l}</span>
           ))}
         </div>
-        <div style={{ fontSize:11.5, color:C.dim, letterSpacing:".4px" }}>GST · BAS · PAYG · Super · Wages · Leave · Insurance · Documents</div>
       </div>
 
-      <div className="feat-grid">
-        {[
-          { ico:"💵", ttl:"Revenue Tracking",       dsc:"Log daily takings in seconds. GST collected calculated automatically — cash, card or online orders." },
-          { ico:"🧾", ttl:"Expense Management",     dsc:"Categorise every expense, flag missing invoices, and never lose a GST credit at BAS time." },
-          { ico:"👥", ttl:"Staff & Wages",           dsc:"Full employee records with automatic casual loading, OT, weekend rates, and super calculations." },
-          { ico:"⚡", ttl:"Day Workers",             dsc:"Quick-entry for casual staff who work one or two shifts. Pay, super and PAYG calculated instantly." },
-          { ico:"🛡️", ttl:"Insurance Dashboard",    dsc:"Workers Comp, Public Liability, Equipment — tracked against your payroll with renewal reminders." },
-          { ico:"📦", ttl:"Accountant Pack",         dsc:"Generate a complete financial year summary and BAS support pack, ready to hand to your accountant." },
-          { ico:"📁", ttl:"Document Hub",            dsc:"Upload invoices, bank statements and BAS notices. Tagged by quarter, supplier or employee." },
-          { ico:"✅", ttl:"Audit Ready",             dsc:"Scans your records for missing invoices, compliance gaps and super issues — so the ATO never catches you off guard." },
-        ].map((f,i) => (
-          <div key={i} className="feat-card">
-            <div className="feat-ico">{f.ico}</div>
-            <div className="feat-ttl">{f.ttl}</div>
-            <div className="feat-dsc">{f.dsc}</div>
-          </div>
-        ))}
+      {/* Feature grid — full actual feature set */}
+      <div style={{ padding:"8px 40px 40px", maxWidth:960, margin:"0 auto" }}>
+        <div style={{ textAlign:"center", marginBottom:28 }}>
+          <div style={{ fontSize:10.5, fontWeight:700, color:C.accent, textTransform:"uppercase", letterSpacing:"1px", marginBottom:8 }}>What Mise Does</div>
+          <div style={{ fontSize:24, fontWeight:700, letterSpacing:"-1px", fontFamily:"'Fraunces', serif" }}>Everything a hospitality owner actually needs.</div>
+        </div>
+        <div className="feat-grid">
+          {[
+            { ico:"📅", ttl:"Roster & Labour Cost",     dsc:"Build your weekly roster in minutes. See total labour cost, per-employee wages and OT flags before you publish — no surprises at payrun." },
+            { ico:"💵", ttl:"Revenue by Channel",       dsc:"Log dine-in, takeaway and delivery separately. GST calculated correctly for each — delivery platforms excluded automatically." },
+            { ico:"📊", ttl:"P&L Statement",            dsc:"Real gross profit, COGS and EBIT — not just revenue minus expenses. See your actual margin by quarter or financial year." },
+            { ico:"💸", ttl:"Cash Flow View",           dsc:"Daily money-in, money-out, and estimated wages shown together. Know before payday if the week is going to be tight." },
+            { ico:"🏛️", ttl:"Live ATO Liability",       dsc:"See exactly how much GST + PAYG you owe the ATO right now — updated daily as you enter revenue, not just at quarter end." },
+            { ico:"🧾", ttl:"Expense Management",       dsc:"Categorise every cost, flag missing invoices automatically, and never lose a GST credit at BAS time. Recurring expenses remembered." },
+            { ico:"👤", ttl:"Payslips & Timesheets",    dsc:"Generate compliant payslips with one click. Casual loading, OT, weekend rates, PAYG and super all calculated to ATO spec." },
+            { ico:"📥", ttl:"POS CSV Import",           dsc:"Export from Square, Lightspeed, Kounta or any POS. Mise maps your columns automatically — import a month of data in 30 seconds." },
+            { ico:"📋", ttl:"BAS Summary",              dsc:"Quarterly BAS figures filtered to the exact ATO date range. Review before you meet your tax agent — no more rushed reconciliation." },
+            { ico:"🔔", ttl:"Reminders",                dsc:"BAS deadlines, unpaid super, expiring insurance, unsettled staff exits — all in one place so nothing falls through the cracks." },
+            { ico:"🔍", ttl:"Audit Ready",              dsc:"Scans your records for missing invoices, entertainment expenses and super gaps before the ATO does. 19-category deduction checklist." },
+            { ico:"📦", ttl:"Accountant Pack",          dsc:"One-click PDF with P&L, monthly revenue breakdown, channel split, expenses by category and COGS labelled — ready to hand to your accountant." },
+          ].map((f,i) => (
+            <div key={i} className="feat-card">
+              <div className="feat-ico">{f.ico}</div>
+              <div className="feat-ttl">{f.ttl}</div>
+              <div className="feat-dsc">{f.dsc}</div>
+            </div>
+          ))}
+        </div>
       </div>
 
-      {/* Why Mise over Xero section */}
-      <div style={{ padding:"48px 40px", maxWidth:900, margin:"0 auto" }}>
-        <div style={{ textAlign:"center", marginBottom:32 }}>
+      {/* Why Mise */}
+      <div style={{ padding:"40px 40px 48px", maxWidth:900, margin:"0 auto" }}>
+        <div style={{ textAlign:"center", marginBottom:28 }}>
           <div style={{ fontSize:10.5, fontWeight:700, color:C.accent, textTransform:"uppercase", letterSpacing:"1px", marginBottom:8 }}>Why Mise</div>
-          <div style={{ fontSize:26, fontWeight:700, letterSpacing:"-1px", fontFamily:"'Fraunces', serif" }}>Built for hospitality. Not accountants.</div>
-          <div style={{ fontSize:13.5, color:C.muted, marginTop:10, lineHeight:1.7 }}>Xero and MYOB are powerful — but they're built for accountants, not for the person standing behind a counter at 11pm.</div>
+          <div style={{ fontSize:24, fontWeight:700, letterSpacing:"-1px", fontFamily:"'Fraunces', serif" }}>Built for the person behind the pass.</div>
+          <div style={{ fontSize:13, color:C.muted, marginTop:10, lineHeight:1.7 }}>Xero is great for accountants. Mise is for the owner doing payroll at midnight before a Thursday service.</div>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:14 }}>
           {[
-            { ico:"⚡", ttl:"Up in 5 minutes", dsc:"No chart of accounts. No reconciliation setup. Just open it and start entering your takings." },
-            { ico:"🇦🇺", ttl:"Australian GST & BAS", dsc:"Every calculation is built around Australian tax law — GST, PAYG, Super, BAS quarters and ATO thresholds." },
-            { ico:"👷", ttl:"Casual staff made easy", dsc:"Casual loading, weekend rates, day workers, super for one-shift staff — all handled automatically." },
-            { ico:"📊", ttl:"Know your BAS before it arrives", dsc:"See your estimated BAS liability every week. No surprises when the quarter ends." },
-            { ico:"🔍", ttl:"ATO compliance built in", dsc:"Audit Ready scans your records for the exact issues ATO looks for — missing invoices, cash discrepancies, super gaps." },
-            { ico:"💰", ttl:"A fraction of the cost", dsc:"Mise starts free. Even our Pro plan is a fraction of what you'd pay a bookkeeper to do the same work." },
+            { ico:"⚡", ttl:"Up in 5 minutes",           dsc:"No chart of accounts. No bank reconciliation setup. Open it, enter your takings, and you're done." },
+            { ico:"🇦🇺", ttl:"Australian tax law built in",dsc:"GST channels, PAYG Scale 2, SGC super rates, ATO quarter dates and BAS structure — all correct out of the box." },
+            { ico:"📅", ttl:"Roster → payslip in one app", dsc:"Roster your staff, confirm hours, generate payslips and export super obligations — without switching tools." },
+            { ico:"📊", ttl:"Your P&L, not just your GST", dsc:"Know your gross margin, COGS and EBIT — the numbers your accountant uses to assess business health." },
+            { ico:"🔔", ttl:"Nothing slips through",      dsc:"Reminders for BAS deadlines, super payments, insurance renewals and unsettled staff exits — before they become problems." },
+            { ico:"💰", ttl:"A fraction of a bookkeeper", dsc:"Mise starts free. Pro is less per month than one hour of bookkeeping time — and you stay in control." },
           ].map((f,i) => (
-            <div key={i} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"16px 18px" }}>
-              <div style={{ fontSize:20, marginBottom:8 }}>{f.ico}</div>
-              <div style={{ fontWeight:700, fontSize:13, marginBottom:5 }}>{f.ttl}</div>
+            <div key={i} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"18px 18px" }}>
+              <div style={{ fontSize:22, marginBottom:9 }}>{f.ico}</div>
+              <div style={{ fontWeight:700, fontSize:13, marginBottom:6 }}>{f.ttl}</div>
               <div style={{ fontSize:12, color:C.muted, lineHeight:1.65 }}>{f.dsc}</div>
             </div>
           ))}
         </div>
       </div>
 
+      {/* Pricing */}
       <div className="price-sec">
         <div className="price-lbl">Simple Pricing</div>
         <div className="price-ttl">No surprises. Just like your BAS should be.</div>
         <div className="price-grid">
           {[
             { tier:"Starter", price:"$0",  per:"/month", hi:false,
-              feats:["Revenue & expense tracking","Up to 3 staff profiles","Basic BAS estimate","Monthly summaries","All business types"] },
+              feats:["Revenue tracking (channels + CSV import)","Expense management + auto-categorisation","Basic BAS estimate","Up to 3 staff profiles","P&L Statement","All business types"] },
             { tier:"Pro",     price:"$29", per:"/month", hi:true,
-              feats:["Everything in Starter","Unlimited staff profiles","Timesheets & labour costs","Day Worker quick entry","Insurance dashboard","Audit Ready alerts","Document Hub"] },
+              feats:["Everything in Starter","Unlimited staff + timesheets","Roster with labour cost view","Payslips + batch ZIP export","Live ATO liability dashboard","Cash Flow view","Reminders & alerts","Insurance dashboard","Audit Ready scanner","Document Hub"] },
             { tier:"Studio",  price:"$79", per:"/month", hi:false,
-              feats:["Everything in Pro","Annual Accountant Pack","BAS support summaries","Payroll STP pack","Priority support"] },
+              feats:["Everything in Pro","Accountant Pack PDF","BAS history + lodge workflow","Monthly IAS","Annual P&L export","Priority support"] },
           ].map((p,i) => (
             <div key={i} className={`price-card${p.hi?" hi":""}`}>
               <div className="p-tier">{p.tier}</div>
@@ -2283,9 +2641,7 @@ function LandingPage({ onGo }) {
           <span style={{ color:C.dim, fontSize:12 }}>· Hospitality Finance</span>
         </div>
         <p style={{ fontSize:11, color:C.dim }}>Built in Australia for Australian hospitality and food businesses.</p>
-        <p style={{ fontSize:10.5, color:C.dim, marginTop:6 }}>
-          Mise is not a registered tax agent. Always consult a professional before lodging with the ATO.
-        </p>
+        <p style={{ fontSize:10.5, color:C.dim, marginTop:6 }}>Mise is not a registered tax agent. Always consult a professional before lodging with the ATO.</p>
       </div>
     </div>
   );
@@ -2345,16 +2701,15 @@ function Sidebar({ page, setPage, onLogout, flagCount }) {
     { id:"expenses",  ico:"🧾", lbl:"Expenses" },
     { sec:"People" },
     { id:"wages",     ico:"👤", lbl:"Staff & Wages" },
+    { id:"dayworkers",ico:"⚡", lbl:"Day Workers", badge:"Quick" },
     { id:"insurance", ico:"🛡️", lbl:"Insurance" },
-    { sec:"Tax" },
-    { id:"tax",       ico:"📋", lbl:"Tax Summary" },
-    { id:"taxsaver",  ico:"🔍", lbl:"Audit Ready", badge: flagCount > 0 ? `${flagCount} flags` : "PRO" },
+    { sec:"Tax & Compliance" },
+    { id:"taxsaver",  ico:"🔍", lbl:"Audit Ready", badge: flagCount > 0 ? `${flagCount} flags` : null },
     { id:"ias",       ico:"🧾", lbl:"Monthly IAS" },
-    { sec:"Documents & Reports" },
-    { id:"documents",     ico:"📁", lbl:"Document Hub" },
-    { id:"bassummary",    ico:"📋", lbl:"BAS Summary" },
-    { id:"accountantpack",ico:"📦", lbl:"Accountant Pack" },
-    { id:"reports",       ico:"🖨️", lbl:"Reports & Exports" },
+    { id:"bassummary",ico:"📋", lbl:"BAS Summary" },
+    { sec:"Reports" },
+    { id:"documents", ico:"📁", lbl:"Document Hub" },
+    { id:"reports",   ico:"🖨️", lbl:"Reports & P&L" },
     { sec:"Account" },
     { id:"settings",  ico:"⚙️", lbl:"Settings" },
   ];
@@ -2393,80 +2748,140 @@ function Sidebar({ page, setPage, onLogout, flagCount }) {
 // ════════════════════════════════════════════════════════════
 //  DASHBOARD
 // ════════════════════════════════════════════════════════════
-function DashboardPage({ revenue, expenses, employees, timesheets, insurance, setPage }) {
-  // ── Month selector ────────────────────────────────────────
-  const [selMonth, setSelMonth] = useState(() => todayStr.slice(0,7)); // "YYYY-MM"
+function DashboardPage({ revenue, expenses, employees, timesheets, insurance, setPage, roster = [] }) {
+  const [selMonth, setSelMonth] = useState(() => todayStr.slice(0,7));
+  const [dashTab,  setDashTab]  = useState("today"); // "today" | "overview" | "cashflow" | "reminders"
   const [y, m] = selMonth.split("-").map(Number);
 
-  const prevMonth = () => {
-    const d = new Date(y, m-2, 1);
-    setSelMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
-  };
-  const nextMonth = () => {
-    const d = new Date(y, m, 1);
-    setSelMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
-  };
+  const prevMonth = () => { const d = new Date(y,m-2,1); setSelMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`); };
+  const nextMonth = () => { const d = new Date(y,m,  1); setSelMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`); };
   const isCurrentMonth = selMonth === todayStr.slice(0,7);
-  const monthLabel = new Date(y, m-1, 1).toLocaleString("en-AU", { month:"long", year:"numeric" });
+  const monthLabel = new Date(y,m-1,1).toLocaleString("en-AU",{month:"long",year:"numeric"});
 
-  // ── Filter data to selected month ────────────────────────
+  // ── Data for selected month ───────────────────────────────
   const revMonth  = revenue.filter(r  => r.date.slice(0,7) === selMonth);
   const expMonth  = expenses.filter(e => e.date.slice(0,7) === selMonth);
-  const tsMonth   = annotateTimesheets(employees,
-    timesheets.filter(t => weekToMonth(t.week) === selMonth));
+  const tsMonth   = annotateTimesheets(employees, timesheets.filter(t => weekToMonth(t.week) === selMonth));
 
-  // ── Same calcs but scoped to selected month ──────────────
-  const totalRev  = revMonth.reduce((s,r) => s + r.amount, 0);
-  const gstColl   = totalRev / 11;
-  const gstCreds  = expMonth.filter(e => e.gst).reduce((s,e) => s + e.amount/11, 0);
-  const gstPay    = gstColl - gstCreds;
-  const totalWages= tsMonth.reduce((s,t) => s + t.gross, 0);
-  const totalPayg = tsMonth.reduce((s,t) => s + t.payg,  0);
-  const estBAS    = gstPay + totalPayg;
-  const wklyRes   = estBAS / 4.33;
-  const totalIns  = insurance.reduce((s,i) => s + i.annual, 0);
-  const totalSuper= tsMonth.reduce((s,t) => s + t.super, 0);
+  const totalRev   = revMonth.reduce((s,r) => s+revTotal(r), 0);
+  const totalExp   = expMonth.reduce((s,e) => s+e.amount, 0);
+  const gstTaxable = revMonth.reduce((s,r) => s+revGSTTaxable(r), 0);
+  const gstColl    = gstTaxable / 11;
+  const gstCreds   = expMonth.filter(e=>e.gst).reduce((s,e)=>s+e.amount/11, 0);
+  const gstPay     = gstColl - gstCreds;
+  const totalWages = tsMonth.reduce((s,t)=>s+t.gross, 0);
+  const totalPayg  = tsMonth.reduce((s,t)=>s+t.payg,  0);
+  const totalSuper = tsMonth.reduce((s,t)=>s+t.super,  0);
+  const totalIns   = insurance.reduce((s,i)=>s+i.annual/12, 0); // monthly share
+  const estBAS     = gstPay + totalPayg;
+  const wklyRes    = estBAS / 4.33;
+
+  // ── NET PROFIT (the big number) ───────────────────────────
+  const revExGST      = totalRev - gstColl;
+  const cogsPurchases = expMonth.filter(e => COGS_CATS.has(e.cat)).reduce((s,e)=>s+e.amount, 0);
+  const opexTotal     = expMonth.filter(e => !COGS_CATS.has(e.cat)).reduce((s,e)=>s+e.amount, 0);
+  const totalCosts    = cogsPurchases + opexTotal + totalWages + totalSuper + totalIns;
+  const netProfit     = revExGST - totalCosts;
+  const netMargin     = revExGST > 0 ? (netProfit / revExGST * 100) : 0;
 
   // ── Last month comparison ─────────────────────────────────
-  const prevMonthStr = (() => {
-    const d = new Date(y, m-2, 1);
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
-  })();
-  const revPrev   = revenue.filter(r => r.date.slice(0,7) === prevMonthStr).reduce((s,r) => s+r.amount, 0);
-  const wagesPrev = annotateTimesheets(employees,
-    timesheets.filter(t => weekToMonth(t.week) === prevMonthStr)).reduce((s,t) => s+t.gross, 0);
-
-  const delta = (cur, prev) => {
-    if (!prev) return null;
-    const pct = ((cur - prev) / prev * 100).toFixed(1);
-    const up  = cur >= prev;
-    return { pct, up, label: `${up?"+":""}${pct}% vs last month` };
-  };
-  const revDelta   = delta(totalRev,   revPrev);
+  const prevMonthStr = (() => { const d=new Date(y,m-2,1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; })();
+  const revPrev   = revenue.filter(r=>r.date.slice(0,7)===prevMonthStr).reduce((s,r)=>s+revTotal(r),0);
+  const wagesPrev = annotateTimesheets(employees, timesheets.filter(t=>weekToMonth(t.week)===prevMonthStr)).reduce((s,t)=>s+t.gross,0);
+  const delta = (cur,prev) => { if(!prev) return null; const pct=((cur-prev)/prev*100).toFixed(1); const up=cur>=prev; return {pct,up,label:`${up?"+":""}${pct}% vs last month`}; };
+  const revDelta   = delta(totalRev, revPrev);
   const wagesDelta = delta(totalWages, wagesPrev);
 
-  const [showMonthPicker, setShowMonthPicker] = useState(false);
-
-  // Generate last 18 months for picker
-  const monthOptions = Array.from({length:18}, (_,i) => {
-    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
-    const val = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
-    const lbl = d.toLocaleString("en-AU", { month:"short" });
-    const yr  = d.getFullYear();
-    return { val, lbl, yr };
-  }).reverse();
-
-  const status    = gstPay < gstColl * 0.5 ? "g" : gstPay < gstColl * 0.8 ? "y" : "r";
-  const statusMsg = { g:"Tracking well — tax reserves look healthy.", y:"Watch expenses — GST payable is growing.", r:"Tax shortfall risk — increase your weekly reserve." };
-  const analysed  = analyseExpenses(expenses);
-  const flags     = analysed.filter(e => e.gstStatus === "missing-invoice").length
-                  + timesheets.filter(t => !t.super_paid).length;
-  const expiringPolicies = insurance.filter(i => {
-    if (!i.renewal) return false;
-    const days = Math.ceil((new Date(i.renewal) - new Date()) / 86400000);
-    return days <= 60 && days >= 0;
+  // ── Cash flow — daily view (includes wages) ──────────────
+  const daysInMonth = new Date(y,m,0).getDate();
+  // Wages shown on payday — default Thursday (day 4, Mon=1), stored in localStorage
+  const payDayOfWeek = parseInt(localStorage.getItem("mise_payday") || "4"); // 1=Mon…7=Sun
+  const wagesByDate = {};
+  tsMonth.forEach(t => {
+    const wd = weekToDate(t.week); // Monday of the week
+    if (!wd) return;
+    // Find the payday for this week (Mon + offset)
+    const payDate = new Date(wd);
+    payDate.setDate(payDate.getDate() + (payDayOfWeek - 1));
+    const ds = payDate.toISOString().slice(0,10);
+    if (ds.slice(0,7) === selMonth) {
+      wagesByDate[ds] = (wagesByDate[ds] || 0) + t.gross + t.super;
+    }
   });
-  const totalFlags = flags + expiringPolicies.length;
+
+  const cashflowDays = Array.from({length:daysInMonth},(_,i)=>{
+    const day   = String(i+1).padStart(2,"0");
+    const date  = `${selMonth}-${day}`;
+    const dayRev   = revMonth.filter(r=>r.date===date).reduce((s,r)=>s+revTotal(r),0);
+    const dayExp   = expMonth.filter(e=>e.date===date).reduce((s,e)=>s+e.amount,0);
+    const dayWages = wagesByDate[date] || 0;
+    const net   = dayRev - dayExp - dayWages;
+    return {date, day:i+1, dayRev, dayExp, dayWages, net};
+  });
+  let running = 0;
+  const cashflowWithBalance = cashflowDays.map(d => { running += d.net; return {...d, balance:running}; });
+  const maxFlow = Math.max(...cashflowDays.map(d=>Math.max(d.dayRev, d.dayExp+d.dayWages)), 1);
+
+  // ── Reminders ────────────────────────────────────────────
+  const reminders = [];
+  // BAS due dates (28th after quarter end)
+  const [agentLodge, setAgentLodge] = useState(() => localStorage.getItem("mise_agent_lodge") === "yes");
+  const toggleAgentLodge = () => {
+    const next = !agentLodge;
+    setAgentLodge(next);
+    localStorage.setItem("mise_agent_lodge", next ? "yes" : "no");
+  };
+
+  // BAS due dates — self: 28th after quarter end; agent: 28th of month after that
+  const BAS_DUES = [
+    { q:"Q1 FY2026", selfDue:"2025-10-28", agentDue:"2025-11-28", label:"Q1 FY2026 BAS" },
+    { q:"Q2 FY2026", selfDue:"2026-02-28", agentDue:"2026-03-28", label:"Q2 FY2026 BAS" },
+    { q:"Q3 FY2026", selfDue:"2026-04-28", agentDue:"2026-05-28", label:"Q3 FY2026 BAS" },
+    { q:"Q4 FY2026", selfDue:"2026-07-28", agentDue:"2026-08-28", label:"Q4 FY2026 BAS" },
+  ];
+  BAS_DUES.forEach(b => {
+    const due  = agentLodge ? b.agentDue : b.selfDue;
+    const days = Math.ceil((new Date(due)-new Date())/86400000);
+    if (days >= 0 && days <= 45) reminders.push({
+      type:"bas", ico:"📋", col:days<=14?"r":"y",
+      title:`${b.label} due ${agentLodge?"(via agent)":"(self-lodged)"}`,
+      sub:`Due ${due} — ${days} days away`,
+      action:()=>setPage("bassummary")
+    });
+  });
+  // Super unpaid
+  const unpaidSuper = timesheets.filter(t=>!t.super_paid).length;
+  if (unpaidSuper > 0) {
+    const amt = annotateTimesheets(employees,timesheets.filter(t=>!t.super_paid)).reduce((s,t)=>s+t.super,0);
+    reminders.push({ type:"super", ico:"💰", col:"y", title:`${unpaidSuper} super payment${unpaidSuper>1?"s":""} outstanding`, sub:`${money(amt)} owed — mark paid in Staff & Wages`, action:()=>setPage("wages") });
+  }
+  // Insurance expiring — use 30-day threshold in reminders (60-day shown in quick alert below tabs)
+  const insuranceReminders = insurance.filter(i=>{ if(!i.renewal) return false; const d=Math.ceil((new Date(i.renewal)-new Date())/86400000); return d>=0&&d<=30; });
+  insuranceReminders.forEach(i=>{
+    const days=Math.ceil((new Date(i.renewal)-new Date())/86400000);
+    reminders.push({ type:"insurance", ico:"🛡️", col:days<=14?"r":"y", title:`${i.type} renewal — ${days} days`, sub:`Renews ${i.renewal}`, action:()=>setPage("insurance") });
+  });
+  // expiringPolicies (60-day, shown only in quick alert, NOT reminders)
+  const expiringPolicies = insurance.filter(i=>{if(!i.renewal)return false;const d=Math.ceil((new Date(i.renewal)-new Date())/86400000);return d<=60&&d>=31;});
+  // Employees with unsettled exit
+  employees.filter(e=>e.exitDate&&!e.leaveSettled).forEach(e=>{
+    reminders.push({ type:"offboard", ico:"🚪", col:"r", title:`${e.name} — leave balance not settled`, sub:`Exited ${e.exitDate}. Outstanding leave must be paid out.`, action:()=>setPage("wages") });
+  });
+  // Missing invoices
+  const missingInv = analyseExpenses(expenses).filter(e=>e.gstStatus==="missing-invoice").length;
+  if (missingInv > 0) reminders.push({ type:"invoice", ico:"🧾", col:"y", title:`${missingInv} expense${missingInv>1?"s":""} missing invoices`, sub:"GST credits at risk — add invoices in Expenses", action:()=>setPage("expenses") });
+
+  const [showMonthPicker, setShowMonthPicker] = useState(false);
+  const monthOptions = Array.from({length:18},(_,i)=>{ const d=new Date(today.getFullYear(),today.getMonth()-i,1); const val=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; return {val,lbl:d.toLocaleString("en-AU",{month:"short"}),yr:d.getFullYear()}; }).reverse();
+
+  const status    = gstPay < gstColl*0.5 ? "g" : gstPay < gstColl*0.8 ? "y" : "r";
+  const statusMsg = { g:"Tracking well — tax reserves look healthy.", y:"Watch expenses — GST payable is growing.", r:"Tax shortfall risk — increase your weekly reserve." };
+  const expiringPolicies60 = insurance.filter(i=>{if(!i.renewal)return false;const d=Math.ceil((new Date(i.renewal)-new Date())/86400000);return d<=60&&d>=0;});
+
+  const colCls = { r:"r", y:"y", g:"g" };
+  const remColBg = { r:"rgba(220,38,38,.08)", y:"rgba(217,119,6,.08)" };
+  const remColBd = { r:"rgba(220,38,38,.25)", y:"rgba(217,119,6,.25)" };
+  const remColTxt= { r:C.red, y:C.yellow };
 
   return (
     <>
@@ -2480,67 +2895,34 @@ function DashboardPage({ revenue, expenses, employees, timesheets, insurance, se
         </div>
       </div>
 
-      {/* ── Month Picker Bar ── */}
-      <div style={{marginBottom:18}}>
-        {/* Current month display + toggle */}
-        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom: showMonthPicker ? 10 : 0}}>
+      {/* Month picker */}
+      <div style={{marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:showMonthPicker?10:0}}>
           <button onClick={prevMonth} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,color:C.muted,fontSize:15,padding:"5px 10px",cursor:"pointer",lineHeight:1}}>‹</button>
-          <button
-            onClick={() => setShowMonthPicker(v => !v)}
-            style={{
-              flex:1, display:"flex", alignItems:"center", justifyContent:"space-between",
-              background:C.surface, border:`1px solid ${showMonthPicker ? C.accent : C.border}`,
-              borderRadius:9, padding:"8px 14px", cursor:"pointer", fontFamily:"inherit",
-            }}
-          >
+          <button onClick={()=>setShowMonthPicker(v=>!v)} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"space-between",background:C.surface,border:`1px solid ${showMonthPicker?C.accent:C.border}`,borderRadius:9,padding:"8px 14px",cursor:"pointer",fontFamily:"inherit"}}>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
               <span style={{fontSize:16}}>📅</span>
               <div style={{textAlign:"left"}}>
                 <div style={{fontSize:14,fontWeight:700,color:C.text}}>{monthLabel}</div>
-                <div style={{fontSize:10,color:C.muted}}>
-                  {isCurrentMonth ? "Current month" : "Viewing past data"}
-                </div>
+                <div style={{fontSize:10,color:C.muted}}>{isCurrentMonth?"Current month":"Viewing past data"}</div>
               </div>
             </div>
-            <span style={{color:C.muted,fontSize:11}}>{showMonthPicker ? "▲ Close" : "▼ Change"}</span>
+            <span style={{color:C.muted,fontSize:11}}>{showMonthPicker?"▲ Close":"▼ Change"}</span>
           </button>
           <button onClick={nextMonth} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,color:C.muted,fontSize:15,padding:"5px 10px",cursor:"pointer",lineHeight:1}}>›</button>
-          {!isCurrentMonth && (
-            <button onClick={() => { setSelMonth(todayStr.slice(0,7)); setShowMonthPicker(false); }}
-              style={{background:"rgba(143,203,114,.12)",border:`1px solid ${C.accent}`,borderRadius:7,color:C.accent,fontSize:11,fontWeight:700,padding:"7px 12px",cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
-              Today
-            </button>
-          )}
+          {!isCurrentMonth&&<button onClick={()=>{setSelMonth(todayStr.slice(0,7));setShowMonthPicker(false);}} style={{background:"rgba(143,203,114,.12)",border:`1px solid ${C.accent}`,borderRadius:7,color:C.accent,fontSize:11,fontWeight:700,padding:"7px 12px",cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>Today</button>}
         </div>
-
-        {/* Expandable month grid */}
-        {showMonthPicker && (
+        {showMonthPicker&&(
           <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:11,padding:"14px 16px"}}>
-            {/* Group by year */}
-            {[...new Set(monthOptions.map(o => o.yr))].map(yr => (
+            {[...new Set(monthOptions.map(o=>o.yr))].map(yr=>(
               <div key={yr} style={{marginBottom:12}}>
                 <div style={{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:".8px",textTransform:"uppercase",marginBottom:7}}>{yr}</div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-                  {monthOptions.filter(o => o.yr === yr).map(o => {
-                    const isSel = o.val === selMonth;
-                    const isCur = o.val === todayStr.slice(0,7);
-                    const hasData = revenue.some(r => r.date.slice(0,7) === o.val);
-                    return (
-                      <button key={o.val} onClick={() => { setSelMonth(o.val); setShowMonthPicker(false); }}
-                        style={{
-                          padding:"6px 12px", borderRadius:7, cursor:"pointer",
-                          fontFamily:"inherit", fontSize:12, fontWeight: isSel ? 700 : 500,
-                          border: isSel ? `1px solid ${C.accent}` : isCur ? `1px solid ${C.border}` : `1px solid transparent`,
-                          background: isSel ? "rgba(143,203,114,.18)" : isCur ? C.surfaceAlt : "transparent",
-                          color: isSel ? C.accent : C.text,
-                          position:"relative",
-                        }}>
-                        {o.lbl}
-                        {hasData && !isSel && (
-                          <span style={{position:"absolute",top:3,right:3,width:4,height:4,borderRadius:"50%",background:C.accent}}/>
-                        )}
-                      </button>
-                    );
+                  {monthOptions.filter(o=>o.yr===yr).map(o=>{
+                    const isSel=o.val===selMonth,isCur=o.val===todayStr.slice(0,7),hasData=revenue.some(r=>r.date.slice(0,7)===o.val);
+                    return(<button key={o.val} onClick={()=>{setSelMonth(o.val);setShowMonthPicker(false);}} style={{padding:"6px 12px",borderRadius:7,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:isSel?700:500,border:isSel?`1px solid ${C.accent}`:isCur?`1px solid ${C.border}`:"1px solid transparent",background:isSel?"rgba(143,203,114,.18)":isCur?C.surfaceAlt:"transparent",color:isSel?C.accent:C.text,position:"relative"}}>
+                      {o.lbl}{hasData&&!isSel&&<span style={{position:"absolute",top:3,right:3,width:4,height:4,borderRadius:"50%",background:C.accent}}/>}
+                    </button>);
                   })}
                 </div>
               </div>
@@ -2549,209 +2931,948 @@ function DashboardPage({ revenue, expenses, employees, timesheets, insurance, se
         )}
       </div>
 
-      <div className={`banner ${status}`}>
-        <div className={`bdot ${status}`}/>
-        {statusMsg[status]}
-      </div>
-
-      {/* Revenue & Tax cards */}
-      <div className="g4">
-        {[
-          { lbl:"Monthly Revenue",  val:money(totalRev),  cls:"b",
-            sub: revDelta ? <span style={{color: revDelta.up ? C.accent : C.red, fontSize:10}}>{revDelta.label}</span> : `${revMonth.length} days tracked` },
-          { lbl:"GST Collected",    val:money(gstColl),   cls:"y", sub:"1/11 of revenue" },
-          { lbl:"GST Payable",      val:money(gstPay),    cls:gstPay > 2000 ? "r":"y", sub:"Collected minus credits" },
-          { lbl:"Est. BAS",         val:money(estBAS),    cls:"r", sub:`${quarter} estimate` },
-        ].map((c,i) => (
-          <div key={i} className="card">
-            <div className="clbl">{c.lbl}</div>
-            <div className={`cval ${c.cls}`}>{c.val}</div>
-            <div className="csub">{c.sub}</div>
+      {/* ── BIG NET PROFIT BANNER ── */}
+      <div className="mob-compress" style={{
+        background: netProfit >= 0
+          ? "linear-gradient(135deg,rgba(5,150,105,.12),rgba(143,203,114,.08))"
+          : "linear-gradient(135deg,rgba(220,38,38,.10),rgba(220,38,38,.04))",
+        border: `1.5px solid ${netProfit>=0?C.green:C.red}44`,
+        borderRadius:14, padding:"20px 24px", marginBottom:16,
+        display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:16,
+      }}>
+        <div>
+          <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".8px",marginBottom:6}}>
+            Net Profit — {monthLabel}
           </div>
-        ))}
-      </div>
-
-      {/* Staff & Wages cards */}
-      <div className="g4">
-        {[
-          { lbl:"Active Staff",     val:employees.length, cls:"t", sub:`${tsMonth.length} timesheet entries` },
-          { lbl:"Gross Wages",      val:money(totalWages),cls:"",
-            sub: wagesDelta ? <span style={{color: wagesDelta.up ? C.red : C.accent, fontSize:10}}>{wagesDelta.label}</span> : "This month" },
-          { lbl:"Super Owed (SGC)", val:money(totalSuper),cls:"b", sub:"SGC on gross wages" },
-          { lbl:"Annual Insurance", val:money(totalIns),  cls:"p", sub:`${insurance.length} policies` },
-        ].map((c,i) => (
-          <div key={i} className="card">
-            <div className="clbl">{c.lbl}</div>
-            <div className={`cval ${c.cls}`}>{c.val}</div>
-            <div className="csub">{c.sub}</div>
+          <div className="mono" style={{fontSize:38,fontWeight:800,color:netProfit>=0?C.green:C.red,lineHeight:1,letterSpacing:"-1px"}}>
+            {money(netProfit)}
           </div>
-        ))}
-      </div>
-
-      <div className="g2">
-        <div className="bc">
-          <div className="bctit">Revenue vs Expenses — {monthLabel}</div>
-          <DonutChart data={[
-            { label:"Revenue",  v:totalRev,                                       c:C.blue },
-            { label:"Expenses", v:expMonth.reduce((s,e)=>s+e.amount,0),           c:C.red  },
-            { label:"Wages",    v:totalWages,                                     c:C.yellow },
-          ]}/>
+          <div style={{fontSize:12,color:C.muted,marginTop:6}}>
+            Margin: <strong style={{color:netProfit>=0?C.green:C.red}}>{netMargin.toFixed(1)}%</strong>
+            <span style={{margin:"0 8px",color:C.dim}}>·</span>
+            Revenue ex-GST {money(revExGST)}
+            <span style={{margin:"0 8px",color:C.dim}}>·</span>
+            Total costs {money(totalCosts)}
+          </div>
         </div>
-        <div className="bc">
-          <div className="bctit">Daily Revenue — {monthLabel}</div>
-          <BarChart data={revMonth.slice(-7).map(r => ({
-            label: r.date.slice(8), v:r.amount
-          }))}/>
-        </div>
-      </div>
-
-      <div className="reserve">
-        <div className="r-lbl">🏦 Weekly Tax Reserve — {monthLabel}</div>
-        <div className="r-big">{money(wklyRes)}</div>
-        <div className="r-sub">Set aside <strong>{money(wklyRes)}</strong>/week → <strong>{money(wklyRes*4.33)}</strong> ready by BAS due date.</div>
-      </div>
-
-      {expiringPolicies.length > 0 && (
-        <div className="alert al-y" style={{ cursor:"pointer" }} onClick={() => setPage("insurance")}>
-          <span className="al-ico">🛡️</span>
-          <div>
-            <div className="al-ttl">Insurance renewal due soon</div>
-            <div className="al-msg">
-              {expiringPolicies.map(i => {
-                const days = Math.ceil((new Date(i.renewal) - new Date()) / 86400000);
-                return `${i.type} — ${days <= 30 ? `⚠️ ${days} days` : `${days} days`}`;
-              }).join(" · ")} · Click to review →
+        <div className="mob-hide" style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+          {[
+            {lbl:"Revenue (ex-GST)", val:money(revExGST),   col:C.blue},
+            {lbl:"COGS",             val:money(cogsPurchases),col:C.yellow},
+            {lbl:"Wages + Super",    val:money(totalWages+totalSuper), col:C.red},
+            {lbl:"Other Expenses",   val:money(opexTotal),   col:C.muted},
+          ].map((s,i)=>(
+            <div key={i} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 14px",minWidth:110}}>
+              <div style={{fontSize:9.5,color:C.dim,textTransform:"uppercase",letterSpacing:".6px",marginBottom:4}}>{s.lbl}</div>
+              <div className="mono" style={{fontSize:15,fontWeight:700,color:s.col}}>{s.val}</div>
             </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── SETUP PROGRESS BAR ── */}
+      {(() => {
+        const steps = [
+          { id:"revenue",   lbl:"First revenue entry",  done: revenue.length > 0,       page:"revenue",  ico:"💵" },
+          { id:"expense",   lbl:"First expense entry",  done: expenses.length > 0,       page:"expenses", ico:"🧾" },
+          { id:"employee",  lbl:"Add an employee",      done: employees.length > 0,      page:"wages",    ico:"👤" },
+          { id:"timesheet", lbl:"Log first timesheet",  done: timesheets.length > 0,     page:"wages",    ico:"🕐" },
+          { id:"bas",       lbl:"Review your BAS",      done: false,                     page:"bassummary",ico:"📋" },
+          { id:"dayworker", lbl:"Try Day Workers",      done: false,                     page:"wages",    ico:"⚡" },
+        ];
+        const doneCount = steps.filter(s => s.done).length;
+        if (doneCount === steps.length) return null; // all done — hide
+        const pct = Math.round((doneCount / steps.length) * 100);
+        return (
+          <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"14px 16px", marginBottom:14 }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
+              <div style={{ fontSize:12, fontWeight:700 }}>🚀 Setup — {doneCount}/{steps.length} complete</div>
+              <div style={{ fontSize:11, color:C.muted }}>{pct}%</div>
+            </div>
+            <div style={{ height:5, background:C.border, borderRadius:3, marginBottom:12, overflow:"hidden" }}>
+              <div style={{ height:"100%", width:`${pct}%`, background:C.accent, borderRadius:3, transition:"width .4s" }}/>
+            </div>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+              {steps.map(s => (
+                <button key={s.id} onClick={() => setPage(s.page)}
+                  style={{ display:"flex", alignItems:"center", gap:5, padding:"5px 10px", borderRadius:8, cursor:"pointer", fontFamily:"inherit", fontSize:11, fontWeight:600,
+                    border:`1px solid ${s.done ? C.green+"44" : C.border}`,
+                    background: s.done ? "rgba(5,150,105,.07)" : C.surfaceAlt,
+                    color: s.done ? C.green : C.muted, textDecoration:"none",
+                  }}>
+                  <span>{s.done ? "✅" : s.ico}</span>
+                  <span>{s.lbl}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Dashboard tabs */}
+      <div style={{display:"flex",gap:6,marginBottom:14,borderBottom:`1px solid ${C.border}`}}>
+        {[["today","☀️ Today"],["overview","📊 Overview"],["cashflow","💸 Cash Flow"],["reminders",`🔔 Reminders${reminders.length>0?` (${reminders.length})`:""}`]].map(([id,lbl])=>(
+          <button key={id} onClick={()=>setDashTab(id)} style={{padding:"8px 16px",fontSize:12,fontWeight:600,fontFamily:"inherit",cursor:"pointer",border:"none",borderBottom:dashTab===id?`2px solid ${C.accent}`:"2px solid transparent",background:"none",color:dashTab===id?C.accent:C.muted,transition:"all .15s"}}>
+            {lbl}
+          </button>
+        ))}
+      </div>
+
+      {/* ── TODAY TAB ── */}
+      {dashTab === "today" && (() => {
+        const todayRevEntry = revenue.find(r => r.date === todayStr);
+        // Missing revenue: days in past 7 with no entry (excluding today)
+        const missingRevDays = Array.from({length:7},(_,i)=>{ const d=new Date(today); d.setDate(d.getDate()-i); return d.toISOString().slice(0,10); })
+          .filter(ds => ds !== todayStr && !revenue.find(r=>r.date===ds));
+        // Unpaid super count
+        const unpaidSuperCount = timesheets.filter(t=>!t.super_paid).length;
+        // Fix 1: Today's staff from ROSTER (not timesheets) — roster is the plan, timesheets are the record
+        const todayShifts = roster.filter(s => s.date === todayStr);
+        const todayEmps   = [...new Set(todayShifts.map(s => s.eid))]
+          .map(eid => employees.find(e => e.id === eid))
+          .filter(Boolean);
+
+        const greetHour = today.getHours();
+        const greet = greetHour < 12 ? "Good morning" : greetHour < 17 ? "Good afternoon" : "Good evening";
+
+        return (
+          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+            <div style={{ fontSize:22, fontWeight:700, letterSpacing:"-.5px", marginBottom:4 }}>
+              {greet} 👋
+              <div style={{ fontSize:12.5, fontWeight:400, color:C.muted, marginTop:4 }}>
+                {today.toLocaleDateString("en-AU",{weekday:"long",day:"numeric",month:"long"})}
+              </div>
+            </div>
+
+            {/* Revenue for today */}
+            <div style={{ background: todayRevEntry ? "rgba(5,150,105,.08)" : "rgba(220,38,38,.06)", border:`1px solid ${todayRevEntry?"rgba(5,150,105,.25)":"rgba(220,38,38,.25)"}`, borderRadius:12, padding:"14px 16px" }}>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                <div>
+                  <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:4 }}>Today's Revenue</div>
+                  {todayRevEntry
+                    ? <div className="mono" style={{ fontSize:24, fontWeight:800, color:C.green }}>{money(revTotal(todayRevEntry))}</div>
+                    : <div style={{ fontSize:14, fontWeight:600, color:C.red }}>Not recorded yet</div>
+                  }
+                  {todayRevEntry && <div style={{ fontSize:11, color:C.muted, marginTop:3 }}>
+                    Dine-in {money(todayRevEntry.dine_in||0)} · Takeaway {money(todayRevEntry.takeaway||0)} · Delivery {money(todayRevEntry.delivery||0)}
+                  </div>}
+                </div>
+                <button onClick={() => setPage("revenue")}
+                  style={{ padding:"8px 14px", borderRadius:9, cursor:"pointer", fontFamily:"inherit", fontSize:12, fontWeight:700, background:C.accent, color:"#0C0F0D", border:"none" }}>
+                  {todayRevEntry ? "Edit" : "+ Add"}
+                </button>
+              </div>
+            </div>
+
+            {/* Missing revenue days */}
+            {missingRevDays.length > 0 && (
+              <div style={{ background:"rgba(217,119,6,.07)", border:"1px solid rgba(217,119,6,.25)", borderRadius:11, padding:"12px 15px", display:"flex", alignItems:"center", gap:12 }}>
+                <span style={{ fontSize:20 }}>📅</span>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:12.5, fontWeight:700, color:C.yellow }}>Revenue missing for {missingRevDays.length} day{missingRevDays.length>1?"s":""}</div>
+                  <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>{missingRevDays.slice(0,3).join(", ")}{missingRevDays.length>3?` +${missingRevDays.length-3} more`:""}</div>
+                </div>
+                <button onClick={() => setPage("revenue")} style={{ padding:"6px 12px", borderRadius:8, cursor:"pointer", fontFamily:"inherit", fontSize:11.5, fontWeight:700, background:"none", border:`1px solid ${C.border}`, color:C.muted }}>Fill in →</button>
+              </div>
+            )}
+
+            {/* Today's staff */}
+            <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"14px 16px" }}>
+              <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>On Today</div>
+              {todayEmps.length === 0
+                ? <div style={{ fontSize:12.5, color:C.dim }}>No shifts rostered today — <button onClick={()=>setPage("wages")} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontFamily:"inherit",fontWeight:700,fontSize:12.5}}>open Roster →</button></div>
+                : <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+                    {todayEmps.map(e=>{
+                      const shifts = todayShifts.filter(s=>s.eid===e.id);
+                      return (
+                        <div key={e.id} style={{ display:"flex", alignItems:"center", gap:7, padding:"7px 11px", background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:8 }}>
+                          <div style={{ width:22, height:22, borderRadius:"50%", background:avatarBg(e.id,e.color), display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:700, color:"#fff" }}>{initials(e.name)}</div>
+                          <div>
+                            <div style={{ fontSize:12, fontWeight:600 }}>{e.name.split(" ")[0]}</div>
+                            {shifts.map((s,i)=>(
+                              <div key={i} style={{ fontSize:10, color:C.muted }}>{s.start}–{s.end}</div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+              }
+            </div>
+
+            {/* Quick action cards */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+              {[
+                { ico:"⚡", lbl:"Day Worker", sub:"Quick casual pay", col:C.teal, page:"dayworkers" },
+                { ico:"🧾", lbl:"Add Expense", sub:"Log a receipt now", col:C.yellow, page:"expenses" },
+                { ico:"📋", lbl:"BAS Summary", sub:unpaidSuperCount>0?`${unpaidSuperCount} super unpaid`:"Review your BAS", col:unpaidSuperCount>0?C.red:C.muted, page:"bassummary" },
+                { ico:"📁", lbl:"Scan Receipt", sub:"Camera → Doc Hub", col:C.blue, page:"documents" },
+              ].map(a=>(
+                <button key={a.lbl} onClick={()=>setPage(a.page)}
+                  style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 13px", borderRadius:11, cursor:"pointer", fontFamily:"inherit", textAlign:"left",
+                    background:C.surfaceAlt, border:`1px solid ${C.border}` }}>
+                  <span style={{ fontSize:22, flexShrink:0 }}>{a.ico}</span>
+                  <div>
+                    <div style={{ fontSize:12.5, fontWeight:700, color:C.text }}>{a.lbl}</div>
+                    <div style={{ fontSize:10.5, color:a.col, marginTop:1 }}>{a.sub}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── OVERVIEW TAB ── */}
+      {dashTab === "overview" && (() => {
+        // ── ATO liability — scoped to the SELECTED month's quarter ──
+        // Use selMonth instead of today so historical views are consistent
+        const viewDate  = new Date(y, m-1, 1); // first day of selected month
+        const qMonth    = viewDate.getMonth();
+        const qYear     = viewDate.getFullYear();
+        const qStart    = new Date(qYear, Math.floor(qMonth/3)*3, 1);
+        // Quarter end: if viewing current quarter use today, else use quarter end
+        const qEndFull  = new Date(qYear, Math.floor(qMonth/3)*3+3, 0);
+        const isCurrentQ= today >= qStart && today <= qEndFull;
+        const qEndStr   = isCurrentQ ? todayStr : qEndFull.toISOString().slice(0,10);
+        const qStartStr = qStart.toISOString().slice(0,10);
+
+        const qRevAll  = revenue.filter(r => r.date >= qStartStr && r.date <= qEndStr);
+        const qExpAll  = expenses.filter(e => e.date >= qStartStr && e.date <= qEndStr);
+        const qTsAll   = annotateTimesheets(employees, timesheets.filter(t => {
+          const d = weekToDate(t.week); return d && d >= qStartStr && d <= qEndStr;
+        }));
+
+        const qRev    = qRevAll.reduce((s,r) => s+revTotal(r), 0);
+        const qGSTTaxable = qRevAll.reduce((s,r) => s+revGSTTaxable(r), 0);
+        const qGST    = qGSTTaxable / 11;
+        const qCreds  = qExpAll.filter(e=>e.gst).reduce((s,e)=>s+e.amount/11, 0);
+        const qNetGST = Math.max(0, qGST - qCreds);
+        const qPAYG   = qTsAll.reduce((s,t)=>s+t.payg, 0);
+        const qSuper  = qTsAll.reduce((s,t)=>s+t.super, 0);
+        const qOwed   = qNetGST + qPAYG;
+
+        // Quarter label e.g. "Q1 FY2026 (Jul–Sep)"
+        const qLabels = ["Jul–Sep","Oct–Dec","Jan–Mar","Apr–Jun"];
+        const qNum    = Math.floor(qMonth/3);
+        const qFY     = qMonth >= 6 ? today.getFullYear()+1 : today.getFullYear();
+        const qLabel  = `Q${qNum+1} FY${qFY} (${qLabels[qNum]})`;
+
+        // Days left in quarter
+        const qEndDate = new Date(qStart.getFullYear(), qStart.getMonth()+3, 0);
+        const daysLeft = Math.ceil((qEndDate - today) / 86400000);
+        const daysTotal= Math.ceil((qEndDate - qStart) / 86400000);
+        const progress = Math.round((1 - daysLeft/daysTotal)*100);
+
+        return (
+          <>
+            <div className={`banner ${status}`}><div className={`bdot ${status}`}/>{statusMsg[status]}</div>
+
+            {/* ATO Liability Widget */}
+            <div className="mob-compress" style={{
+              background:"linear-gradient(135deg,rgba(220,38,38,.10),rgba(220,38,38,.04))",
+              border:`1.5px solid rgba(220,38,38,.30)`,
+              borderRadius:14, padding:"18px 22px", marginBottom:16,
+            }}>
+              <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",flexWrap:"wrap",gap:16}}>
+                <div>
+                  <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".8px",marginBottom:6}}>
+                    🏛️ {isCurrentQ ? "ATO Liability — Right Now" : "ATO Liability — Historical"} — {qLabel}
+                    {!isCurrentQ && <span style={{marginLeft:8,fontSize:10,fontWeight:400,color:C.dim}}>(full quarter)</span>}
+                  </div>
+                  <div className="mono" style={{fontSize:36,fontWeight:800,color:C.red,lineHeight:1,letterSpacing:"-1px"}}>
+                    {money(qOwed)}
+                  </div>
+                  <div style={{fontSize:12,color:C.muted,marginTop:6}}>
+                    GST payable {money(qNetGST)} + PAYG {money(qPAYG)}
+                    <span style={{margin:"0 8px",color:C.dim}}>·</span>
+                    Super {money(qSuper)} <span style={{fontSize:10,color:C.dim}}>(not in BAS)</span>
+                  </div>
+                </div>
+                <div style={{minWidth:160}}>
+                  <div style={{fontSize:10,color:C.muted,marginBottom:6,textTransform:"uppercase",letterSpacing:".6px"}}>Quarter progress</div>
+                  <div style={{height:8,background:C.border,borderRadius:4,overflow:"hidden",marginBottom:5}}>
+                    <div style={{height:"100%",width:`${progress}%`,background:progress>80?C.red:progress>50?C.yellow:C.green,borderRadius:4,transition:"width .3s"}}/>
+                  </div>
+                  <div style={{fontSize:11,color:C.muted}}>{progress}% complete · {daysLeft} days left</div>
+                  <div style={{fontSize:10,color:C.dim,marginTop:3}}>BAS due 28 {new Date(qEndDate.getFullYear(),qEndDate.getMonth()+1,0).toLocaleString("en-AU",{month:"long",year:"numeric"})}</div>
+                </div>
+              </div>
+              {/* Breakdown bar */}
+              {qOwed > 0 && (
+                <div style={{marginTop:14,display:"flex",gap:12,flexWrap:"wrap"}}>
+                  {[
+                    {lbl:"GST Collected",  val:money(qGST),     col:C.yellow},
+                    {lbl:"GST Credits",    val:"− "+money(qCreds), col:C.green},
+                    {lbl:"Net GST Payable",val:money(qNetGST),  col:C.red},
+                    {lbl:"PAYG Withheld",  val:money(qPAYG),    col:C.red},
+                    {lbl:"Super (SGC)",    val:money(qSuper),   col:C.blue},
+                  ].map((s,i)=>(
+                    <div key={i} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:9,padding:"8px 12px",flex:"1 1 100px"}}>
+                      <div style={{fontSize:9.5,color:C.dim,textTransform:"uppercase",letterSpacing:".5px",marginBottom:3}}>{s.lbl}</div>
+                      <div className="mono" style={{fontSize:14,fontWeight:700,color:s.col}}>{s.val}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="g4">
+              {[
+                {lbl:"Monthly Revenue",  val:money(totalRev),  cls:"b", sub:revDelta?<span style={{color:revDelta.up?C.accent:C.red,fontSize:10}}>{revDelta.label}</span>:`${revMonth.length} days tracked`},
+                {lbl:"GST Collected",    val:money(gstColl),   cls:"y", sub:"1/11 of revenue"},
+                {lbl:"GST Payable",      val:money(gstPay),    cls:gstPay>2000?"r":"y", sub:"Collected minus credits"},
+                {lbl:"Est. BAS",         val:money(estBAS),    cls:"r", sub:`${quarter} estimate`},
+              ].map((c,i)=>(
+                <div key={i} className="card"><div className="clbl">{c.lbl}</div><div className={`cval ${c.cls}`}>{c.val}</div><div className="csub">{c.sub}</div></div>
+              ))}
+            </div>
+
+            <div className="g4">
+              {[
+                {lbl:"Active Staff",     val:employees.filter(e=>!e.exitDate).length,cls:"t", sub:`${tsMonth.length} timesheet entries`},
+                {lbl:"Gross Wages",      val:money(totalWages),cls:"", sub:wagesDelta?<span style={{color:wagesDelta.up?C.red:C.accent,fontSize:10}}>{wagesDelta.label}</span>:"This month"},
+                {lbl:"Super Owed (SGC)", val:money(totalSuper),cls:"b", sub:"SGC on gross wages"},
+                {lbl:"Annual Insurance", val:money(insurance.reduce((s,i)=>s+i.annual,0)),cls:"p", sub:`${insurance.length} policies`},
+              ].map((c,i)=>(
+                <div key={i} className="card"><div className="clbl">{c.lbl}</div><div className={`cval ${c.cls}`}>{c.val}</div><div className="csub">{c.sub}</div></div>
+              ))}
+            </div>
+
+            <div className="g2">
+              <div className="bc">
+                <div className="bctit">Revenue vs Costs — {monthLabel}</div>
+                <DonutChart data={[
+                  {label:"Revenue",  v:totalRev,   c:C.blue},
+                  {label:"Expenses", v:totalExp,   c:C.red},
+                  {label:"Wages",    v:totalWages, c:C.yellow},
+                ]}/>
+              </div>
+              <div className="bc">
+                <div className="bctit">Daily Revenue — {monthLabel}</div>
+                <BarChart data={revMonth.slice(-7).map(r=>({label:r.date.slice(8),v:revTotal(r)}))}/>
+              </div>
+            </div>
+
+            <div className="reserve">
+              <div className="r-lbl">🏦 Weekly Tax Reserve — {monthLabel}</div>
+              <div className="r-big">{money(wklyRes)}</div>
+              <div className="r-sub">Set aside <strong>{money(wklyRes)}</strong>/week → <strong>{money(wklyRes*4.33)}</strong> ready by BAS due date.</div>
+            </div>
+          </>
+        );
+      })()}
+
+      {/* ── CASH FLOW TAB ── */}
+      {dashTab === "cashflow" && (
+        <div className="bc">
+          <div className="bctit">Daily Cash Flow — {monthLabel}
+            <span style={{fontSize:11,fontWeight:400,color:C.muted,marginLeft:8}}>in vs out, running balance</span>
+          </div>
+
+          {cashflowDays.every(d=>d.dayRev===0&&d.dayExp===0)
+            ? <div className="empty-state"><div className="empty-icon">💸</div><div className="empty-txt">No transactions logged for {monthLabel}.</div></div>
+            : (
+              <>
+                {/* Mini bar chart */}
+                <div style={{display:"flex",alignItems:"flex-end",gap:3,height:80,marginBottom:16,paddingBottom:4,borderBottom:`1px solid ${C.border}`}}>
+                  {cashflowDays.map((d,i)=>(
+                    <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:1,height:"100%",justifyContent:"flex-end"}}>
+                      {d.dayRev>0&&<div style={{width:"100%",background:C.blue+"99",borderRadius:"2px 2px 0 0",height:`${(d.dayRev/maxFlow)*60}px`,minHeight:2}}/>}
+                      {d.dayExp>0&&<div style={{width:"100%",background:C.red+"99",borderRadius:"2px 2px 0 0",height:`${(d.dayExp/maxFlow)*60}px`,minHeight:2}}/>}
+                    </div>
+                  ))}
+                </div>
+                <div style={{display:"flex",gap:16,marginBottom:14,fontSize:11,color:C.muted,flexWrap:"wrap"}}>
+                  <span><span style={{display:"inline-block",width:10,height:10,background:C.blue+"99",borderRadius:2,marginRight:4}}/>Revenue</span>
+                  <span><span style={{display:"inline-block",width:10,height:10,background:C.red+"99",borderRadius:2,marginRight:4}}/>Expenses</span>
+                  <span><span style={{display:"inline-block",width:10,height:10,background:C.yellow+"99",borderRadius:2,marginRight:4}}/>Wages (est.)</span>
+                </div>
+
+                <table className="tbl">
+                  <thead><tr><th>Date</th><th style={{textAlign:"right"}}>Revenue</th><th style={{textAlign:"right"}}>Expenses</th><th style={{textAlign:"right"}}>Wages</th><th style={{textAlign:"right"}}>Day Net</th><th style={{textAlign:"right"}}>Running Balance</th></tr></thead>
+                  <tbody>
+                    {cashflowWithBalance.filter(d=>d.dayRev>0||d.dayExp>0||d.dayWages>0).map((d,i)=>(
+                      <tr key={i}>
+                        <td className="mono" style={{fontSize:11}}>{d.date}</td>
+                        <td className="mono" style={{textAlign:"right",color:C.green}}>{d.dayRev>0?money(d.dayRev):"—"}</td>
+                        <td className="mono" style={{textAlign:"right",color:C.red}}>{d.dayExp>0?money(d.dayExp):"—"}</td>
+                        <td className="mono" style={{textAlign:"right",color:C.yellow}}>{d.dayWages>0?money(d.dayWages):"—"}</td>
+                        <td className="mono" style={{textAlign:"right",fontWeight:700,color:d.net>=0?C.green:C.red}}>{money(d.net)}</td>
+                        <td className="mono" style={{textAlign:"right",fontWeight:700,color:d.balance>=0?C.text:C.red}}>{money(d.balance)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td style={{fontWeight:700}}>MONTH TOTAL</td>
+                      <td className="mono" style={{textAlign:"right",fontWeight:700,color:C.green}}>{money(totalRev)}</td>
+                      <td className="mono" style={{textAlign:"right",fontWeight:700,color:C.red}}>{money(totalExp)}</td>
+                      <td className="mono" style={{textAlign:"right",fontWeight:700,color:C.yellow}}>{money(totalWages+totalSuper)}</td>
+                      <td className="mono" style={{textAlign:"right",fontWeight:700,color:netProfit>=0?C.green:C.red}}>{money(totalRev-totalExp-totalWages-totalSuper)}</td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                </table>
+                <div style={{fontSize:11,color:C.dim,marginTop:10}}>💡 Wages are distributed evenly Mon–Fri based on timesheet data. Super is included in the wages figure.</div>
+              </>
+            )
+          }
+        </div>
+      )}
+
+      {/* ── REMINDERS TAB ── */}
+      {dashTab === "reminders" && (
+        <div className="bc">
+          <div className="bctit">🔔 Action Required
+            <span style={{fontSize:11,fontWeight:400,color:C.muted,marginLeft:8}}>{reminders.length} item{reminders.length!==1?"s":""} need your attention</span>
+            <button onClick={toggleAgentLodge} style={{marginLeft:"auto",fontSize:10,fontWeight:700,fontFamily:"inherit",cursor:"pointer",border:`1px solid ${agentLodge?C.teal:C.border}`,borderRadius:7,padding:"3px 10px",background:agentLodge?"rgba(57,211,187,.12)":"none",color:agentLodge?C.teal:C.muted}}>
+              {agentLodge?"🧾 Via Tax Agent":"📋 Self-Lodge"} ▾
+            </button>
+          </div>
+
+          {reminders.length === 0 ? (
+            <div style={{display:"flex",alignItems:"center",gap:14,padding:"20px 0"}}>
+              <span style={{fontSize:32}}>✅</span>
+              <div>
+                <div style={{fontSize:14,fontWeight:700,color:C.green,marginBottom:4}}>All clear — nothing needs attention right now.</div>
+                <div style={{fontSize:12,color:C.muted}}>Mise will flag upcoming BAS deadlines, unpaid super, expiring insurance, and unsettled staff exits here.</div>
+              </div>
+            </div>
+          ) : (
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              {reminders.map((r,i)=>(
+                <div key={i} onClick={r.action} style={{background:remColBg[r.col],border:`1px solid ${remColBd[r.col]}`,borderLeft:`4px solid ${remColTxt[r.col]}`,borderRadius:10,padding:"13px 16px",cursor:"pointer",display:"flex",gap:14,alignItems:"center"}}>
+                  <span style={{fontSize:22,flexShrink:0}}>{r.ico}</span>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:13,fontWeight:700,color:remColTxt[r.col],marginBottom:3}}>{r.title}</div>
+                    <div style={{fontSize:11.5,color:C.muted}}>{r.sub}</div>
+                  </div>
+                  <span style={{fontSize:11,color:C.dim,flexShrink:0}}>Go →</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Upcoming dates reference */}
+          <div style={{marginTop:20,paddingTop:14,borderTop:`1px solid ${C.border}`}}>
+            {/* Day Workers CTA */}
+            <div onClick={() => setPage("dayworkers")} style={{ background:"rgba(57,211,187,.06)", border:`1px solid rgba(57,211,187,.25)`, borderRadius:10, padding:"13px 16px", marginBottom:14, cursor:"pointer", display:"flex", gap:12, alignItems:"center" }}>
+              <span style={{ fontSize:24, flexShrink:0 }}>⚡</span>
+              <div style={{ flex:1 }}>
+                <div style={{ fontSize:13, fontWeight:700, color:C.teal, marginBottom:3 }}>Have a casual worker today?</div>
+                <div style={{ fontSize:11.5, color:C.muted }}>Day Workers — one-off casual pay in 30 seconds. No timesheet needed. PAYG and super calculated instantly.</div>
+              </div>
+              <span style={{ fontSize:11, color:C.dim, flexShrink:0 }}>Try →</span>
+            </div>
+
+            <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".8px",marginBottom:10}}>📅 Key ATO Dates</div>
+            {[
+              {lbl:"Q1 FY2026 BAS due",      date:"28 Oct 2025"},
+              {lbl:"Q2 FY2026 BAS due",      date:"28 Feb 2026"},
+              {lbl:"Q3 FY2026 BAS due",      date:"28 Apr 2026"},
+              {lbl:"Q4 FY2026 BAS due",      date:"28 Jul 2026"},
+              {lbl:"Payday Super begins",     date:"1 Jul 2026"},
+              {lbl:"Super rate → 12.0% SGC", date:"1 Jul 2025"},
+            ].map((d,i)=>(
+              <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:`1px solid ${C.border}`,fontSize:12}}>
+                <span style={{color:C.muted}}>{d.lbl}</span>
+                <span className="mono" style={{fontWeight:600,color:C.text}}>{d.date}</span>
+              </div>
+            ))}
           </div>
         </div>
       )}
 
-      {totalFlags > 0 && (
-        <div className="alert al-y" style={{ cursor:"pointer" }} onClick={() => setPage("taxsaver")}>
-          <span className="al-ico">🔍</span>
-          <div>
-            <div className="al-ttl">Audit Ready found {totalFlags} issue{totalFlags>1?"s":""} to review</div>
-            <div className="al-msg">Missing invoices or unpaid super detected. Click to review →</div>
-          </div>
+      {/* Quick alerts below tabs — always visible */}
+      {expiringPolicies60.length > 0 && (
+        <div className="alert al-y" style={{cursor:"pointer",marginTop:12}} onClick={()=>setPage("insurance")}>
+          <span className="al-ico">🛡️</span>
+          <div><div className="al-ttl">Insurance renewal due soon</div>
+          <div className="al-msg">{expiringPolicies60.map(i=>{const days=Math.ceil((new Date(i.renewal)-new Date())/86400000);return `${i.type} — ${days<=30?`⚠️ ${days} days`:`${days} days`}`;}).join(" · ")} · Click to review →</div></div>
         </div>
       )}
     </>
   );
 }
 
+
 // ════════════════════════════════════════════════════════════
 //  REVENUE PAGE
 // ════════════════════════════════════════════════════════════
 function RevenuePage({ revenue, setRevenue, showToast }) {
-  const [f,       setF]       = useState({ date:todayStr, amount:"" });
-  const [editId,  setEditId]  = useState(null); // null = add mode, id = edit mode
-  const total = parseFloat(f.amount) || 0;
+  const BLANK = { date:todayStr, dine_in:"", takeaway:"", delivery:"" };
+  const [f,        setF]        = useState(BLANK);
+  const [editId,   setEditId]   = useState(null);
+  const [showImport,  setShowImport]  = useState(false);
+  const [csvRaw,      setCsvRaw]      = useState("");
+  const [csvHeaders,  setCsvHeaders]  = useState([]);
+  const [csvMapping,  setCsvMapping]  = useState({});
+  const [csvPreview,  setCsvPreview]  = useState([]);
+  const [csvError,    setCsvError]    = useState("");
+  const [csvStep,     setCsvStep]     = useState("upload");
+
+  // ── CSV mapping memory — remember by header fingerprint ──
+  const csvMapKey    = hdrs => "mise_csv_" + hdrs.slice().sort().join("|").slice(0,100);
+  const recallMap    = hdrs => { try { return JSON.parse(localStorage.getItem(csvMapKey(hdrs))||"{}"); } catch { return {}; } };
+  const saveMap      = (hdrs, m) => { try { localStorage.setItem(csvMapKey(hdrs), JSON.stringify(m)); } catch {} };
+
+  // ── Step 1: detect headers from raw CSV ──────────────────
+  const detectHeaders = text => {
+    setCsvError(""); setCsvPreview([]); setCsvRaw(text);
+    try {
+      const lines = text.trim().split(/\r?\n/).filter(l => l.trim());
+      if (lines.length < 2) { setCsvError("CSV must have a header row and at least one data row."); return; }
+      const headers = lines[0].split(",").map(h => h.replace(/"/g,"").trim());
+      setCsvHeaders(headers);
+
+      // Check for saved mapping first, then auto-guess
+      const recalled = recallMap(headers);
+      const guess = (keys, hdrs) => hdrs.find(h => keys.some(k => h.toLowerCase().includes(k))) || "";
+      const autoMap = Object.keys(recalled).length > 0 ? recalled : {
+        date:     guess(["date","day","transaction","sale date"], headers),
+        dine_in:  guess(["dine","dine-in","eat in","table","in store","instore","restaurant","indoor"], headers),
+        takeaway: guess(["takeaway","take away","pickup","pick up","counter","takeout"], headers),
+        delivery: guess(["delivery","deliver","online","uber","doordash","menulog","3rd party","platform"], headers),
+        total:    guess(["total sales","total revenue","gross sales","net sales","total","amount","sales","revenue","gross"], headers),
+      };
+      const wasRecalled = Object.keys(recalled).length > 0;
+      setCsvMapping(autoMap);
+      // If we have a remembered mapping, skip straight to preview
+      if (wasRecalled) {
+        setCsvStep("map"); // still show map step but pre-filled — user can verify
+        showToast("✅ Column mapping recalled from last import");
+      } else {
+        setCsvStep("map");
+      }
+    } catch(e) { setCsvError("Could not read file: " + e.message); }
+  };
+
+  // ── Step 2: apply mapping and parse rows ─────────────────
+  const applyMapping = () => {
+    setCsvError("");
+    try {
+      const lines = csvRaw.trim().split(/\r?\n/).filter(l => l.trim());
+      const hdrs  = lines[0].split(",").map(h => h.replace(/"/g,"").trim());
+      const idx   = k => csvMapping[k] ? hdrs.indexOf(csvMapping[k]) : -1;
+      const dateIdx = idx("date");
+      if (dateIdx === -1) { setCsvError("Please select a Date column."); return; }
+      // Save this mapping for next time
+      saveMap(hdrs, csvMapping);
+
+      const parseAmt = (cols, i) => i >= 0 ? (parseFloat(String(cols[i]||"0").replace(/[$,\s]/g,"")) || 0) : 0;
+      const parseDate = raw => {
+        if (!raw) return "";
+        const s = raw.replace(/"/g,"").trim();
+        if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10);
+        if (/\d{1,2}\/\d{1,2}\/\d{4}$/.test(s)) { const [d,mo,yr]=s.split("/"); return `${yr}-${mo.padStart(2,"0")}-${d.padStart(2,"0")}`; }
+        if (/\d{1,2}\/\d{1,2}\/\d{2,4}/.test(s)) { const p=s.split("/"); const yr=p[2].length===2?"20"+p[2]:p[2]; return `${yr}-${p[0].padStart(2,"0")}-${p[1].padStart(2,"0")}`; }
+        return "";
+      };
+
+      const dineIdx = idx("dine_in"), takeIdx = idx("takeaway"), delivIdx = idx("delivery"), totIdx = idx("total");
+      const rows = [];
+      for (let i=1; i<lines.length; i++) {
+        const cols = lines[i].split(",").map(c => c.replace(/"/g,"").trim());
+        const parsedDate = parseDate(cols[dateIdx]);
+        if (!parsedDate || isNaN(new Date(parsedDate))) continue;
+        let dine_in=0, takeaway=0, delivery=0;
+        if (dineIdx>=0 || takeIdx>=0 || delivIdx>=0) {
+          dine_in  = parseAmt(cols, dineIdx);
+          takeaway = parseAmt(cols, takeIdx);
+          delivery = parseAmt(cols, delivIdx);
+        } else if (totIdx>=0) {
+          dine_in  = parseAmt(cols, totIdx); // total → dine-in fallback
+        }
+        if (dine_in+takeaway+delivery===0) continue;
+        rows.push({ date:parsedDate, dine_in, takeaway, delivery });
+      }
+      if (rows.length===0) { setCsvError("No valid rows found after applying this mapping. Check your column selections."); return; }
+      setCsvPreview(rows);
+      setCsvStep("preview");
+    } catch(e) { setCsvError("Parse error: " + e.message); }
+  };
+
+  const importCSV = () => {
+    const existing = new Set(revenue.map(r => r.date));
+    const toAdd    = csvPreview.filter(r => !existing.has(r.date));
+    const dupes    = csvPreview.length - toAdd.length;
+    setRevenue(p => [...p, ...toAdd.map(r => ({ id:Date.now()+Math.random(), date:r.date, dine_in:r.dine_in, takeaway:r.takeaway, delivery:r.delivery }))]);
+    showToast(`✅ Imported ${toAdd.length} rows${dupes ? ` (${dupes} skipped — date exists)` : ""}`);
+    setCsvRaw(""); setCsvHeaders([]); setCsvMapping({}); setCsvPreview([]);
+    setCsvStep("upload"); setShowImport(false);
+  };
+
+  const resetImport = () => { setCsvRaw(""); setCsvHeaders([]); setCsvMapping({}); setCsvPreview([]); setCsvError(""); setCsvStep("upload"); };
+
+  const din   = parseFloat(f.dine_in)  || 0;
+  const tak   = parseFloat(f.takeaway) || 0;
+  const del   = parseFloat(f.delivery) || 0;
+  const total = din + tak + del;
 
   const save = () => {
     if (!total) return;
+    const entry = { date:f.date, dine_in:din, takeaway:tak, delivery:del };
     if (editId) {
-      setRevenue(p => p.map(r => r.id === editId ? { ...r, date:f.date, amount:total } : r));
-      showToast("Entry updated!");
-      setEditId(null);
+      setRevenue(p => p.map(r => r.id === editId ? {...r,...entry} : r));
+      showToast("Entry updated!"); setEditId(null);
     } else {
-      setRevenue(p => [...p, { id:Date.now(), date:f.date, amount:total }]);
-      showToast("Revenue entry added!");
+      setRevenue(p => [...p, { id:Date.now(), ...entry }]);
+      showToast("Revenue added!");
     }
-    setF({ date:todayStr, amount:"" });
+    setF(BLANK);
+  };
+  const startEdit = r => { setEditId(r.id); setF({ date:r.date, dine_in:String(r.dine_in||r.amount||""), takeaway:String(r.takeaway||""), delivery:String(r.delivery||"") }); window.scrollTo({top:0,behavior:"smooth"}); };
+  const cancelEdit = () => { setEditId(null); setF(BLANK); };
+  const del_ = id => { setRevenue(p => p.filter(x => x.id !== id)); if (editId===id) cancelEdit(); showToast("Deleted."); };
+
+  // ── CSV Import ────────────────────────────────────────────
+  // Accepts exports from Square, Lightspeed, Kounta, Hike, Impos, or generic CSV
+  // Required: a date column + at least one amount column
+  const parseCSV = text => {
+    setCsvError(""); setCsvPreview([]);
+    try {
+      const lines = text.trim().split(/\r?\n/).filter(l => l.trim());
+      if (lines.length < 2) { setCsvError("CSV must have a header row and at least one data row."); return; }
+
+      // Parse header — case-insensitive
+      const rawHeaders = lines[0].split(",").map(h => h.replace(/"/g,"").trim().toLowerCase());
+
+      // Find date column
+      const dateIdx = rawHeaders.findIndex(h =>
+        h.includes("date") || h.includes("day") || h==="transaction date" || h==="sale date"
+      );
+      if (dateIdx === -1) { setCsvError("No date column found. Rename a column to 'Date'."); return; }
+
+      // Find amount columns — flexible matching
+      const findCol = (...keys) => rawHeaders.findIndex(h => keys.some(k => h.includes(k)));
+      const dineIdx    = findCol("dine","dine-in","eat in","table","in store","instore");
+      const takeIdx    = findCol("takeaway","take away","pickup","pick up","counter");
+      const delivIdx   = findCol("delivery","deliver","online","uber","doordash","menulog","3rd party");
+      const totalIdx   = findCol("total sales","total revenue","gross sales","net sales","total","amount","sales");
+
+      const rows = [];
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(",").map(c => c.replace(/"/g,"").trim());
+        if (cols.length < 2) continue;
+
+        // Parse date — try several formats
+        let rawDate = cols[dateIdx] || "";
+        let parsedDate = "";
+        // Try YYYY-MM-DD
+        if (/^\d{4}-\d{2}-\d{2}/.test(rawDate)) parsedDate = rawDate.slice(0,10);
+        // Try DD/MM/YYYY or D/M/YYYY
+        else if (/\d{1,2}\/\d{1,2}\/\d{4}/.test(rawDate)) {
+          const [d,mo,yr] = rawDate.split("/");
+          parsedDate = `${yr}-${mo.padStart(2,"0")}-${d.padStart(2,"0")}`;
+        }
+        // Try MM/DD/YYYY (US format)
+        else if (/\d{1,2}\/\d{1,2}\/\d{2,4}/.test(rawDate)) {
+          const parts = rawDate.split("/");
+          const yr = parts[2].length===2 ? "20"+parts[2] : parts[2];
+          parsedDate = `${yr}-${parts[0].padStart(2,"0")}-${parts[1].padStart(2,"0")}`;
+        }
+        if (!parsedDate || isNaN(new Date(parsedDate))) continue;
+
+        const parseAmt = idx => idx >= 0 ? (parseFloat(String(cols[idx]||"0").replace(/[$,\s]/g,"")) || 0) : 0;
+
+        let dine_in=0, takeaway=0, delivery=0;
+        if (dineIdx>=0 || takeIdx>=0 || delivIdx>=0) {
+          dine_in  = parseAmt(dineIdx);
+          takeaway = parseAmt(takeIdx);
+          delivery = parseAmt(delivIdx);
+        } else if (totalIdx >= 0) {
+          // Only total — put it all in dine_in as fallback
+          dine_in = parseAmt(totalIdx);
+        } else continue;
+
+        if (dine_in + takeaway + delivery === 0) continue;
+        rows.push({ date:parsedDate, dine_in, takeaway, delivery, raw:lines[i] });
+      }
+
+      if (rows.length === 0) { setCsvError("No valid rows found. Check your CSV has a Date column and at least one amount column."); return; }
+      setCsvPreview(rows);
+    } catch(e) {
+      setCsvError("Could not parse CSV: " + e.message);
+    }
   };
 
-  const startEdit = r => {
-    setEditId(r.id);
-    setF({ date:r.date, amount:String(r.amount) });
-    window.scrollTo({ top:0, behavior:"smooth" });
-  };
 
-  const cancelEdit = () => {
-    setEditId(null);
-    setF({ date:todayStr, amount:"" });
-  };
-
-  const del = id => {
-    setRevenue(p => p.filter(x => x.id !== id));
-    if (editId === id) cancelEdit();
-    showToast("Entry deleted.");
-  };
-
-  const totalAll = revenue.reduce((s,r) => s + r.amount, 0);
+  const totalDineIn   = revenue.reduce((s,r) => s+(r.dine_in||0), 0);
+  const totalTakeaway = revenue.reduce((s,r) => s+(r.takeaway||0), 0);
+  const totalDelivery = revenue.reduce((s,r) => s+(r.delivery||0), 0);
+  const totalAll      = revenue.reduce((s,r) => s+revTotal(r), 0);
 
   return (
     <>
       <div className="hdr">
-        <div className="hdr-left"><div className="ptitle">Revenue Tracking</div><div className="psub">Log your daily sales</div></div>
+        <div className="hdr-left"><div className="ptitle">Revenue Tracking</div><div className="psub">Log daily sales by channel — or import from your POS</div></div>
+        <div className="hdr-right">
+          <button className="btn-g" onClick={() => { setShowImport(v=>!v); setCsvPreview([]); setCsvError(""); }}>
+            {showImport ? "✕ Close Import" : "📥 Import CSV"}
+          </button>
+        </div>
       </div>
 
-      <div className="g3">
+      <div className="g4">
         {[
-          { lbl:"Total Revenue",  val:money(totalAll),        cls:"b" },
-          { lbl:"GST Collected",  val:money(totalAll/11),     cls:"y" },
-          { lbl:"Days Tracked",   val:revenue.length,         cls:"t" },
+          { lbl:"Total Revenue",    val:money(totalAll),        cls:"b" },
+          { lbl:"Dine-in",          val:money(totalDineIn),     cls:"t" },
+          { lbl:"Takeaway",         val:money(totalTakeaway),   cls:"" },
+          { lbl:"Delivery Platform",val:money(totalDelivery),   cls:"p" },
         ].map((c,i) => <div key={i} className="card"><div className="clbl">{c.lbl}</div><div className={`cval ${c.cls}`}>{c.val}</div></div>)}
       </div>
 
-      <div className="fsec" style={{ border: editId ? `1px solid ${C.yellow}` : undefined }}>
-        <div className="ftit">{editId ? "✏️ Edit Entry" : "Add Daily Revenue"}</div>
-        {editId && (
-          <div style={{ fontSize:11, color:C.yellow, marginBottom:10, background:"rgba(212,168,67,.08)", borderRadius:6, padding:"6px 10px" }}>
-            Editing existing entry — make your changes and click Save.
+      {/* ── CSV Import Panel ── */}
+      {showImport && (
+        <div className="bc" style={{ marginBottom:14, border:`1px solid ${C.teal}44` }}>
+          {/* Step progress */}
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:14 }}>
+            <div className="bctit" style={{ margin:0 }}>📥 Import from POS / CSV</div>
+            <div style={{ marginLeft:"auto", display:"flex", gap:6, fontSize:10, fontWeight:700 }}>
+              {["1 Upload","2 Map Columns","3 Confirm"].map((s,i)=>{
+                const step = i===0?"upload":i===1?"map":"preview";
+                const active = csvStep===step;
+                const done = (csvStep==="map"&&i===0)||(csvStep==="preview"&&i<=1);
+                return <span key={i} style={{ padding:"3px 8px", borderRadius:10, background:active?"rgba(57,211,187,.2)":done?"rgba(143,203,114,.15)":C.surfaceAlt, color:active?C.teal:done?C.green:C.dim, border:`1px solid ${active?C.teal:done?C.green:C.border}` }}>{done?"✓ "+s:s}</span>;
+              })}
+            </div>
           </div>
-        )}
-        <div className="frow2">
-          <div className="fg"><label className="flbl">Date</label><input className="inp" type="date" value={f.date} onChange={e => setF({...f,date:e.target.value})}/></div>
+
+          {csvError && <div className="alert al-r" style={{ marginBottom:10 }}><span className="al-ico">❌</span><div><div className="al-ttl">Error</div><div className="al-msg">{csvError}</div></div></div>}
+
+          {/* ── STEP 1: Upload ── */}
+          {csvStep === "upload" && (
+            <>
+              <div style={{ fontSize:12, color:C.muted, marginBottom:12, lineHeight:1.7 }}>
+                Export a daily sales report from your POS as CSV (Square, Lightspeed, Kounta, Impos, Hike, or any system). Mise will show you a column mapper so you can confirm which column is which.
+              </div>
+              <div style={{ background:C.surfaceAlt, borderRadius:8, padding:"10px 14px", marginBottom:12, fontSize:11, fontFamily:"DM Mono,monospace", color:C.muted }}>
+                <div style={{ fontWeight:700, color:C.text, marginBottom:4, fontFamily:"inherit" }}>Any format works — e.g.:</div>
+                <div>Date, Net Sales, Dine-in, Takeaway, Delivery</div>
+                <div>01/07/2025, 2670, 1400, 820, 450</div>
+              </div>
+              <div style={{ display:"flex", gap:8, alignItems:"flex-start" }}>
+                <textarea style={{ flex:1, minHeight:110, background:C.bg, border:`1px solid ${C.border}`, borderRadius:8, padding:"10px 12px", color:C.text, fontSize:12, fontFamily:"DM Mono,monospace", resize:"vertical" }}
+                  placeholder={"Paste CSV here...\nDate,Total Sales\n01/07/2025,2670"}
+                  value={csvRaw} onChange={e => setCsvRaw(e.target.value)}/>
+                <label style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:4, background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:8, padding:"12px 16px", cursor:"pointer", fontSize:11, color:C.muted, whiteSpace:"nowrap" }}>
+                  <span style={{ fontSize:22 }}>📁</span>Upload .csv
+                  <input type="file" accept=".csv,text/csv" style={{ display:"none" }} onChange={e => {
+                    const file=e.target.files[0]; if(!file) return;
+                    const reader=new FileReader(); reader.onload=ev=>setCsvRaw(ev.target.result); reader.readAsText(file);
+                  }}/>
+                </label>
+              </div>
+              <div style={{ display:"flex", gap:10, marginTop:12 }}>
+                <button className="btn" disabled={!csvRaw.trim()} onClick={() => detectHeaders(csvRaw)} style={{ opacity:csvRaw.trim()?1:.5 }}>Next: Map Columns →</button>
+                <button className="btn-g" onClick={() => { setShowImport(false); resetImport(); }}>Cancel</button>
+              </div>
+            </>
+          )}
+
+          {/* ── STEP 2: Column Mapping ── */}
+          {csvStep === "map" && (
+            <>
+              <div style={{ fontSize:12, color:C.muted, marginBottom:14 }}>
+                Mise found <strong style={{ color:C.text }}>{csvHeaders.length} columns</strong> in your file. Tell us what each column contains — leave blank if not applicable.
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:16 }}>
+                {[
+                  { key:"date",     lbl:"📅 Date column", required:true, hint:"Which column has the date?" },
+                  { key:"dine_in",  lbl:"🍽️ Dine-in sales",              hint:"In-house / table service" },
+                  { key:"takeaway", lbl:"🥡 Takeaway / Pickup",          hint:"Counter / phone orders" },
+                  { key:"delivery", lbl:"🛵 Delivery Platform",          hint:"Uber Eats, DoorDash, etc." },
+                  { key:"total",    lbl:"💰 Total / All channels",       hint:"Use if no channel breakdown" },
+                ].map(field => (
+                  <div key={field.key} className="fg">
+                    <label className="flbl">{field.lbl} {field.required && <span style={{ color:C.red }}>*</span>}</label>
+                    <select className="sel" value={csvMapping[field.key]||""} onChange={e => setCsvMapping(p=>({...p,[field.key]:e.target.value}))}>
+                      <option value="">— Not in this file —</option>
+                      {csvHeaders.map((h,i) => <option key={i} value={h}>{h}</option>)}
+                    </select>
+                    <span className="fhint">{field.hint}</span>
+                    {csvMapping[field.key] && (
+                      <span style={{ fontSize:10, color:C.teal }}>✓ mapped to "{csvMapping[field.key]}"</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div style={{ display:"flex", gap:10 }}>
+                <button className="btn" onClick={applyMapping}>Preview Import →</button>
+                <button className="btn-g" onClick={() => setCsvStep("upload")}>← Back</button>
+                <button className="btn-g" onClick={() => { setShowImport(false); resetImport(); }}>Cancel</button>
+              </div>
+            </>
+          )}
+
+          {/* ── STEP 3: Preview & Confirm ── */}
+          {csvStep === "preview" && csvPreview.length > 0 && (
+            <>
+              <div style={{ fontSize:12, fontWeight:700, color:C.teal, marginBottom:8 }}>
+                ✅ {csvPreview.length} rows ready to import — review below:
+              </div>
+              <div style={{ maxHeight:220, overflowY:"auto", marginBottom:12 }}>
+                <table className="tbl">
+                  <thead><tr><th>Date</th><th style={{textAlign:"right"}}>Dine-in</th><th style={{textAlign:"right"}}>Takeaway</th><th style={{textAlign:"right"}}>Delivery</th><th style={{textAlign:"right"}}>Total</th><th style={{textAlign:"right"}}>GST (taxable)</th></tr></thead>
+                  <tbody>
+                    {csvPreview.map((r,i) => {
+                      const taxable = (r.dine_in||0)+(r.takeaway||0);
+                      return (
+                        <tr key={i} style={{ background: revenue.some(x=>x.date===r.date) ? "rgba(212,168,67,.07)" : undefined }}>
+                          <td className="mono">{r.date}{revenue.some(x=>x.date===r.date) && <span style={{ fontSize:9, color:C.yellow, marginLeft:6 }}>exists</span>}</td>
+                          <td className="mono" style={{textAlign:"right"}}>{r.dine_in>0?money(r.dine_in):"—"}</td>
+                          <td className="mono" style={{textAlign:"right"}}>{r.takeaway>0?money(r.takeaway):"—"}</td>
+                          <td className="mono" style={{textAlign:"right"}}>{r.delivery>0?money(r.delivery):"—"}</td>
+                          <td className="mono" style={{textAlign:"right",fontWeight:700}}>{money((r.dine_in||0)+(r.takeaway||0)+(r.delivery||0))}</td>
+                          <td className="mono" style={{textAlign:"right",color:C.yellow}}>{taxable>0?money(taxable/11):"—"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {csvPreview.some(r => revenue.some(x=>x.date===r.date)) && (
+                <div style={{ fontSize:11, color:C.yellow, marginBottom:10 }}>⚠️ Highlighted rows already exist — they will be skipped.</div>
+              )}
+              <div style={{ display:"flex", gap:10 }}>
+                <button className="btn" onClick={importCSV}>⬇️ Import {csvPreview.filter(r=>!revenue.some(x=>x.date===r.date)).length} new rows</button>
+                <button className="btn-g" onClick={() => setCsvStep("map")}>← Back to mapping</button>
+                <button className="btn-g" onClick={() => { setShowImport(false); resetImport(); }}>Cancel</button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* GST note */}
+      <div className="alert al-t" style={{ marginBottom:14 }}>
+        <span className="al-ico">💡</span>
+        <div><div className="al-ttl">Channel GST note</div>
+        <div className="al-msg">Dine-in &amp; Takeaway: enter the full amount including GST — Mise calculates GST at ÷11. Delivery platforms (Uber Eats, DoorDash): enter the gross sale amount; the platform remits GST separately.</div></div>
+      </div>
+
+      <div className="fsec" style={{ border: editId ? `1px solid ${C.yellow}` : undefined }}>
+        <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", flexWrap:"wrap", gap:8, marginBottom:10 }}>
+          <div className="ftit" style={{ marginBottom:0 }}>{editId ? "✏️ Edit Entry" : "Add Daily Revenue"}</div>
+          {/* Repeat yesterday — pre-fills form with yesterday's amounts for quick entry */}
+          {!editId && (() => {
+            const yesterday = new Date(); yesterday.setDate(yesterday.getDate()-1);
+            const yStr = yesterday.toISOString().slice(0,10);
+            const yEntry = [...revenue].reverse().find(r => r.date === yStr)
+                        || [...revenue].reverse()[0];
+            if (!yEntry) return null;
+            return (
+              <button onClick={() => setF({ date:todayStr, dine_in:String(yEntry.dine_in||""), takeaway:String(yEntry.takeaway||""), delivery:String(yEntry.delivery||"") })}
+                style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 12px", borderRadius:8, cursor:"pointer", fontFamily:"inherit", fontSize:11.5, fontWeight:700, flexShrink:0,
+                  background:"rgba(143,203,114,.12)", border:`1px solid rgba(143,203,114,.35)`, color:C.accent }}>
+                🔁 Repeat {yEntry.date === yStr ? "Yesterday" : "Last Entry"}
+                <span style={{ fontWeight:400, color:C.muted, fontSize:10.5 }}>({money(revTotal(yEntry))})</span>
+              </button>
+            );
+          })()}
+        </div>
+        {editId && <div style={{ fontSize:11, color:C.yellow, marginBottom:10, background:"rgba(212,168,67,.08)", borderRadius:6, padding:"6px 10px" }}>Editing existing entry — make your changes and click Save.</div>}
+        {/* Mobile: single column stack for channel inputs */}
+        <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:12 }}>
           <div className="fg">
-            <label className="flbl">Total Daily Income ($)</label>
-            <input className="inp" type="number" placeholder="0.00" value={f.amount} onChange={e => setF({...f,amount:e.target.value})}/>
-            {total > 0 && <span className="fhint">GST collected: {money(total/11)}</span>}
+            <label className="flbl">Date</label>
+            <input className="inp" type="date" value={f.date} onChange={e => setF({...f,date:e.target.value})}/>
+          </div>
+          <div className="fg">
+            <label className="flbl">Dine-in ($)</label>
+            <input className="inp" type="number" placeholder="0.00" value={f.dine_in} onChange={e => setF({...f,dine_in:e.target.value})} inputMode="decimal"/>
+            {din > 0 && <span className="fhint">GST: {money(din/11)}</span>}
+          </div>
+          <div className="fg">
+            <label className="flbl">Takeaway ($)</label>
+            <input className="inp" type="number" placeholder="0.00" value={f.takeaway} onChange={e => setF({...f,takeaway:e.target.value})} inputMode="decimal"/>
+            {tak > 0 && <span className="fhint">GST: {money(tak/11)}</span>}
+          </div>
+          <div className="fg">
+            <label className="flbl">Delivery Platform ($)</label>
+            <input className="inp" type="number" placeholder="0.00" value={f.delivery} onChange={e => setF({...f,delivery:e.target.value})} inputMode="decimal"/>
+            {del > 0 && <span className="fhint" style={{color:C.teal}}>Platform remits GST — no GST to declare on this amount</span>}
           </div>
         </div>
         <div className="fbtns">
           <button className="btn" onClick={save}>{editId ? "Save Changes" : "Add Entry"}</button>
-          {editId
-            ? <button className="btn-g" onClick={cancelEdit}>Cancel</button>
-            : <button className="btn-g" onClick={() => setF({date:todayStr, amount:""})}>Clear</button>
-          }
-          <div style={{ marginLeft:"auto" }}>
-            <div className="clbl">Total</div>
-            <div className="mono" style={{ fontSize:20, fontWeight:700, color:C.green }}>{money(total)}</div>
-          </div>
+          {editId ? <button className="btn-g" onClick={cancelEdit}>Cancel</button>
+                  : <button className="btn-g" onClick={() => setF(BLANK)}>Clear</button>}
+          {total > 0 && (
+            <div style={{ marginLeft:"auto", textAlign:"right" }}>
+              <div className="clbl">Total today</div>
+              <div className="mono" style={{ fontSize:20, fontWeight:700, color:C.green }}>{money(total)}</div>
+              <div style={{ fontSize:10, color:C.muted }}>GST: {money(total/11)}</div>
+            </div>
+          )}
         </div>
       </div>
 
       <div className="bc">
         <div className="bctit">Revenue History</div>
         <table className="tbl">
-          <thead><tr><th>Date</th><th>Total Income</th><th>GST Collected</th><th style={{textAlign:"center"}}>Actions</th></tr></thead>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th style={{textAlign:"right"}}>Dine-in</th>
+              <th style={{textAlign:"right"}}>Takeaway</th>
+              <th style={{textAlign:"right"}}>Delivery</th>
+              <th style={{textAlign:"right"}}>Total</th>
+              <th style={{textAlign:"right"}}>GST</th>
+              <th style={{textAlign:"center"}}>Actions</th>
+            </tr>
+          </thead>
           <tbody>
             {revenue.length === 0
-              ? <tr><td colSpan={4}><div className="empty-state"><div className="empty-icon">📭</div><div className="empty-txt">No entries yet.</div></div></td></tr>
-              : revenue.slice().reverse().map(r => (
-                  <tr key={r.id} style={{ background: editId===r.id ? "rgba(212,168,67,.07)" : undefined }}>
-                    <td className="mono">{r.date}</td>
-                    <td style={{ fontWeight:700 }}>{money(r.amount)}</td>
-                    <td style={{ color:C.yellow }}>{money(r.amount/11)}</td>
-                    <td style={{ textAlign:"center", whiteSpace:"nowrap" }}>
-                      <button className="btn-ic" title="Edit" onClick={() => startEdit(r)}>✏️</button>
-                      <button className="btn-ic" title="Delete" onClick={() => del(r.id)}>🗑️</button>
-                    </td>
-                  </tr>
-                ))
+              ? <tr><td colSpan={7}><div className="empty-state"><div className="empty-icon">📭</div><div className="empty-txt">No entries yet. Add manually above or import a CSV from your POS.</div></div></td></tr>
+              : revenue.slice().reverse().map(r => {
+                  const t = revTotal(r);
+                  const di = r.dine_in  || (r.amount && !r.takeaway ? r.amount : 0) || 0;
+                  const ta = r.takeaway || 0;
+                  const de = r.delivery || 0;
+                  return (
+                    <tr key={r.id} style={{ background: editId===r.id ? "rgba(212,168,67,.07)" : undefined }}>
+                      <td className="mono">{r.date}</td>
+                      <td className="mono" style={{textAlign:"right",color:C.teal}}>{di>0?money(di):"—"}</td>
+                      <td className="mono" style={{textAlign:"right"}}>{ta>0?money(ta):"—"}</td>
+                      <td className="mono" style={{textAlign:"right",color:C.purple}}>{de>0?money(de):"—"}</td>
+                      <td className="mono" style={{textAlign:"right",fontWeight:700}}>{money(t)}</td>
+                      <td className="mono" style={{textAlign:"right",color:C.yellow}}>{((r.dine_in||(r.amount&&!r.takeaway?r.amount:0)||0)+(r.takeaway||0))>0?money(((r.dine_in||(r.amount&&!r.takeaway?r.amount:0)||0)+(r.takeaway||0))/11):"—"}</td>
+                      <td style={{textAlign:"center",whiteSpace:"nowrap"}}>
+                        <button className="btn-ic" title="Edit" onClick={() => startEdit(r)}>✏️</button>
+                        <button className="btn-ic" title="Delete" onClick={() => del_(r.id)}>🗑️</button>
+                      </td>
+                    </tr>
+                  );
+                })
             }
           </tbody>
+          {revenue.length > 0 && (
+            <tfoot>
+              <tr>
+                <td style={{fontWeight:700}}>TOTAL</td>
+                <td className="mono" style={{textAlign:"right",fontWeight:700,color:C.teal}}>{money(totalDineIn)}</td>
+                <td className="mono" style={{textAlign:"right",fontWeight:700}}>{money(totalTakeaway)}</td>
+                <td className="mono" style={{textAlign:"right",fontWeight:700,color:C.purple}}>{money(totalDelivery)}</td>
+                <td className="mono" style={{textAlign:"right",fontWeight:700}}>{money(totalAll)}</td>
+                <td className="mono" style={{textAlign:"right",color:C.yellow}}>{money((revenue.reduce((s,r)=>s+(r.dine_in||(r.amount&&!r.takeaway?r.amount:0)||0)+(r.takeaway||0),0))/11)}</td>
+                <td></td>
+              </tr>
+            </tfoot>
+          )}
         </table>
       </div>
     </>
   );
 }
 
+
 // ════════════════════════════════════════════════════════════
 //  EXPENSES PAGE
 // ════════════════════════════════════════════════════════════
 function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant", dismissed = [], setDismissed }) {
-  const [f, setF] = useState({ date:todayStr, cat:"ingredients", amount:"", desc:"", gst:"yes", invoice:"yes" });
+  const [f, setF] = useState({ date:todayStr, cat:"ingredients", amount:"", desc:"", gst:"yes", invoice:"yes", invoice_date:"" });
   const [search,    setSearch]    = useState("");
   const [filterCat, setFilterCat] = useState("all");
   const [filterGst, setFilterGst] = useState("all");
@@ -3025,7 +4146,9 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
 
   const catLabel = cat => {
     const cfg = CAT_CONFIG[cat];
-    return cfg ? `${cfg.emoji} ${cfg.label}` : cat.charAt(0).toUpperCase()+cat.slice(1);
+    const isCOGS = COGS_CATS.has(cat);
+    const base = cfg ? `${cfg.emoji} ${cfg.label}` : cat.charAt(0).toUpperCase()+cat.slice(1);
+    return isCOGS ? `${base} · COGS` : base;
   };
 
   // ── Category search (with smart keyword boost + usage rank) ──
@@ -3058,7 +4181,9 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
   const pickCat = (id, fromQuery) => {
     setSelCat(id);
     setManualCat(true);
-    setF(p => ({...p, cat:id}));
+    // Auto-apply GST default for this category
+    const gstDefault = CAT_GST_DEFAULT[id];
+    setF(p => ({...p, cat:id, gst: gstDefault != null ? (gstDefault ? "yes" : "no") : p.gst }));
     const query = fromQuery ?? catQuery;
     setCatQuery("");
     setShowCatDrop(false);
@@ -3331,6 +4456,25 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
         </div>
       )}
 
+      {/* ── Recurring: First-time discovery prompt ── */}
+      {recurringRules.length === 0 && expenses.length >= 3 && (
+        <div style={{ background:"rgba(143,203,114,.05)", border:"1px dashed rgba(143,203,114,.4)", borderRadius:11, padding:"12px 15px", marginBottom:12, display:"flex", alignItems:"center", gap:12 }}>
+          <span style={{ fontSize:22, flexShrink:0 }}>🔁</span>
+          <div style={{ flex:1 }}>
+            <div style={{ fontSize:12.5, fontWeight:700, color:C.accent, marginBottom:3 }}>Set up recurring expenses</div>
+            <div style={{ fontSize:11.5, color:C.muted }}>Rent, utilities, coffee supplies — add them once and Mise reminds you every month with one-click logging.</div>
+          </div>
+          <button onClick={() => {
+            // Pre-fill form with the most recent expense as a starting point
+            const last = expenses[expenses.length - 1];
+            if (last) setF(f => ({...f, cat:last.cat, desc:last.desc, amount:String(last.amount), gst:last.gst?"yes":"no", invoice:last.invoice?"yes":"no"}));
+            window.scrollTo({ top: document.body.scrollHeight, behavior:"smooth" });
+          }} style={{ background:"rgba(143,203,114,.15)", border:`1px solid rgba(143,203,114,.4)`, borderRadius:8, padding:"7px 13px", fontSize:11.5, fontWeight:700, color:C.accent, cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
+            Set up →
+          </button>
+        </div>
+      )}
+
       {/* ── Recurring: Due This Month panel ── */}
       {recurringDue.length > 0 && (
         <div style={{ background:"rgba(61,201,160,.05)", border:"1px solid rgba(61,201,160,.3)", borderRadius:12, padding:"14px 16px", marginBottom:14 }}>
@@ -3411,6 +4555,44 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
             </button>
           )}
         </div>
+
+        {/* ── Recent expenses quick-reuse bar ── */}
+        {(() => {
+          const recent = expenses.slice().reverse().filter((e,i,arr) =>
+            arr.findIndex(x => x.cat===e.cat && x.desc===e.desc) === i
+          ).slice(0, 5);
+          if (recent.length === 0) return null;
+          return (
+            <div style={{ marginBottom:14 }}>
+              <div style={{ fontSize:10, color:C.dim, textTransform:"uppercase", letterSpacing:".6px", marginBottom:7 }}>
+                🕐 Recent — tap to reuse
+              </div>
+              <div style={{ display:"flex", gap:7, flexWrap:"wrap" }}>
+                {recent.map((e,i) => {
+                  const cfg = CAT_CONFIG[e.cat];
+                  return (
+                    <button key={i} onClick={() => setF(f => ({
+                      ...f, cat:e.cat, desc:e.desc, amount:String(e.amount),
+                      gst:e.gst?"yes":"no", invoice:e.invoice?"yes":"no"
+                    }))}
+                      style={{
+                        display:"flex", alignItems:"center", gap:6, padding:"6px 11px",
+                        background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:9,
+                        cursor:"pointer", fontFamily:"inherit", fontSize:11, color:C.text,
+                        transition:"all .15s",
+                      }}>
+                      <span style={{ fontSize:13 }}>{cfg?.emoji||"📎"}</span>
+                      <div style={{ textAlign:"left" }}>
+                        <div style={{ fontWeight:600, lineHeight:1.2 }}>{e.desc?.slice(0,22)||(cfg?.label||e.cat)}</div>
+                        <div style={{ fontSize:9.5, color:C.muted }}>{money(e.amount)}</div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ── Templates quick bar — all templates, sorted by recent use ── */}
         {templates.length > 0 && (
@@ -3715,6 +4897,24 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
             </select>
             {f.invoice==="no" && parseFloat(f.amount)>=82.5 && <span className="fhint" style={{color:C.red}}>⚠️ Over $82.50 — ATO requires invoice!</span>}
           </div>
+          {/* Invoice date — collapsed by default, only show when dates differ */}
+          {f.invoice === "yes" && (
+            f.invoice_date
+            ? (
+              <div className="fg">
+                <label className="flbl">Invoice Date <span style={{fontWeight:400,color:C.dim}}>(accrual date)</span></label>
+                <input className="inp" type="date" value={f.invoice_date} onChange={e => setF({...f,invoice_date:e.target.value})}/>
+                <button onClick={() => setF({...f,invoice_date:""})} style={{background:"none",border:"none",color:C.dim,fontSize:10.5,cursor:"pointer",fontFamily:"inherit",marginTop:3}}>✕ Remove — use payment date</button>
+              </div>
+            ) : (
+              <div className="fg">
+                <button onClick={() => setF({...f,invoice_date:f.date})}
+                  style={{background:"none",border:`1px dashed ${C.border}`,borderRadius:7,padding:"6px 12px",fontSize:11,color:C.dim,cursor:"pointer",fontFamily:"inherit",width:"100%",textAlign:"left"}}>
+                  + Add accrual date (if invoice date differs from payment date)
+                </button>
+              </div>
+            )
+          )}
         </div>
 
         {/* GST live preview */}
@@ -4113,6 +5313,9 @@ const BLANK_EMP = {
   name:"", email:"", phone:"", dob:"", nok_name:"", nok_phone:"",
   role:"", type:"full-time", rate:"", std_hrs:"38",
   start:todayStr, tfn:"yes", superfund:"", color:"",
+  rate_includes_loading: false, // casual: false = auto-add 25%, true = rate already all-in
+  // Offboarding fields
+  active: true, exitDate:"", exitReason:"", leaveSettled: false, exitNotes:"",
 };
 
 function EmployeeModal({ emp, onSave, onClose }) {
@@ -4123,7 +5326,9 @@ function EmployeeModal({ emp, onSave, onClose }) {
   );
   const rate    = parseFloat(f.rate) || 0;
   const stdHrs  = parseFloat(f.std_hrs) || 0;
-  const effR    = f.type === "casual" ? rate * (1 + CASUAL_LOADING) : rate;
+  const effR    = f.type === "casual" && !f.rate_includes_loading
+    ? rate * (1 + CASUAL_LOADING)
+    : rate;
   const wkGross = effR * stdHrs;
 
   const save = () => {
@@ -4185,16 +5390,49 @@ function EmployeeModal({ emp, onSave, onClose }) {
         <div className="frow2">
           <div className="fg"><label className="flbl">Job Title / Role</label><input className="inp" placeholder="e.g. Head Chef" value={f.role} onChange={e => setF({...f,role:e.target.value})}/></div>
           <div className="fg"><label className="flbl">Employment Type</label>
-            <select className="sel" value={f.type} onChange={e => setF({...f,type:e.target.value})}>
+            <select className="sel" value={f.type} onChange={e => setF({...f, type:e.target.value, rate_includes_loading: false })}>
               <option value="full-time">Full-time</option>
               <option value="part-time">Part-time</option>
-              <option value="casual">Casual (+25% loading)</option>
+              <option value="casual">Casual</option>
             </select>
           </div>
           <div className="fg">
             <label className="flbl">Base Hourly Rate ($)</label>
             <input className="inp" type="number" placeholder="0.00" value={f.rate} onChange={e => setF({...f,rate:e.target.value})}/>
-            {rate > 0 && <span className="fhint">Effective rate: {money(effR)}/hr{f.type==="casual" ? " (incl. 25% loading)" : ""}</span>}
+            {rate > 0 && (
+              <span className="fhint">
+                {f.type === "casual"
+                  ? f.rate_includes_loading
+                    ? <>All-in rate (loading already included) — <strong style={{color:C.teal}}>{money(rate)}/hr</strong></>
+                    : <>Base rate + 25% loading = <strong style={{color:C.accent}}>{money(effR)}/hr</strong> effective</>
+                  : <>{money(rate)}/hr</>
+                }
+              </span>
+            )}
+            {/* Casual loading mode toggle */}
+            {f.type === "casual" && rate > 0 && (
+              <div style={{ marginTop:8, display:"flex", gap:0, background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden" }}>
+                <button type="button" onClick={() => setF(p=>({...p, rate_includes_loading:false}))}
+                  style={{ flex:1, padding:"7px 10px", fontSize:11, fontWeight:600, fontFamily:"inherit", cursor:"pointer", border:"none",
+                    background: !f.rate_includes_loading ? C.accent : "transparent",
+                    color: !f.rate_includes_loading ? "#0C0F0D" : C.muted }}>
+                  ➕ Auto-add 25% loading
+                </button>
+                <button type="button" onClick={() => setF(p=>({...p, rate_includes_loading:true}))}
+                  style={{ flex:1, padding:"7px 10px", fontSize:11, fontWeight:600, fontFamily:"inherit", cursor:"pointer", border:"none",
+                    background: f.rate_includes_loading ? C.teal : "transparent",
+                    color: f.rate_includes_loading ? "#0C0F0D" : C.muted }}>
+                  ✅ Rate already all-in
+                </button>
+              </div>
+            )}
+            {f.type === "casual" && rate > 0 && (
+              <span className="fhint" style={{marginTop:4}}>
+                {f.rate_includes_loading
+                  ? `You entered the all-in rate. Mise will use ${money(rate)}/hr as-is.`
+                  : `You entered the base rate. Mise adds 25% → pays ${money(effR)}/hr.`}
+              </span>
+            )}
           </div>
           <div className="fg">
             <label className="flbl">Standard Weekly Hours</label>
@@ -4241,6 +5479,52 @@ function EmployeeModal({ emp, onSave, onClose }) {
           </div>
         )}
 
+        {/* ── Offboarding (edit only) ── */}
+        {isEdit && (
+          <>
+            <div className="m-sec" style={{ color: f.exitDate ? C.red : C.muted }}>
+              {f.exitDate ? "🚪 Offboarding Record" : "🚪 Offboarding (optional)"}
+            </div>
+            <div className="frow2">
+              <div className="fg">
+                <label className="flbl">Exit Date</label>
+                <input className="inp" type="date" value={f.exitDate||""} onChange={e => setF({...f, exitDate:e.target.value, active: !e.target.value})}/>
+                {f.exitDate && <span className="fhint r">Employee will be marked inactive from this date.</span>}
+              </div>
+              <div className="fg">
+                <label className="flbl">Reason for Leaving</label>
+                <select className="sel" value={f.exitReason||""} onChange={e => setF({...f,exitReason:e.target.value})}>
+                  <option value="">— Select if applicable —</option>
+                  <option value="resignation">Resignation</option>
+                  <option value="end-of-contract">End of Contract</option>
+                  <option value="redundancy">Redundancy</option>
+                  <option value="dismissal">Dismissal</option>
+                  <option value="retirement">Retirement</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+              <div className="fg">
+                <label className="flbl">Leave Balance Settled?</label>
+                <select className="sel" value={f.leaveSettled?"yes":"no"} onChange={e => setF({...f,leaveSettled:e.target.value==="yes"})}>
+                  <option value="no">No — outstanding leave entitlements</option>
+                  <option value="yes">Yes — all leave paid out</option>
+                </select>
+              </div>
+              <div className="fg">
+                <label className="flbl">Exit Notes</label>
+                <input className="inp" placeholder="e.g. Final payslip issued, super paid" value={f.exitNotes||""} onChange={e => setF({...f,exitNotes:e.target.value})}/>
+              </div>
+            </div>
+            {f.exitDate && !f.leaveSettled && (
+              <div className="alert al-y" style={{ marginTop:8, marginBottom:0 }}>
+                <span className="al-ico">⚠️</span>
+                <div><div className="al-ttl">Outstanding leave balance not settled</div>
+                <div className="al-msg">Unused annual leave must be paid out on termination. Mark as settled once the final payment is made.</div></div>
+              </div>
+            )}
+          </>
+        )}
+
         <div className="fbtns" style={{ marginTop:18 }}>
           <button className="btn" onClick={save}>{isEdit ? "Save Changes" : "Add Employee"}</button>
           <button className="btn-g" onClick={onClose}>Cancel</button>
@@ -4248,6 +5532,7 @@ function EmployeeModal({ emp, onSave, onClose }) {
       </div>
     </div>
   );
+
 }
 
 // ════════════════════════════════════════════════════════════
@@ -4298,7 +5583,7 @@ function TimesheetModal({ employees, onSave, onClose, initial }) {
               <option value="">— Select employee —</option>
               {employees.map(e => <option key={e.id} value={e.id}>{e.name} ({e.role})</option>)}
             </select>
-            {emp && <span className="fhint">{emp.type} · {money(effRate(emp))}/hr{emp.type==="casual"?" (incl. loading)":""}</span>}
+            {emp && <span className="fhint">{emp.type} · {money(effRate(emp))}/hr{emp.type==="casual" ? (emp.rate_includes_loading ? " (all-in rate)" : " (incl. 25% loading)") : ""}</span>}
           </div>
           <div className="fg">
             <label className="flbl">Week *</label>
@@ -4341,7 +5626,8 @@ function TimesheetModal({ employees, onSave, onClose, initial }) {
               {(() => {
                 const tsPayg  = calcWeeklyPAYG(gross, emp?.tfn === "yes");
                 const superR  = getSuperRate(f.week || todayWeekStr);
-                const tsSuper = gross * superR;
+                const oteBase = (std + wknd) * (emp ? effRate(emp) : 0) + ot * (emp ? effRate(emp) : 0);
+                const tsSuper = oteBase * superR;
                 return [
                   { lbl:`Gross (${std+ot+wknd}h)`,                     val:money(gross),         col:C.text   },
                   { lbl:`PAYG (ATO Scale 2${emp?.tfn==="no"?" 47%":""})`, val:money(tsPayg),      col:C.yellow },
@@ -4737,19 +6023,65 @@ const renderRosterPDF = ({ employees, weekShifts, weekDays, weekStart, weekEnd, 
 // ════════════════════════════════════════════════════════════
 //  ROSTER TAB
 // ════════════════════════════════════════════════════════════
+function BudgetBar({ total, budget, onEdit }) {
+  const pct       = Math.min((total / budget) * 100, 100);
+  const over      = total > budget;
+  const barCol    = over ? C.red : pct > 85 ? C.yellow : C.green;
+  const remaining = budget - total;
+  return (
+    <div style={{ marginBottom:12, background:C.surfaceAlt, border:`1px solid ${over?"rgba(220,38,38,.3)":C.border}`, borderRadius:9, padding:"10px 14px" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+        <div style={{ fontSize:11.5, fontWeight:700, color: over ? C.red : C.text }}>
+          {over ? `⚠️ Over budget by ${money(total - budget)}` : `💰 Budget: ${money(remaining)} remaining`}
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+          <span style={{ fontSize:10.5, color:C.muted }}>{money(total)} / {money(budget)} ({pct.toFixed(0)}%)</span>
+          <button onClick={onEdit} style={{ fontSize:10, color:C.dim, background:"none", border:"none", cursor:"pointer", fontFamily:"inherit", padding:"2px 6px" }}>Edit</button>
+        </div>
+      </div>
+      <div style={{ height:8, background:C.border, borderRadius:4, overflow:"hidden" }}>
+        <div style={{ height:"100%", width:`${pct}%`, background:barCol, borderRadius:4, transition:"width .4s" }}/>
+      </div>
+    </div>
+  );
+}
+
 function RosterTab({ employees, roster, setRoster, showToast }) {
   // ── Week navigation ───────────────────────────────────────
   const [viewMonday, setViewMonday] = useState(() => {
     const d = new Date();
     const day = d.getDay();
-    d.setDate(d.getDate() - (day === 0 ? 6 : day - 1)); // back to Monday
+    d.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
     d.setHours(0,0,0,0);
     return d;
   });
-  const [shiftModal, setShiftModal] = useState(null); // null | {date,eid?} | shift
-  // ── Pay rate settings ─────────────────────────────────────
-  const [applyOT,   setApplyOT]   = useState(true);  // apply ×1.5 OT rate
-  const [applyWknd, setApplyWknd] = useState(true);  // apply ×1.75 weekend rate
+  const [shiftModal, setShiftModal] = useState(null);
+  const [applyOT,    setApplyOT]   = useState(true);
+  const [applyWknd,  setApplyWknd] = useState(true);
+  // ── Weekly budget ─────────────────────────────────────────
+  const [weekBudget, setWeekBudget] = useState(() =>
+    parseFloat(localStorage.getItem("mise_week_budget") || "0")
+  );
+  const [editBudget, setEditBudget] = useState(false);
+  // ── Employee sort order — persisted ──────────────────────
+  const [empOrder, setEmpOrder] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("mise_roster_order") || "[]");
+      return saved.length > 0 ? saved : employees.map(e => e.id);
+    } catch { return employees.map(e => e.id); }
+  });
+  const [draggingId, setDraggingId] = useState(null);
+
+  const saveOrder = order => {
+    setEmpOrder(order);
+    localStorage.setItem("mise_roster_order", JSON.stringify(order));
+  };
+
+  // Sorted employees — new employees appended to end
+  const sortedEmployees = [
+    ...empOrder.map(id => employees.find(e => e.id === id)).filter(Boolean),
+    ...employees.filter(e => !empOrder.includes(e.id)),
+  ];
 
   const addDays = (base, n) => { const d = new Date(base); d.setDate(d.getDate()+n); return d; };
   // Use LOCAL date parts — toISOString() returns UTC which shifts date by timezone offset
@@ -4878,7 +6210,7 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
   const weekStr = `${wkYr}-W${String(wkNum).padStart(2,"0")}`;
   const superR  = getSuperRate(weekStr);
 
-  const empSummary = employees.map(emp => {
+  const empSummary = sortedEmployees.map(emp => {
     const shifts    = weekShifts.filter(s => s.eid === emp.id);
     const bd        = empBreakdowns.get(emp.id) || new Map();
     const totalHrs  = shifts.reduce((s,sh) => s + shiftHrs(sh), 0);
@@ -4886,7 +6218,8 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
     const otHrs     = [...bd.values()].reduce((s,v) => s + v.otHrs,   0);
     const wkndHrs   = [...bd.values()].reduce((s,v) => s + v.wkndHrs, 0);
     const gross     = [...bd.values()].reduce((s,v) => s + v.gross,    0);
-    const super_    = gross * superR;
+    const oteRoster = (stdHrs + wkndHrs + otHrs) * effRate(emp); // OTE: base rate on all ordinary + OT base
+    const super_    = oteRoster * superR;
     const payg      = calcWeeklyPAYG(gross, emp.tfn);
     const net       = gross - payg;
     const labour    = gross + super_;
@@ -4934,7 +6267,7 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
       )}
 
       {/* ── Week navigator ── */}
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,gap:8,flexWrap:"wrap"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,gap:8,flexWrap:"wrap"}}>
         <div style={{display:"flex",gap:6}}>
           <button className="btn-b" onClick={prevWeek}>← Prev</button>
           <button className="btn-b" onClick={thisWeek}>Today</button>
@@ -4952,7 +6285,47 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
         </div>
       </div>
 
-      {/* ── Roster Grid ── */}
+      {/* ── Weekly cost banner + budget bar ── */}
+      {totLabour > 0 && (
+        <>
+        <div style={{
+          display:"flex", gap:0, marginBottom:12, borderRadius:11, overflow:"hidden",
+          border:`1px solid ${C.border}`,
+        }}>
+          {[
+            { lbl:"Staff Rostered", val:`${empSummary.filter(e=>e.totalHrs>0).length} of ${employees.length}`, col:C.teal,     bg:"rgba(61,211,187,.06)" },
+            { lbl:"Total Hours",    val:`${totHrs.toFixed(1)}h`,                                               col:C.blue,     bg:"rgba(96,165,250,.06)" },
+            { lbl:"Gross Wages",    val:money(totGross),                                                       col:C.text,     bg:C.surface             },
+            { lbl:"Super (SGC)",    val:money(totSuper),                                                       col:C.blue,     bg:C.surfaceAlt          },
+            { lbl:"Total Labour Cost", val:money(totLabour),                                                   col:C.red,      bg:"rgba(220,38,38,.06)" },
+          ].map((s,i) => (
+            <div key={i} style={{flex:1, padding:"11px 14px", background:s.bg, borderRight:i<4?`1px solid ${C.border}`:"none"}}>
+              <div style={{fontSize:9.5,color:C.dim,textTransform:"uppercase",letterSpacing:".6px",marginBottom:4}}>{s.lbl}</div>
+              <div className="mono" style={{fontSize:15,fontWeight:700,color:s.col}}>{s.val}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* ── Weekly budget bar ── */}
+        {editBudget ? (
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12, background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:9, padding:"10px 14px" }}>
+            <span style={{ fontSize:12, fontWeight:700, color:C.muted, whiteSpace:"nowrap" }}>Weekly Labour Budget $</span>
+            <input className="inp" type="number" placeholder="e.g. 4000" style={{ flex:1, maxWidth:140 }}
+              defaultValue={weekBudget || ""} autoFocus
+              onBlur={e => { const v = parseFloat(e.target.value)||0; setWeekBudget(v); localStorage.setItem("mise_week_budget",v); setEditBudget(false); }}
+              onKeyDown={e => { if(e.key==="Enter"){ const v=parseFloat(e.target.value)||0; setWeekBudget(v); localStorage.setItem("mise_week_budget",v); setEditBudget(false); } if(e.key==="Escape") setEditBudget(false); }}/>
+            <button className="btn-g" onClick={() => setEditBudget(false)}>Cancel</button>
+          </div>
+        ) : weekBudget > 0 ? (
+          <BudgetBar total={totLabour} budget={weekBudget} onEdit={() => setEditBudget(true)}/>
+        ) : (
+          <button onClick={() => setEditBudget(true)}
+            style={{ display:"flex", alignItems:"center", gap:7, marginBottom:12, padding:"8px 14px", borderRadius:9, cursor:"pointer", fontFamily:"inherit", fontSize:11.5, fontWeight:600, background:"none", border:`1px dashed ${C.border}`, color:C.dim, width:"100%" }}>
+            <span style={{ fontSize:14 }}>💰</span> Set weekly labour budget (optional)
+          </button>
+        )}
+        </>
+      )}
       <div style={{overflowX:"auto",marginBottom:20,border:`1px solid ${C.border}`,borderRadius:13,overflow:"hidden"}}>
         <table style={{width:"100%",borderCollapse:"collapse",minWidth:820}}>
           <thead>
@@ -4979,24 +6352,46 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
             </tr>
           </thead>
           <tbody>
-            {employees.map((emp,ei) => {
+            {sortedEmployees.map((emp,ei) => {
               const col = empColor(emp);
               const empWeekShifts = weekShifts.filter(s => s.eid===emp.id);
               const empHrs  = empWeekShifts.reduce((s,sh) => s+shiftHrs(sh), 0);
               const empCost = empWeekShifts.reduce((s,sh) => s+shiftCost(sh), 0);
               const empOTHrs = [...(empBreakdowns.get(emp.id)||new Map()).values()].reduce((s,v)=>s+v.otHrs,0);
+              const isDragging = draggingId === emp.id;
               return (
-                <tr key={emp.id} style={{background: ei%2===0 ? C.surface : C.surfaceAlt}}>
+                <tr key={emp.id}
+                  draggable
+                  onDragStart={() => setDraggingId(emp.id)}
+                  onDragOver={e => { e.preventDefault(); }}
+                  onDrop={() => {
+                    if (!draggingId || draggingId === emp.id) return;
+                    const order = sortedEmployees.map(e => e.id);
+                    const from = order.indexOf(draggingId);
+                    const to   = order.indexOf(emp.id);
+                    if (from < 0 || to < 0) return;
+                    const next = [...order];
+                    next.splice(from, 1);
+                    next.splice(to, 0, draggingId);
+                    saveOrder(next);
+                    setDraggingId(null);
+                  }}
+                  onDragEnd={() => setDraggingId(null)}
+                  style={{background: isDragging ? "rgba(143,203,114,.08)" : ei%2===0 ? C.surface : C.surfaceAlt, opacity: isDragging ? 0.5 : 1, cursor:"grab"}}>
                   {/* Employee name cell */}
                   <td style={{padding:"8px 10px",borderBottom:`1px solid ${C.border}`,verticalAlign:"middle"}}>
                     <div style={{display:"flex",alignItems:"center",gap:7}}>
+                      {/* Drag handle */}
+                      <span style={{color:C.dim,fontSize:12,cursor:"grab",flexShrink:0,lineHeight:1}}>⠿</span>
                       <div style={{width:28,height:28,borderRadius:"50%",background:col,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,color:"#fff",flexShrink:0}}>
                         {initials(emp.name)}
                       </div>
                       <div>
-                        <div style={{fontWeight:600,fontSize:11.5,letterSpacing:"-.2px"}}>{emp.name}</div>
-                        <div style={{fontSize:9.5,color:C.muted}}>{money(effRate(emp))}/hr · {emp.std_hrs}h/wk</div>
-                        {empOTHrs > 0 && <div style={{fontSize:9,fontWeight:700,color:"#DC2626",marginTop:1}}>⚡ {empOTHrs.toFixed(1)}h OT</div>}
+                        <div style={{fontWeight:600,fontSize:12}}>{emp.name}</div>
+                        {empHrs > 0
+                          ? <div style={{fontSize:9.5,color:C.muted}}>{empHrs.toFixed(1)}h · <span style={{color:C.yellow,fontWeight:600}}>{money(empCost)}</span></div>
+                          : <div style={{fontSize:9.5,color:C.dim}}>No shifts</div>
+                        }
                       </div>
                     </div>
                   </td>
@@ -5283,15 +6678,13 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
 // ════════════════════════════════════════════════════════════
 //  STAFF & WAGES PAGE
 // ════════════════════════════════════════════════════════════
-function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster, setRoster, leave, setLeave, showToast }) {
-  const [tab,        setTab]        = useState("roster");
+function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster, setRoster, leave, setLeave, showToast, bizName, setBizName, bizABN, setBizABN, initialTab }) {
+  const [tab, setTab] = useState(initialTab || "roster");
   const [empModal,   setEmpModal]   = useState(null);
-  const [tsModal,    setTsModal]    = useState(null); // null=closed, true=add, {id,...}=edit
+  const [tsModal,    setTsModal]    = useState(null);
   const [dayWorkers, setDayWorkers] = useState([]);
-  const [bizName,    setBizName]    = useState("My Restaurant");
-  const [bizABN,     setBizABN]     = useState("");
   // Leave form state
-  const [lf, setLf] = useState({ eid:"", type:"annual", date:todayStr, hours:"", notes:"" });
+  const [lf, setLf] = useState({ eid:"", type:"annual", date:todayStr, hours:"", notes:"", editId:null });
 
   const rows       = annotateTimesheets(employees, timesheets);
   const totalGross = rows.reduce((s,t) => s + t.gross,  0);
@@ -5754,6 +7147,7 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster,
                   balance: accrued.lieu - taken.lieu,
                   note: "Accrues hour-for-hour from OT & weekend/PH hours worked" },
               ];
+              const empRate = effRate(emp); // $/hr incl. casual loading if applicable
 
               return (
                 <div key={emp.id} className="bc" style={{ marginBottom:0 }}>
@@ -5796,6 +7190,16 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster,
                                   {dpd > 0 ? `${Math.abs(parseFloat(balDays))} days` : ""}
                                   {isNeg ? " — overdrawn" : ""}
                                 </div>
+                                {/* Monetary value — for payouts and liability reporting */}
+                                {!isNA && lt.balance !== 0 && empRate > 0 && !isCasual && (
+                                  <div style={{ marginTop:6, padding:"4px 8px", borderRadius:6, background: isNeg ? "rgba(220,38,38,.08)" : "rgba(143,203,114,.08)", display:"inline-block" }}>
+                                    <span style={{ fontSize:10, color:C.dim }}>Value: </span>
+                                    <span className="mono" style={{ fontSize:11, fontWeight:700, color: isNeg ? C.red : C.green }}>
+                                      {money(Math.abs(lt.balance) * empRate)}
+                                    </span>
+                                    <span style={{ fontSize:9.5, color:C.dim, marginLeft:3 }}>@ {money(empRate)}/hr</span>
+                                  </div>
+                                )}
                               </div>
                               {/* Accrued / Taken row */}
                               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
@@ -5845,13 +7249,14 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster,
             )}
           </div>
 
-          {/* Log leave taken form */}
-          <div className="fsec">
-            <div className="ftit">Log Leave Taken</div>
+          {/* Log / Edit leave form */}
+          <div className="fsec" style={{ border: lf.editId ? `1px solid ${C.yellow}` : undefined }}>
+            <div className="ftit">{lf.editId ? "✏️ Edit Leave Record" : "Log Leave Taken"}</div>
+            {lf.editId && <div style={{ fontSize:11, color:C.yellow, marginBottom:10, background:"rgba(212,168,67,.08)", borderRadius:6, padding:"6px 10px" }}>Editing record — make your changes and click Save.</div>}
             <div className="frow3" style={{ marginBottom:11 }}>
               <div className="fg">
                 <label className="flbl">Employee *</label>
-                <select className="sel" value={lf.eid} onChange={e => setLf({...lf,eid:e.target.value})}>
+                <select className="sel" value={lf.eid} onChange={e => setLf({...lf,eid:e.target.value})} disabled={!!lf.editId}>
                   <option value="">— Select employee —</option>
                   {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
                 </select>
@@ -5875,9 +7280,7 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster,
                 <label className="flbl">Hours Taken *</label>
                 <input className="inp" type="number" placeholder="e.g. 7.6" value={lf.hours} onChange={e => setLf({...lf,hours:e.target.value})}/>
                 {lf.eid && lf.hours && (
-                  <span className="fhint">
-                    = {(parseFloat(lf.hours) / hrsPerDay(employees.find(e=>e.id===parseInt(lf.eid)) || {std_hrs:7.6})).toFixed(2)} days
-                  </span>
+                  <span className="fhint">= {(parseFloat(lf.hours) / hrsPerDay(employees.find(e=>e.id===parseInt(lf.eid)) || {std_hrs:7.6})).toFixed(2)} days</span>
                 )}
               </div>
               <div className="fg" style={{ gridColumn:"span 2" }}>
@@ -5886,8 +7289,20 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster,
               </div>
             </div>
             <div className="fbtns">
-              <button className="btn" onClick={addLeave}>Log Leave</button>
-              <button className="btn-g" onClick={() => setLf({ eid:"", type:"annual", date:todayStr, hours:"", notes:"" })}>Clear</button>
+              <button className="btn" onClick={() => {
+                if (!lf.eid || !lf.hours) return;
+                if (lf.editId) {
+                  setLeave(p => p.map(x => x.id === lf.editId ? {...x, type:lf.type, date:lf.date, hours:parseFloat(lf.hours)||0, notes:lf.notes} : x));
+                  showToast("Leave record updated!");
+                } else {
+                  addLeave();
+                  return;
+                }
+                setLf({ eid:"", type:"annual", date:todayStr, hours:"", notes:"", editId:null });
+              }}>{lf.editId ? "Save Changes" : "Log Leave"}</button>
+              <button className="btn-g" onClick={() => setLf({ eid:"", type:"annual", date:todayStr, hours:"", notes:"", editId:null })}>
+                {lf.editId ? "Cancel" : "Clear"}
+              </button>
             </div>
           </div>
 
@@ -5919,7 +7334,10 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster,
                           <td className="mono" style={{ fontWeight:600 }}>{l.hours}h</td>
                           <td className="mono" style={{ color:C.muted }}>{days}d</td>
                           <td style={{ color:C.muted, fontSize:12 }}>{l.notes || "—"}</td>
-                          <td><button className="btn-ic" onClick={() => { setLeave(p => p.filter(x => x.id !== l.id)); showToast("Leave record removed."); }}>🗑️</button></td>
+                          <td style={{ whiteSpace:"nowrap" }}>
+                            <button className="btn-ic" title="Edit" onClick={() => setLf({ eid:String(l.eid), type:l.type, date:l.date, hours:String(l.hours), notes:l.notes||"", editId:l.id })}>✏️</button>
+                            <button className="btn-ic" onClick={() => { setLeave(p => p.filter(x => x.id !== l.id)); showToast("Leave record removed."); }}>🗑️</button>
+                          </td>
                         </tr>
                       );
                     })
@@ -5930,7 +7348,7 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster,
 
           <div className="disc">
             <div className="d-ttl">⚠️ Leave Entitlement Disclaimer</div>
-            <div className="d-txt">Leave accruals are estimated based on weeks worked in logged timesheets. <strong>Annual leave</strong> accrues at 4 weeks per year for FT/PT employees. <strong>Personal/Carer's leave</strong> accrues at 10 days per year for FT/PT employees. <strong>Casual employees</strong> are not entitled to paid annual or personal leave. <strong>Day in Lieu</strong> is calculated hour-for-hour from overtime and weekend/PH hours. Always confirm entitlements under the applicable Modern Award or Fair Work Act. These are estimates only — consult a registered payroll provider or Fair Work for accurate obligations.</div>
+            <div className="d-txt">Leave accruals are calculated based on <strong>actual ordinary hours worked</strong> as recorded in timesheets — in accordance with the Fair Work Act 2009. <strong>Annual leave</strong> accrues at 152 hours per year of full hours worked (s.87). <strong>Personal/Carer's leave</strong> accrues at 76 hours per year (s.96). <strong>Casual employees</strong> are not entitled to paid annual or personal leave. <strong>Day in Lieu</strong> accrues hour-for-hour from overtime and weekend/PH hours worked. Part-time employees are automatically pro-rated based on their standard hours. Always confirm entitlements under the applicable Modern Award. These are estimates only — consult a registered payroll provider or Fair Work for accurate obligations.</div>
           </div>
         </>
       )}
@@ -5972,7 +7390,7 @@ function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, biz
         const superR = getSuperRate(ts.week);
         const payg   = calcWeeklyPAYG(gross, e.tfn);
         const net    = gross - payg;
-        return { ...ts, gross, super: gross * superR, superR, payg, net };
+        return { ...ts, gross, super: (effRate(e)*(ts.std_hrs+ts.wknd_hrs+ts.ot_hrs))*superR, superR, payg, net };
       });
       const empTotals = {
         std_hrs:  empRows.reduce((s,r) => s + r.std_hrs,  0),
@@ -6016,7 +7434,8 @@ function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, biz
   const rows = empTs.map(ts => {
     const gross   = calcGross(emp, ts);
     const superR  = getSuperRate(ts.week);
-    const super_  = gross * superR;
+    const otePs   = effRate(emp) * (ts.std_hrs + ts.wknd_hrs + ts.ot_hrs);
+    const super_  = otePs * superR;
     const payg    = calcWeeklyPAYG(gross, emp?.tfn);
     const net     = gross - payg;
     const effR    = effRate(emp);
@@ -7085,71 +8504,6 @@ function InsurancePage({ insurance, setInsurance, employees, timesheets, showToa
 // ════════════════════════════════════════════════════════════
 //  TAX SUMMARY
 // ════════════════════════════════════════════════════════════
-function TaxSummaryPage({ revenue, expenses, employees, timesheets }) {
-  const rows       = annotateTimesheets(employees, timesheets);
-  const totalRev   = revenue.reduce((s,r) => s + r.amount, 0);
-  const gstColl    = totalRev / 11;
-  const gstCreds   = expenses.filter(e => e.gst).reduce((s,e) => s + e.amount/11, 0);
-  const gstPay     = gstColl - gstCreds;
-  const totalWages = rows.reduce((s,t) => s + t.gross,  0);
-  const totalPayg  = rows.reduce((s,t) => s + t.payg,   0);
-  const totalSuper = rows.reduce((s,t) => s + t.super,  0);
-  const estBAS     = gstPay + totalPayg;
-  const wklyRes    = estBAS / 13;
-  const status     = gstPay < gstColl*0.5 ? "g" : gstPay < gstColl*0.8 ? "y" : "r";
-
-  return (
-    <>
-      <div className="hdr">
-        <div className="hdr-left"><div className="ptitle">Tax Summary</div><div className="psub">Estimated BAS for {quarter} — for planning only</div></div>
-      </div>
-
-      <div className={`banner ${status}`}>
-        <div className={`bdot ${status}`}/>
-        {status==="g" ? "✅ On track — reserves look healthy"
-          : status==="y" ? "⚠️ Watch expenses — GST payable is growing"
-          : "🔴 Tax shortfall risk — increase your weekly reserve"}
-      </div>
-
-      <div className="g2">
-        <div className="bc">
-          <div className="bctit" style={{ marginBottom:12 }}>GST Calculation</div>
-          <div className="bas-row"><span className="bas-lbl">Total Revenue (incl. GST)</span><span className="bas-val">{money(totalRev)}</span></div>
-          <div className="bas-row"><span className="bas-lbl">GST Collected (÷11)</span><span className="bas-val" style={{ color:C.red }}>+ {money(gstColl)}</span></div>
-          <div className="bas-row"><span className="bas-lbl">GST Credits (expenses)</span><span className="bas-val" style={{ color:C.green }}>− {money(gstCreds)}</span></div>
-          <div className="bas-tot"><span className="bas-tot-lbl">Net GST Payable</span><span className="bas-tot-val">{money(gstPay)}</span></div>
-        </div>
-        <div className="bc">
-          <div className="bctit" style={{ marginBottom:12 }}>PAYG & Super</div>
-          <div className="bas-row"><span className="bas-lbl">Total Gross Wages</span><span className="bas-val">{money(totalWages)}</span></div>
-          <div className="bas-row"><span className="bas-lbl">PAYG Withheld (ATO Scale 2)</span><span className="bas-val" style={{ color:C.yellow }}>{money(totalPayg)}</span></div>
-          <div className="bas-row"><span className="bas-lbl">Super (SGC) (SGC)</span><span className="bas-val" style={{ color:C.blue }}>{money(totalSuper)}</span></div>
-          <div className="bas-tot"><span className="bas-tot-lbl">Total Employment Cost</span><span className="bas-tot-val">{money(totalWages+totalPayg+totalSuper)}</span></div>
-        </div>
-      </div>
-
-      <div className="bc">
-        <div className="bctit" style={{ marginBottom:12 }}>Estimated Quarterly BAS — {quarter}</div>
-        <div className="bas-row"><span className="bas-lbl">Net GST Payable</span><span className="bas-val">{money(gstPay)}</span></div>
-        <div className="bas-row"><span className="bas-lbl">PAYG Withholding</span><span className="bas-val">{money(totalPayg)}</span></div>
-        <div className="bas-tot"><span className="bas-tot-lbl">Total Estimated BAS</span><span className="bas-tot-val">{money(estBAS)}</span></div>
-        <div style={{ background:C.surfaceAlt, borderRadius:9, padding:"9px 12px", marginTop:7, fontSize:11, color:C.muted, lineHeight:1.7 }}>
-          ⚠️ <strong>Disclaimer:</strong> Estimate only. Always confirm with a registered tax agent before lodging your BAS.
-        </div>
-      </div>
-
-      <div className="reserve">
-        <div className="r-lbl">🏦 Recommended Weekly Tax Reserve</div>
-        <div className="r-big">{money(wklyRes)}</div>
-        <div className="r-sub">Set aside <strong>{money(wklyRes)}</strong>/week — over 13 weeks you'll have <strong>{money(wklyRes*13)}</strong> ready for your BAS.</div>
-      </div>
-    </>
-  );
-}
-
-// ════════════════════════════════════════════════════════════
-//  TAX SAVER
-// ════════════════════════════════════════════════════════════
 function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimesheets, showToast }) {
   const [tab,      setTab]      = useState("overview");
   const [expanded, setExpanded] = useState(null);
@@ -7326,6 +8680,7 @@ function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimeshe
                               </div>
                             )}
                             {e.gstStatus==="review" && <div style={{ fontSize:11.5, color:C.muted }}>Not marked as GST — check receipt. If GST is shown, update this entry.</div>}
+                            {e.gstMismatch && <div style={{ fontSize:11.5, color:C.yellow, marginTop:3 }}>⚠️ GST mismatch — <strong>{CAT_CONFIG[e.cat]?.label || e.cat}</strong> expenses are usually {CAT_GST_DEFAULT[e.cat]?"GST-inclusive":"GST-free"}. Check this entry.</div>}
                             {e.gstStatus==="claimable" && <div style={{ fontSize:11.5, color:C.green }}>✅ GST credit of {money(e.amount/11)} is claimable. All good.</div>}
                             {e.gstStatus==="not-claimable" && <div style={{ fontSize:11.5, color:C.muted }}>No GST credit — GST-free or entertainment expense.</div>}
                           </div>
@@ -7341,79 +8696,223 @@ function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimeshe
       )}
 
       {/* DEDUCTIONS */}
-      {tab === "deductions" && (
-        <>
-          {suggestions > 0
-            ? <div className="alert al-t"><span className="al-ico">💡</span><div><div className="al-ttl">{suggestions} expense{suggestions>1?"s":""} could be better categorised</div><div className="al-msg">Better categorisation ensures you don't miss deductions at tax time.</div></div></div>
-            : <div className="alert al-g"><span className="al-ico">✅</span><div><div className="al-ttl">All expenses look well categorised</div></div></div>
-          }
+      {tab === "deductions" && (() => {
+        // ── Scanner: find miscoded expenses ─────────────────────
+        const miscoded = analysed.filter(e => e.suggestion);
 
-          {suggestions > 0 && (
-            <div className="bc" style={{ marginTop:10 }}>
-              <div className="bctit">Suggested Re-categorisations</div>
-              {analysed.filter(e => e.suggestion).map(e => (
-                <div key={e.id} style={{ background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:9, padding:13, marginBottom:9 }}>
-                  <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12 }}>
-                    <div style={{ flex:1 }}>
-                      <div style={{ fontWeight:600, fontSize:12.5, marginBottom:3 }}>{e.desc} — {money(e.amount)}</div>
-                      <div style={{ fontSize:11.5, color:C.muted }}>
-                        Currently <span style={{ color:C.yellow }}>other</span> → suggest <span style={{ color:C.teal }}>{e.suggestion.label}</span>
-                      </div>
-                    </div>
-                    <button className="btn-t" onClick={() => recode(e.id, e.suggestion.cat)}>Apply</button>
+        // ── Also scan all expenses for potential cross-category issues ──
+        // e.g. "uber eats" logged as "other" or ingredients
+        const SCAN_RULES = [
+          { kw:["uber eats","doordash","menulog","deliveroo","menulog"],   cat:"delivery_fees",  label:"Delivery Platform Fees",    emoji:"🛵", reason:"Platform commission fees are 100% deductible as a business expense — not food stock." },
+          { kw:["spotify","apra","ppca","music licence","music license"],  cat:"music_ent",      label:"Music & Entertainment",     emoji:"🎵", reason:"Music licences are a separate operating expense — not software or other." },
+          { kw:["xero","myob","simpro","deputy","tanda","lightspeed"],     cat:"software",       label:"Software & Subscriptions",  emoji:"💻", reason:"SaaS subscriptions belong in Software — deductible in full." },
+          { kw:["stripe","tyro","eftpos","square","merchant fee"],         cat:"merchant_fees",  label:"Merchant & EFTPOS Fees",    emoji:"💳", reason:"Card processing fees are bank charges — not advertising or other." },
+          { kw:["facebook","instagram","google ads","tiktok","meta ads"],  cat:"advertising",    label:"Advertising",               emoji:"📣", reason:"Digital ad spend is advertising — deductible in full." },
+          { kw:["rsa","responsible service","alcohol training"],           cat:"rsa_training",   label:"RSA Training",              emoji:"🪪", reason:"Staff training costs are fully deductible." },
+          { kw:["apron","uniform","workwear","branded shirt","chef white"], cat:"staff_uniforms", label:"Staff Uniforms",           emoji:"👕", reason:"Compulsory/distinctive work clothing is deductible." },
+          { kw:["pest","pest control","fumigat"],                          cat:"cleaning",       label:"Cleaning & Hygiene",        emoji:"🧹", reason:"Pest control is a cleaning/hygiene cost — not repairs." },
+          { kw:["insurance","premium","liability","workers comp","policy"], cat:"insurance_expense", label:"Insurance Premium",     emoji:"🛡️", reason:"Business insurance premiums are fully deductible." },
+          { kw:["accountant","bookkeeper","bas agent","tax agent"],        cat:"accounting",     label:"Accounting & Consulting",   emoji:"📋", reason:"Professional fees are fully deductible." },
+          { kw:["interest","loan interest","overdraft"],                   cat:"interest_expense",label:"Interest Expense",         emoji:"💸", reason:"Business loan interest is deductible — not a general expense." },
+          { kw:["phone","mobile","internet","broadband","nbn","telstra"],  cat:"telephone_internet", label:"Telephone & Internet",  emoji:"📱", reason:"Business phone/internet is fully deductible." },
+        ];
+
+        const additionalFinds = expenses
+          .filter(e => {
+            // Only scan if NOT already correctly categorised
+            const desc = e.desc.toLowerCase();
+            return SCAN_RULES.some(r =>
+              r.kw.some(k => desc.includes(k)) && e.cat !== r.cat
+            );
+          })
+          .map(e => {
+            const desc = e.desc.toLowerCase();
+            const rule = SCAN_RULES.find(r => r.kw.some(k => desc.includes(k)) && e.cat !== r.cat);
+            return { ...e, scanCat: rule.cat, scanLabel: rule.label, scanEmoji: rule.emoji, scanReason: rule.reason };
+          });
+
+        // Combine: miscoded (from analyseExpenses) + additional scanner hits
+        const allMiscoded = [
+          ...miscoded.map(e => ({
+            ...e,
+            scanCat:    e.suggestion.cat,
+            scanLabel:  e.suggestion.label,
+            scanEmoji:  CAT_CONFIG[e.suggestion.cat]?.emoji || "🏷️",
+            scanReason: `This expense looks like ${e.suggestion.label} based on its description. Better categorisation means clearer records at tax time.`,
+          })),
+          ...additionalFinds.filter(af => !miscoded.find(m => m.id === af.id)),
+        ];
+
+        // ── Checklist: which categories are claimed vs missing ───
+        const HOSPITALITY_CHECKLIST = [
+          { cat:"ingredients",        must:true,  tip:"Your biggest deduction — keep all supplier invoices." },
+          { cat:"food_stock",         must:true,  tip:"Dry goods, pantry staples — separate from fresh produce." },
+          { cat:"rent",               must:true,  tip:"Commercial lease — keep monthly statements as invoices." },
+          { cat:"utilities",          must:true,  tip:"Electricity, gas, water — quarterly bills count as invoices." },
+          { cat:"equipment",          must:false, tip:"Fridges, ovens, POS. Instant asset write-off may apply under $20k." },
+          { cat:"repairs",            must:false, tip:"Plumber, electrician, kitchen repairs — keep all receipts." },
+          { cat:"cleaning",           must:true,  tip:"Sanitiser, pest control, hygiene supplies — operational must." },
+          { cat:"packaging",          must:true,  tip:"Takeaway containers, bags — every purchase deductible." },
+          { cat:"software",           must:false, tip:"Xero, POS, booking systems — 100% deductible subscriptions." },
+          { cat:"advertising",        must:false, tip:"Facebook/Google ads, print, signage — all deductible." },
+          { cat:"accounting",         must:false, tip:"BAS agent, bookkeeper, accountant — professional fees." },
+          { cat:"staff_uniforms",     must:false, tip:"Aprons, branded shirts — must be distinctive or compulsory." },
+          { cat:"delivery_fees",      must:false, tip:"Uber Eats, DoorDash commission — separate from food costs." },
+          { cat:"merchant_fees",      must:false, tip:"Stripe, Tyro, Square, EFTPOS fees — bank charges category." },
+          { cat:"telephone_internet", must:false, tip:"Business phone and internet — keep monthly bills." },
+          { cat:"insurance_expense",  must:true,  tip:"Workers comp, public liability — premiums fully deductible." },
+          { cat:"music_ent",          must:false, tip:"APRA/PPCA licence required if playing music — deductible." },
+          { cat:"smallwares",         must:false, tip:"Plates, cutlery, ramekins — replace regularly, keep receipts." },
+        ];
+
+        const thisQuarter = (() => {
+          const n = new Date();
+          const qStart = new Date(n.getFullYear(), Math.floor(n.getMonth()/3)*3, 1);
+          return expenses.filter(e => new Date(e.date) >= qStart);
+        })();
+
+        const checklist = HOSPITALITY_CHECKLIST.map(item => {
+          const cfg      = CAT_CONFIG[item.cat];
+          const allTime  = expenses.filter(e => e.cat === item.cat);
+          const quarter  = thisQuarter.filter(e => e.cat === item.cat);
+          const hasInv   = allTime.filter(e => e.invoice).length;
+          const total    = allTime.reduce((s,e) => s+e.amount, 0);
+          const qTotal   = quarter.reduce((s,e) => s+e.amount, 0);
+          const status   = allTime.length === 0 ? "never"
+                         : hasInv < allTime.length * 0.5 ? "partial"
+                         : "claimed";
+          return { ...item, cfg, allTime: allTime.length, quarter: quarter.length, total, qTotal, hasInv, status };
+        });
+
+        const neverClaimed = checklist.filter(c => c.status === "never");
+        const partial      = checklist.filter(c => c.status === "partial");
+        const claimed      = checklist.filter(c => c.status === "claimed");
+        const totalFindable = allMiscoded.length + neverClaimed.filter(c=>c.must).length;
+
+        return (
+          <>
+            {/* Summary banner */}
+            <div style={{ background:"linear-gradient(135deg,rgba(234,179,8,.08),rgba(16,185,129,.06))", border:`1px solid ${C.border}`, borderRadius:12, padding:"14px 18px", marginBottom:16, display:"flex", gap:24, flexWrap:"wrap" }}>
+              {[
+                { val: allMiscoded.length,                     lbl:"Miscoded expenses",         col: allMiscoded.length   ? C.yellow : C.green, ico:"🏷️" },
+                { val: neverClaimed.length,                    lbl:"Categories never used",     col: neverClaimed.length  ? C.red    : C.green, ico:"❌" },
+                { val: partial.length,                         lbl:"Missing invoices",          col: partial.length       ? C.yellow : C.green, ico:"🧾" },
+                { val: claimed.length,                         lbl:"Categories claimed",        col: C.green,                                   ico:"✅" },
+              ].map((s,i) => (
+                <div key={i} style={{ display:"flex", alignItems:"center", gap:10 }}>
+                  <span style={{ fontSize:20 }}>{s.ico}</span>
+                  <div>
+                    <div className="mono" style={{ fontSize:22, fontWeight:800, color:s.col, lineHeight:1 }}>{s.val}</div>
+                    <div style={{ fontSize:10, color:C.muted, marginTop:2 }}>{s.lbl}</div>
                   </div>
                 </div>
               ))}
             </div>
-          )}
 
-          <div className="bc">
-            <div className="bctit">📚 Common Business Deduction Categories</div>
-            <table className="tbl">
-              <thead><tr><th>Category</th><th>Examples</th><th>GST Claimable?</th><th>Industry</th><th>Notes</th></tr></thead>
-              <tbody>
-                {[
-                  // ── Universal ──
-                  { cat:"🥩 Ingredients / Food",   ex:"Produce, meat, dairy, dry goods",       gst:"Usually yes", ind:"All",   note:"Fresh unprocessed food may be GST-free" },
-                  { cat:"📦 Packaging",             ex:"Containers, bags, wrap",                gst:"Yes",         ind:"All",   note:"Cost of sale — fully deductible" },
-                  { cat:"♻️ Eco-Packaging",         ex:"Compostable cups, biodegradable wrap",  gst:"Yes",         ind:"Café",  note:"Same treatment as standard packaging" },
-                  { cat:"🧹 Cleaning & Hygiene",    ex:"Detergents, sanitiser, pest control",   gst:"Yes",         ind:"All",   note:"Essential operational expense" },
-                  { cat:"🏠 Rent",                  ex:"Commercial lease payments",             gst:"Yes",         ind:"All",   note:"Commercial rent includes GST" },
-                  { cat:"⚡ Utilities",             ex:"Electricity, gas, water",               gst:"Yes",         ind:"All",   note:"Keep quarterly bills as invoices" },
-                  { cat:"🔧 Equipment",             ex:"Fridges, ovens, POS systems",           gst:"Yes",         ind:"All",   note:"Instant asset write-off may apply" },
-                  { cat:"🔨 Repairs & Maintenance", ex:"Plumber, electrician, general repairs", gst:"Yes",         ind:"All",   note:"Ongoing maintenance fully deductible" },
-                  { cat:"💻 Software & POS",        ex:"Xero, MYOB, booking & POS apps",       gst:"Yes",         ind:"All",   note:"Fully deductible subscription" },
-                  { cat:"📣 Advertising",           ex:"Facebook, Google, print, signage",      gst:"Yes",         ind:"All",   note:"All marketing costs deductible" },
-                  { cat:"📋 Accounting",            ex:"BAS agent, bookkeeper, tax agent",      gst:"Yes",         ind:"All",   note:"Professional fees fully deductible" },
-                  { cat:"👕 Staff Uniforms",        ex:"Aprons, caps, branded workwear",        gst:"Yes",         ind:"All",   note:"Must be distinctive/compulsory to claim" },
-                  { cat:"🛵 Delivery Platform Fees",ex:"Uber Eats, DoorDash, Menulog fees",     gst:"Yes",         ind:"All",   note:"Commission fees are a deductible expense" },
-                  { cat:"🎵 Music & Entertainment", ex:"Spotify, APRA/PPCA licence, DJ",        gst:"Yes",         ind:"All",   note:"APRA/PPCA licence required to play music" },
-                  { cat:"🍽️ Smallwares & Crockery", ex:"Plates, cutlery, trays, ramekins",      gst:"Yes",         ind:"All",   note:"Replace regularly — keep receipts" },
-                  // ── Bar / Pub ──
-                  { cat:"📜 Liquor License",        ex:"Liquor licence fee, annual levy",       gst:"No",          ind:"Bar",   note:"Government fees — no GST, still deductible" },
-                  { cat:"🥃 Spirit Stock",          ex:"Whisky, vodka, gin, rum, liqueurs",     gst:"Yes",         ind:"Bar",   note:"Stock on hand is not deductible until sold" },
-                  { cat:"🍺 Beer & Wine Stock",     ex:"Kegs, bottled beer, wine, cider",       gst:"Yes",         ind:"Bar",   note:"Stock on hand is not deductible until sold" },
-                  { cat:"🍷 Glassware",             ex:"Pint glasses, wine glasses, tumblers",  gst:"Yes",         ind:"Bar",   note:"Replace regularly — keep receipts" },
-                  { cat:"🸹 Bar Equipment",         ex:"Ice machine, shakers, bar fridges",     gst:"Yes",         ind:"Bar",   note:"Instant asset write-off may apply" },
-                  { cat:"🪪 RSA Training",          ex:"Responsible service of alcohol course", gst:"Yes",         ind:"Bar",   note:"Staff training — fully deductible" },
-                  // ── Café ──
-                  { cat:"☕ Coffee Supplies",       ex:"Beans, milk, oat milk, filters",        gst:"Yes",         ind:"Café",  note:"Milk may vary — check GST-free rules" },
-                  { cat:"⚙️ Machine Maintenance",  ex:"Espresso machine service, descaling",   gst:"Yes",         ind:"Café",  note:"Keep service records as invoices" },
-                  { cat:"🥐 Bakery Supplies",       ex:"Flour, sugar, butter, pastry items",    gst:"Usually yes", ind:"Café",  note:"Unprocessed food ingredients may be GST-free" },
-                ].map((r,i) => (
-                  <tr key={i}>
-                    <td style={{ fontWeight:600 }}>{r.cat}</td>
-                    <td style={{ color:C.muted, fontSize:11.5 }}>{r.ex}</td>
-                    <td><span className={`pill ${r.gst==="Yes"?"pl-g":r.gst==="No"?"pl-r":"pl-y"}`}>{r.gst}</span></td>
-                    <td><span style={{ fontSize:10, padding:"2px 7px", borderRadius:10, background:r.ind==="Bar"?"rgba(91,159,212,.12)":r.ind==="Café"?"rgba(212,168,67,.12)":"rgba(143,203,114,.1)", color:r.ind==="Bar"?C.blue:r.ind==="Café"?C.yellow:C.green, fontWeight:600 }}>{r.ind}</span></td>
-                    <td style={{ color:C.muted, fontSize:11.5 }}>{r.note}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
+            {/* ── SCANNER ── */}
+            <div className="bc" style={{ marginBottom:14 }}>
+              <div className="bctit">🔍 Miscoding Scanner
+                <span style={{ fontSize:11, fontWeight:400, color:C.muted, marginLeft:8 }}>expenses that could be better categorised</span>
+              </div>
+              {allMiscoded.length === 0 ? (
+                <div style={{ display:"flex", alignItems:"center", gap:10, padding:"14px 0", color:C.green }}>
+                  <span style={{ fontSize:18 }}>✅</span>
+                  <span style={{ fontSize:13, fontWeight:600 }}>All expenses look correctly categorised — great work.</span>
+                </div>
+              ) : allMiscoded.map(e => (
+                <div key={e.id} style={{ background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:10, padding:"12px 14px", marginBottom:8 }}>
+                  <div style={{ display:"flex", gap:12, alignItems:"flex-start", flexWrap:"wrap" }}>
+                    <div style={{ flex:1, minWidth:200 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:4 }}>
+                        <span style={{ fontSize:11, padding:"2px 8px", background:`${C.yellow}18`, color:C.yellow, borderRadius:20, fontWeight:700, border:`1px solid ${C.yellow}44` }}>
+                          {CAT_CONFIG[e.cat]?.emoji} {CAT_CONFIG[e.cat]?.label || e.cat}
+                        </span>
+                        <span style={{ fontSize:11, color:C.dim }}>→</span>
+                        <span style={{ fontSize:11, padding:"2px 8px", background:`${C.teal}14`, color:C.teal, borderRadius:20, fontWeight:700, border:`1px solid ${C.teal}44` }}>
+                          {e.scanEmoji} {e.scanLabel}
+                        </span>
+                      </div>
+                      <div style={{ fontWeight:700, fontSize:13, marginBottom:3 }}>{e.desc}</div>
+                      <div style={{ fontSize:11, color:C.muted }}>{e.date} · {money(e.amount)}</div>
+                      <div style={{ fontSize:11, color:C.dim, marginTop:5, fontStyle:"italic" }}>{e.scanReason}</div>
+                    </div>
+                    <button className="btn-t" style={{ whiteSpace:"nowrap", alignSelf:"center" }}
+                      onClick={() => { recode(e.id, e.scanCat); }}>
+                      ✓ Apply Fix
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* ── CHECKLIST ── */}
+            <div className="bc">
+              <div className="bctit">📋 Deduction Checklist
+                <span style={{ fontSize:11, fontWeight:400, color:C.muted, marginLeft:8 }}>every hospitality category — what you've claimed vs what's missing</span>
+              </div>
+
+              {/* Never claimed — biggest opportunity */}
+              {neverClaimed.length > 0 && (
+                <>
+                  <div style={{ fontSize:10, fontWeight:700, color:C.red, textTransform:"uppercase", letterSpacing:".8px", marginBottom:8, marginTop:4 }}>
+                    ❌ Never Claimed — Check if applicable
+                  </div>
+                  {neverClaimed.map(c => (
+                    <div key={c.cat} style={{ display:"flex", alignItems:"center", gap:12, padding:"9px 12px", background:"rgba(220,38,38,.04)", border:"1px solid rgba(220,38,38,.15)", borderRadius:8, marginBottom:6 }}>
+                      <span style={{ fontSize:18, flexShrink:0 }}>{c.cfg?.emoji || "📎"}</span>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontWeight:700, fontSize:12.5 }}>{c.cfg?.label || c.cat}</div>
+                        <div style={{ fontSize:11, color:C.dim, marginTop:2 }}>{c.tip}</div>
+                      </div>
+                      {c.must && <span style={{ fontSize:9.5, fontWeight:700, color:C.red, background:"rgba(220,38,38,.1)", padding:"2px 7px", borderRadius:10, flexShrink:0 }}>COMMON</span>}
+                    </div>
+                  ))}
+                  <div style={{ height:12 }}/>
+                </>
+              )}
+
+              {/* Partial — have some but missing invoices */}
+              {partial.length > 0 && (
+                <>
+                  <div style={{ fontSize:10, fontWeight:700, color:C.yellow, textTransform:"uppercase", letterSpacing:".8px", marginBottom:8 }}>
+                    ⚠️ Claimed but missing invoices
+                  </div>
+                  {partial.map(c => (
+                    <div key={c.cat} style={{ display:"flex", alignItems:"center", gap:12, padding:"9px 12px", background:"rgba(217,119,6,.04)", border:"1px solid rgba(217,119,6,.2)", borderRadius:8, marginBottom:6 }}>
+                      <span style={{ fontSize:18, flexShrink:0 }}>{c.cfg?.emoji || "📎"}</span>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontWeight:700, fontSize:12.5 }}>{c.cfg?.label || c.cat}</div>
+                        <div style={{ fontSize:11, color:C.muted, marginTop:1 }}>{c.allTime} expense{c.allTime!==1?"s":""} · {money(c.total)} total · {c.hasInv}/{c.allTime} invoices on file</div>
+                      </div>
+                      <span className="mono" style={{ fontSize:13, fontWeight:700, color:C.yellow, flexShrink:0 }}>{money(c.total)}</span>
+                    </div>
+                  ))}
+                  <div style={{ height:12 }}/>
+                </>
+              )}
+
+              {/* Fully claimed */}
+              {claimed.length > 0 && (
+                <>
+                  <div style={{ fontSize:10, fontWeight:700, color:C.green, textTransform:"uppercase", letterSpacing:".8px", marginBottom:8 }}>
+                    ✅ Claimed &amp; documented
+                  </div>
+                  {claimed.map(c => (
+                    <div key={c.cat} style={{ display:"flex", alignItems:"center", gap:12, padding:"8px 12px", background:"rgba(5,150,105,.04)", border:"1px solid rgba(5,150,105,.15)", borderRadius:8, marginBottom:5 }}>
+                      <span style={{ fontSize:16, flexShrink:0 }}>{c.cfg?.emoji || "📎"}</span>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontWeight:600, fontSize:12 }}>{c.cfg?.label || c.cat}</div>
+                        <div style={{ fontSize:10.5, color:C.dim, marginTop:1 }}>{c.allTime} expense{c.allTime!==1?"s":""} · {c.hasInv}/{c.allTime} invoices</div>
+                      </div>
+                      <span className="mono" style={{ fontSize:13, fontWeight:700, color:C.green, flexShrink:0 }}>{money(c.total)}</span>
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+          </>
+        );
+      })()}
 
       {/* ENTERTAINMENT */}
       {tab === "entertainment" && (
@@ -7527,7 +9026,7 @@ function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimeshe
 // ════════════════════════════════════════════════════════════
 //  SETTINGS
 // ════════════════════════════════════════════════════════════
-function SettingsPage({ industry, setIndustry, showToast }) {
+function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, bizABN, setBizABN }) {
   const [saved, setSaved] = useState(false);
 
   const INDUSTRIES = [
@@ -7543,7 +9042,69 @@ function SettingsPage({ industry, setIndustry, showToast }) {
         <div className="hdr-left"><div className="ptitle">Settings</div><div className="psub">Manage your business and account</div></div>
       </div>
 
-      {/* ── Industry Selector ── */}
+      {/* ── Business Identity — persisted ── */}
+      <div className="fsec">
+        <div className="ftit">Business Details</div>
+        <div style={{ fontSize:12.5, color:C.muted, marginBottom:14 }}>These appear on all exported PDFs — payslips, BAS summaries, rosters and accountant packs.</div>
+        <div className="frow2">
+          <div className="fg">
+            <label className="flbl">Business / Restaurant Name *</label>
+            <input className="inp" value={bizName} onChange={e => setBizName(e.target.value)} placeholder="e.g. The Local Bistro"/>
+            <span className="fhint">Saved automatically — appears on all PDFs</span>
+          </div>
+          <div className="fg">
+            <label className="flbl">ABN</label>
+            <input className="inp" value={bizABN} onChange={e => setBizABN(e.target.value)} placeholder="12 345 678 901"/>
+            <span className="fhint">11-digit Australian Business Number</span>
+          </div>
+          <div className="fg">
+            <label className="flbl">GST Registration Date</label>
+            <input className="inp" type="date"
+              value={localStorage.getItem("mise_gst_reg")||""}
+              onChange={e => { localStorage.setItem("mise_gst_reg", e.target.value); showToast("Saved!"); }}/>
+          </div>
+          <div className="fg">
+            <label className="flbl">BAS Lodgment Frequency</label>
+            <select className="sel"
+              value={localStorage.getItem("mise_bas_freq")||"quarterly"}
+              onChange={e => { localStorage.setItem("mise_bas_freq", e.target.value); showToast("Saved!"); }}>
+              <option value="quarterly">Quarterly (most common)</option>
+              <option value="monthly">Monthly</option>
+              <option value="annual">Annually</option>
+            </select>
+          </div>
+          <div className="fg">
+            <label className="flbl">Payday (for Cash Flow view)</label>
+            <select className="sel"
+              value={localStorage.getItem("mise_payday")||"4"}
+              onChange={e => { localStorage.setItem("mise_payday", e.target.value); showToast("Saved!"); }}>
+              <option value="1">Monday</option>
+              <option value="2">Tuesday</option>
+              <option value="3">Wednesday</option>
+              <option value="4">Thursday (most common)</option>
+              <option value="5">Friday</option>
+            </select>
+            <span className="fhint">Wages appear on this day in Cash Flow</span>
+          </div>
+          <div className="fg">
+            <label className="flbl">Owner / Contact Email</label>
+            <input className="inp" type="email" placeholder="owner@mybistro.com.au"
+              value={localStorage.getItem("mise_owner_email")||""}
+              onChange={e => { localStorage.setItem("mise_owner_email", e.target.value); showToast("Saved!"); }}/>
+          </div>
+          <div className="fg">
+            <label className="flbl">State</label>
+            <select className="sel"
+              value={localStorage.getItem("mise_state")||"NSW"}
+              onChange={e => { localStorage.setItem("mise_state", e.target.value); showToast("Saved!"); }}>
+              {["NSW","VIC","QLD","WA","SA","TAS","ACT","NT"].map(s => <option key={s}>{s}</option>)}
+            </select>
+          </div>
+        </div>
+        {bizName && bizName !== "My Restaurant" && (
+          <div style={{ fontSize:11, color:C.green, marginTop:8 }}>✅ Saved — will appear on all future PDF exports</div>
+        )}
+      </div>
       <div className="fsec">
         <div className="ftit">Business Type</div>
         <div style={{ fontSize:12.5, color:C.muted, marginBottom:14, lineHeight:1.6 }}>
@@ -7597,22 +9158,6 @@ function SettingsPage({ industry, setIndustry, showToast }) {
       </div>
 
       <div className="fsec">
-        <div className="ftit">Business Details</div>
-        <div className="frow2">
-          <div className="fg"><label className="flbl">Business Name</label><input className="inp" defaultValue="My Business"/></div>
-          <div className="fg"><label className="flbl">ABN</label><input className="inp" placeholder="12 345 678 901"/></div>
-          <div className="fg"><label className="flbl">GST Registration Date</label><input className="inp" type="date" defaultValue="2022-01-01"/></div>
-          <div className="fg"><label className="flbl">BAS Frequency</label><select className="sel"><option>Quarterly</option><option>Monthly</option><option>Annually</option></select></div>
-          <div className="fg"><label className="flbl">Owner Email</label><input className="inp" type="email" defaultValue="owner@goldendragon.com.au"/></div>
-          <div className="fg"><label className="flbl">State</label><select className="sel">{["NSW","VIC","QLD","WA","SA","TAS","ACT","NT"].map(s => <option key={s}>{s}</option>)}</select></div>
-        </div>
-        <div className="fbtns">
-          <button className="btn" onClick={() => { setSaved(true); showToast("Settings saved!"); }}>Save Changes</button>
-          {saved && <span style={{ color:C.green, fontSize:12, fontWeight:600 }}>✅ Saved!</span>}
-        </div>
-      </div>
-
-      <div className="fsec">
         <div className="ftit">Subscription</div>
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
           <div>
@@ -7625,12 +9170,34 @@ function SettingsPage({ industry, setIndustry, showToast }) {
 
       <div className="fsec">
         <div className="ftit" style={{ color:C.red }}>Danger Zone</div>
+        {/* Storage status */}
+        {(() => {
+          try {
+            const keys = ["mise_revenue","mise_expenses","mise_employees","mise_timesheets","mise_roster","mise_insurance","mise_leave","mise_ias","mise_bashistory","mise_documents","mise_inventory"];
+            const stored = keys.filter(k => localStorage.getItem(k));
+            const totalBytes = keys.reduce((s,k) => s + (localStorage.getItem(k)||"").length, 0);
+            const kb = (totalBytes/1024).toFixed(1);
+            if(stored.length > 0) return (
+              <div style={{ background:"rgba(5,150,105,.06)", border:`1px solid rgba(5,150,105,.2)`, borderRadius:9, padding:"10px 14px", marginBottom:14, fontSize:12 }}>
+                <span style={{ color:C.green, fontWeight:700 }}>✅ Data saved locally</span>
+                <span style={{ color:C.muted, marginLeft:10 }}>{stored.length} datasets · ~{kb} KB stored in browser</span>
+              </div>
+            );
+          } catch {}
+          return null;
+        })()}
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
           <div>
-            <div style={{ fontWeight:600 }}>Delete all data</div>
-            <div style={{ fontSize:12.5, color:C.muted, marginTop:3 }}>Permanently removes all revenue, expenses, staff and timesheet entries</div>
+            <div style={{ fontWeight:600 }}>Reset all data to demo</div>
+            <div style={{ fontSize:12.5, color:C.muted, marginTop:3 }}>Clears all saved revenue, expenses, staff and timesheets — reloads with sample data. Cannot be undone.</div>
           </div>
-          <button className="btn-r" style={{ padding:"8px 16px", fontSize:13 }}>Delete Data</button>
+          <button className="btn-r" style={{ padding:"8px 16px", fontSize:13 }} onClick={() => {
+            if (!window.confirm("This will delete ALL your data and reset to demo. Are you sure?")) return;
+            const keys = ["mise_revenue","mise_expenses","mise_employees","mise_timesheets","mise_roster","mise_insurance","mise_leave","mise_ias","mise_bashistory","mise_documents","mise_inventory","mise_biz_name","mise_biz_abn","mise_industry"];
+            keys.forEach(k => localStorage.removeItem(k));
+            showToast("Data reset — reloading…");
+            setTimeout(() => window.location.reload(), 1200);
+          }}>Reset Data</button>
         </div>
       </div>
     </>
@@ -7732,33 +9299,40 @@ function DocumentsPage({ documents, setDocuments, employees, showToast }) {
   const [filterCat,setFilterCat]=useState("");
   const [filterSt, setFilterSt]=useState("");
   const [drag,     setDrag]   = useState(false);
-  const [editDoc,  setEditDoc] = useState(null); // document being tagged
+  const [editDoc,  setEditDoc] = useState(null);
   const [tagF,     setTagF]   = useState({});
+  // Camera capture state
+  const [photoDoc, setPhotoDoc] = useState(null); // doc just captured — awaiting quick-tag
 
-  const fileRef = React.useRef();
+  const fileRef   = React.useRef();
+  const cameraRef = React.useRef();
 
-  const handleFiles = files => {
+  const handleFiles = (files, fromCamera = false) => {
     Array.from(files).forEach(f => {
       const reader = new FileReader();
       reader.onload = e => {
         const newDoc = {
           id: Date.now() + Math.random(),
-          name: f.name, size: f.size, type: f.type,
+          name: fromCamera ? `photo_${todayStr}_${Date.now()}.jpg` : f.name,
+          size: f.size, type: f.type,
           dataUrl: e.target.result,
           cat: "Invoice", supplier: "", emp_id: null,
           quarter: BAS_QUARTERS[0], fy: FIN_YEARS[0],
           gst: true, status: "pending", date: todayStr, notes: "",
+          fromCamera: fromCamera,
         };
-        setDocuments(p => {
-          const updated = [...p, newDoc];
-          return updated;
-        });
-        setEditDoc(newDoc);
-        setTagF({ ...newDoc, gst: "yes" });
+        setDocuments(p => [...p, newDoc]);
+        if (fromCamera) {
+          // Show quick-tag modal instead of full tag modal
+          setPhotoDoc(newDoc);
+        } else {
+          setEditDoc(newDoc);
+          setTagF({ ...newDoc, gst: "yes" });
+        }
       };
       reader.readAsDataURL(f);
     });
-    showToast(`${files.length} file${files.length>1?"s":""} uploaded!`);
+    if (!fromCamera) showToast(`${files.length} file${files.length>1?"s":""} uploaded!`);
   };
 
   const handleDrop = e => {
@@ -7771,6 +9345,24 @@ function DocumentsPage({ documents, setDocuments, employees, showToast }) {
     setDocuments(p => p.map(d => d.id === editDoc.id ? { ...tagF, id:editDoc.id, gst:tagF.gst==="yes" } : d));
     setEditDoc(null); showToast("Document updated!");
   };
+
+  // Quick-tag: save category + status from photo modal
+  const savePhotoTag = (cat, status="pending") => {
+    setDocuments(p => p.map(d => d.id === photoDoc.id ? { ...d, cat, status } : d));
+    setPhotoDoc(null);
+    showToast(`📷 Photo saved as ${cat}`);
+  };
+
+  // Quick category options for camera capture
+  const QUICK_CATS = [
+    { cat:"Invoice",         ico:"🧾", lbl:"Supplier Invoice",  sub:"Food, packaging, supplies" },
+    { cat:"Receipt",         ico:"🏧", lbl:"Receipt",           sub:"Cash or card purchase"     },
+    { cat:"Bank Statement",  ico:"🏦", lbl:"Bank Statement",    sub:"Monthly statement"         },
+    { cat:"Payroll",         ico:"👤", lbl:"Payroll Record",    sub:"Pay run, payslip"          },
+    { cat:"Insurance",       ico:"🛡️", lbl:"Insurance",         sub:"Policy, renewal notice"   },
+    { cat:"BAS / ATO",       ico:"📋", lbl:"BAS / ATO Notice",  sub:"ATO correspondence"        },
+    { cat:"Other",           ico:"📄", lbl:"Other",             sub:"Everything else"           },
+  ];
 
   // Filter
   const filtered = documents.filter(d => {
@@ -7798,7 +9390,49 @@ function DocumentsPage({ documents, setDocuments, employees, showToast }) {
 
   return (
     <>
-      {/* Tag/edit modal */}
+      {/* ── Photo quick-tag modal ── */}
+      {photoDoc && (
+        <div className="overlay" onClick={e => { if(e.target===e.currentTarget){ savePhotoTag("Invoice"); } }}>
+          <div className="modal" style={{ maxWidth:420 }}>
+            <div className="m-ttl" style={{ fontSize:17 }}>
+              📷 Photo captured
+              <button className="btn-ic" style={{ fontSize:17 }} onClick={() => { savePhotoTag("Invoice"); }}>✕</button>
+            </div>
+            <div style={{ fontSize:12.5, color:C.muted, marginBottom:16 }}>What kind of document is this?</div>
+
+            {/* Photo preview thumbnail */}
+            {photoDoc.dataUrl && (
+              <div style={{ marginBottom:16, borderRadius:10, overflow:"hidden", maxHeight:180, display:"flex", alignItems:"center", justifyContent:"center", background:C.surfaceAlt, border:`1px solid ${C.border}` }}>
+                <img src={photoDoc.dataUrl} alt="capture" style={{ maxWidth:"100%", maxHeight:180, objectFit:"contain" }}/>
+              </div>
+            )}
+
+            {/* Category tiles — big tap targets for mobile */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:9, marginBottom:16 }}>
+              {QUICK_CATS.map(qc => (
+                <button key={qc.cat} onClick={() => savePhotoTag(qc.cat)}
+                  style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 13px", borderRadius:11, cursor:"pointer", fontFamily:"inherit", textAlign:"left",
+                    border:`1.5px solid ${C.border}`, background:C.surfaceAlt, transition:"all .12s" }}
+                  onMouseOver={e => e.currentTarget.style.borderColor=C.accent}
+                  onMouseOut={e => e.currentTarget.style.borderColor=C.border}>
+                  <span style={{ fontSize:22, flexShrink:0 }}>{qc.ico}</span>
+                  <div>
+                    <div style={{ fontSize:12.5, fontWeight:700, color:C.text, lineHeight:1.2 }}>{qc.lbl}</div>
+                    <div style={{ fontSize:10.5, color:C.muted, marginTop:2 }}>{qc.sub}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            <button className="btn-g" style={{ width:"100%", fontSize:12 }}
+              onClick={() => { setPhotoDoc(null); setEditDoc(photoDoc); setTagF({...photoDoc, gst:"yes"}); }}>
+              Fill in full details instead →
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Full tag/edit modal ── */}
       {editDoc && (
         <div className="overlay" onClick={e => { if (e.target===e.currentTarget) setEditDoc(null); }}>
           <div className="modal" style={{ maxWidth:560 }}>
@@ -7807,6 +9441,13 @@ function DocumentsPage({ documents, setDocuments, employees, showToast }) {
               <button className="btn-ic" style={{ fontSize:17 }} onClick={() => setEditDoc(null)}>✕</button>
             </div>
             <div className="m-sub" style={{ wordBreak:"break-all" }}>{editDoc.name} · {fmtSize(editDoc.size)}</div>
+
+            {/* Photo preview in full modal */}
+            {editDoc.fromCamera && editDoc.dataUrl && (
+              <div style={{ marginBottom:14, borderRadius:9, overflow:"hidden", maxHeight:160, display:"flex", alignItems:"center", justifyContent:"center", background:C.surfaceAlt, border:`1px solid ${C.border}` }}>
+                <img src={editDoc.dataUrl} alt="capture" style={{ maxWidth:"100%", maxHeight:160, objectFit:"contain" }}/>
+              </div>
+            )}
 
             <div className="frow2">
               <div className="fg">
@@ -7871,8 +9512,14 @@ function DocumentsPage({ documents, setDocuments, employees, showToast }) {
       <div className="hdr">
         <div className="hdr-left"><div className="ptitle">📁 Document Hub</div><div className="psub">Upload, tag and manage all your supporting business records</div></div>
         <div className="hdr-right">
+          {/* Camera button — mobile-first, triggers rear camera */}
+          <button className="btn" style={{ background:"rgba(57,211,187,.15)", border:`1px solid rgba(57,211,187,.4)`, color:C.teal }}
+            onClick={() => cameraRef.current.click()}>
+            📷 Take Photo
+          </button>
           <button className="btn" onClick={() => fileRef.current.click()}>+ Upload Files</button>
-          <input ref={fileRef} type="file" multiple style={{ display:"none" }} onChange={e => handleFiles(e.target.files)}/>
+          <input ref={fileRef}   type="file" multiple accept="image/*,application/pdf,.xlsx,.csv,.docx" style={{ display:"none" }} onChange={e => handleFiles(e.target.files)}/>
+          <input ref={cameraRef} type="file" accept="image/*" capture="environment" style={{ display:"none" }} onChange={e => { if(e.target.files[0]) handleFiles(e.target.files, true); e.target.value=""; }}/>
         </div>
       </div>
 
@@ -7886,16 +9533,25 @@ function DocumentsPage({ documents, setDocuments, employees, showToast }) {
         ].map((c,i) => <div key={i} className="card"><div className="clbl">{c.lbl}</div><div className={`cval ${c.cls}`}>{c.val}</div></div>)}
       </div>
 
-      {/* Drop zone */}
-      <div className="drop-zone" style={{ marginBottom:16 }}
-        onDragOver={e => { e.preventDefault(); setDrag(true); }}
-        onDragLeave={() => setDrag(false)}
-        onDrop={handleDrop}
-        className={`drop-zone${drag?" drag":""}`}
-        onClick={() => fileRef.current.click()}>
-        <div className="dz-ico">📂</div>
-        <div className="dz-ttl">Drop files here or click to upload</div>
-        <div className="dz-sub">Invoices, receipts, bank statements, BAS notices, payroll reports, insurance docs…</div>
+      {/* Drop zone + camera CTA */}
+      <div style={{ marginBottom:16 }}>
+        <div className="drop-zone"
+          onDragOver={e => { e.preventDefault(); setDrag(true); }}
+          onDragLeave={() => setDrag(false)}
+          onDrop={handleDrop}
+          className={`drop-zone${drag?" drag":""}`}
+          onClick={() => fileRef.current.click()}>
+          <div className="dz-ico">📂</div>
+          <div className="dz-ttl">Drop files here or click to upload</div>
+          <div className="dz-sub">Invoices, receipts, bank statements, BAS notices, payroll reports, insurance docs…</div>
+        </div>
+        {/* Mobile camera shortcut — big tappable area */}
+        <button onClick={() => cameraRef.current.click()}
+          style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:10, width:"100%", marginTop:8, padding:"14px", borderRadius:11, cursor:"pointer", fontFamily:"inherit", fontSize:14, fontWeight:700,
+            background:"rgba(57,211,187,.08)", border:`1.5px dashed rgba(57,211,187,.5)`, color:C.teal }}>
+          <span style={{ fontSize:24 }}>📷</span>
+          Take a photo of a receipt or invoice
+        </button>
       </div>
 
       {/* Tab filter */}
@@ -8022,11 +9678,9 @@ function DocumentsPage({ documents, setDocuments, employees, showToast }) {
 // ════════════════════════════════════════════════════════════
 //  MONTHLY IAS PAGE
 // ════════════════════════════════════════════════════════════
-function IASPage({ timesheets, employees, ias, setIas, showToast }) {
+function IASPage({ timesheets, employees, ias, setIas, showToast, bizName, bizABN }) {
   const [selMonth, setSelMonth] = useState(IAS_MONTHS[0]);
   const [tab,      setTab]      = useState("statement");
-  const [bizName,  setBizName]  = useState("My Restaurant");
-  const [bizABN,   setBizABN]   = useState("");
 
   // Find or default adjustment record for selected month
   const adj = ias.find(r => r.month === selMonth) || { month:selMonth, adjustW1:0, adjustW2:0, notes:"", status:"draft", lodgedDate:null };
@@ -8381,13 +10035,14 @@ function IASPage({ timesheets, employees, ias, setIas, showToast }) {
 // ════════════════════════════════════════════════════════════
 //  BAS SUMMARY GENERATOR PAGE
 // ════════════════════════════════════════════════════════════
-function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, documents, basHistory, setBasHistory, showToast }) {
+function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, documents, basHistory, setBasHistory, showToast, bizName, bizABN, ias = [] }) {
   const [selQ,    setSelQ]    = useState(BAS_QUARTERS[0]);
   const [print,   setPrint]   = useState(false);
   const [tab,     setTab]     = useState("summary"); // "summary" | "history"
   const [editNotes, setEditNotes] = useState(""); // notes when saving
+  const [editAgent, setEditAgent] = useState(""); // reviewed-by field
 
-  const d = buildBASData(revenue, expenses, timesheets, employees, insurance, documents, selQ);
+  const d = buildBASData(revenue, expenses, timesheets, employees, insurance, documents, selQ, ias);
 
   // ── History helpers ────────────────────────────────────────
   const STATUS_CFG = {
@@ -8400,31 +10055,40 @@ function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, d
 
   const saveToHistory = () => {
     const entry = {
-      id:         existingEntry?.id || Date.now(),
-      quarter:    selQ,
-      status:     existingEntry?.status || "draft",
-      savedDate:  todayStr,
-      lodgedDate: existingEntry?.lodgedDate || null,
-      notes:      editNotes || existingEntry?.notes || "",
-      // Snapshot key figures
-      totalRev:   d.totalRev,
-      netGST:     d.netGST,
-      totalPayg:  d.totalPayg,
-      totalSuper: d.totalSuper,
-      estBAS:     d.estBAS,
-      totalWages: d.totalWages,
+      id:          existingEntry?.id || Date.now(),
+      quarter:     selQ,
+      status:      existingEntry?.status || "draft",
+      savedDate:   todayStr,
+      reviewedBy:  editAgent || existingEntry?.reviewedBy || "",
+      reviewedAt:  editAgent ? todayStr : existingEntry?.reviewedAt || null,
+      lodgedDate:  existingEntry?.lodgedDate || null,
+      lodgedBy:    existingEntry?.lodgedBy || "",
+      notes:       editNotes || existingEntry?.notes || "",
+      // Full figure snapshot — accountant-ready
+      totalRev:    d.totalRev,
+      gstColl:     d.gstColl,
+      gstCreds:    d.gstCreds,
+      netGST:      d.netGST,
+      totalPayg:   d.totalPayg,
+      totalSuper:  d.totalSuper,
+      totalWages:  d.totalWages,
+      estBAS:      d.estBAS,
     };
     setBasHistory(p => existingEntry
       ? p.map(h => h.id === existingEntry.id ? entry : h)
       : [entry, ...p]
     );
-    setEditNotes("");
+    setEditNotes(""); setEditAgent("");
     showToast(`BAS ${selQ} saved to history!`);
   };
 
   const updateStatus = (id, status) => {
     setBasHistory(p => p.map(h => h.id === id
-      ? { ...h, status, lodgedDate: status === "lodged" ? todayStr : h.lodgedDate }
+      ? {
+          ...h, status,
+          lodgedDate: status === "lodged" ? todayStr : h.lodgedDate,
+          lodgedBy:   status === "lodged" ? (h.lodgedBy || "") : h.lodgedBy,
+        }
       : h
     ));
     showToast(`Status updated to ${STATUS_CFG[status].lbl}`);
@@ -8447,24 +10111,26 @@ function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, d
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:22 }}>
         <div className="pp-sec" style={{ marginBottom:0 }}>
           <div className="pp-sec-ttl">GST Calculation</div>
-          <div className="pp-row"><span className="pp-lbl">Total Sales (incl. GST)</span><span className="pp-val">{money(d.totalRev)}</span></div>
-          <div className="pp-row"><span className="pp-lbl">GST on Sales (÷11)</span><span className="pp-val">{money(d.gstColl)}</span></div>
-          <div className="pp-row"><span className="pp-lbl">GST Credits on Purchases</span><span className="pp-val">− {money(d.gstCreds)}</span></div>
-          <div className="pp-tot"><span>Net GST Payable</span><span className="pp-tot-v">{money(d.netGST)}</span></div>
+          <div className="pp-row"><span className="pp-lbl">Total Sales incl. GST (G1)</span><span className="pp-val">{money(d.totalRev)}</span></div>
+          <div className="pp-row"><span className="pp-lbl">GST on Sales ÷11 (1A)</span><span className="pp-val">{money(d.gstColl)}</span></div>
+          <div className="pp-row"><span className="pp-lbl">GST Credits on Purchases (1B)</span><span className="pp-val">− {money(d.gstCreds)}</span></div>
+          <div className="pp-tot"><span>Net GST Payable (1A − 1B)</span><span className="pp-tot-v">{money(d.netGST)}</span></div>
         </div>
         <div className="pp-sec" style={{ marginBottom:0 }}>
           <div className="pp-sec-ttl">Wages & PAYG</div>
-          <div className="pp-row"><span className="pp-lbl">Total Gross Wages</span><span className="pp-val">{money(d.totalWages)}</span></div>
-          <div className="pp-row"><span className="pp-lbl">PAYG Withheld (ATO Scale 2)</span><span className="pp-val">{money(d.totalPayg)}</span></div>
-          <div className="pp-row"><span className="pp-lbl">Super (SGC)</span><span className="pp-val">{money(d.totalSuper)}</span></div>
+          <div className="pp-row"><span className="pp-lbl">Total Salary & Wages (W1)</span><span className="pp-val">{money(d.totalWages)}</span></div>
+          <div className="pp-row"><span className="pp-lbl">PAYG Withheld (W2)</span><span className="pp-val">{money(d.totalPayg)}</span></div>
+          {d.iasPrePaidPAYG > 0 && <div className="pp-row" style={{color:"#059669"}}><span className="pp-lbl">Less: Pre-paid via Monthly IAS</span><span className="pp-val">− {money(d.iasPrePaidPAYG)}</span></div>}
+          <div className="pp-row"><span className="pp-lbl">Super (SGC — OTE basis)</span><span className="pp-val">{money(d.totalSuper)}</span></div>
           <div className="pp-tot"><span>Total Employment Cost</span><span className="pp-tot-v">{money(d.totalWages+d.totalPayg+d.totalSuper)}</span></div>
         </div>
       </div>
       <div className="pp-sec">
         <div className="pp-sec-ttl">BAS Estimate Summary</div>
-        <div className="pp-row"><span className="pp-lbl">Net GST Payable</span><span className="pp-val">{money(d.netGST)}</span></div>
-        <div className="pp-row"><span className="pp-lbl">PAYG Withholding</span><span className="pp-val">{money(d.totalPayg)}</span></div>
-        <div className="pp-row"><span className="pp-lbl">Est. Quarterly Insurance</span><span className="pp-val">{money(d.totalIns)}</span></div>
+        <div className="pp-row"><span className="pp-lbl">Net GST Payable (1A − 1B)</span><span className="pp-val">{money(d.netGST)}</span></div>
+        <div className="pp-row"><span className="pp-lbl">PAYG Withholding (W2)</span><span className="pp-val">{money(d.totalPayg)}</span></div>
+        {d.iasPrePaidPAYG > 0 && <div className="pp-row" style={{color:"#059669"}}><span className="pp-lbl">Less: Pre-paid via Monthly IAS</span><span className="pp-val">− {money(d.iasPrePaidPAYG)}</span></div>}
+        {d.iasPrePaidPAYG > 0 && <div className="pp-row"><span className="pp-lbl">PAYG remaining for BAS</span><span className="pp-val">{money(d.basPayg)}</span></div>}
         <div className="pp-tot"><span>Estimated Total BAS Obligation</span><span className="pp-tot-v">{money(d.estBAS)}</span></div>
       </div>
       <PPDisclaimer/>
@@ -8533,16 +10199,19 @@ function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, d
           <div className="g2">
             <div className="bc">
               <div className="bctit">GST Position</div>
-              <div className="bas-row"><span className="bas-lbl">Total Sales (incl. GST)</span><span className="bas-val">{money(d.totalRev)}</span></div>
-              <div className="bas-row"><span className="bas-lbl">GST on Sales (÷11)</span><span className="bas-val" style={{ color:C.red }}>{money(d.gstColl)}</span></div>
-              <div className="bas-row"><span className="bas-lbl">GST Credits on Purchases</span><span className="bas-val" style={{ color:C.green }}>− {money(d.gstCreds)}</span></div>
-              <div className="bas-tot"><span className="bas-tot-lbl">Net GST Payable</span><span className="bas-tot-val">{money(d.netGST)}</span></div>
+              <div className="bas-row"><span className="bas-lbl">Total Sales (incl. GST) <span style={{color:C.dim,fontSize:10}}>(G1)</span></span><span className="bas-val">{money(d.totalRev)}</span></div>
+              <div className="bas-row"><span className="bas-lbl">GST on Sales (÷11) <span style={{color:C.dim,fontSize:10}}>(1A)</span></span><span className="bas-val" style={{ color:C.red }}>{money(d.gstColl)}</span></div>
+              <div className="bas-row"><span className="bas-lbl">GST Credits on Purchases <span style={{color:C.dim,fontSize:10}}>(1B)</span></span><span className="bas-val" style={{ color:C.green }}>− {money(d.gstCreds)}</span></div>
+              <div className="bas-tot"><span className="bas-tot-lbl">Net GST Payable <span style={{color:C.dim,fontSize:10,fontWeight:400}}>(1A − 1B)</span></span><span className="bas-tot-val">{money(d.netGST)}</span></div>
             </div>
             <div className="bc">
               <div className="bctit">Wages & Employment</div>
-              <div className="bas-row"><span className="bas-lbl">Total Gross Wages</span><span className="bas-val">{money(d.totalWages)}</span></div>
-              <div className="bas-row"><span className="bas-lbl">PAYG Withheld (ATO Scale 2)</span><span className="bas-val" style={{ color:C.yellow }}>{money(d.totalPayg)}</span></div>
-              <div className="bas-row"><span className="bas-lbl">Super (SGC)</span><span className="bas-val" style={{ color:C.blue }}>{money(d.totalSuper)}</span></div>
+              <div className="bas-row"><span className="bas-lbl">Total Gross Wages <span style={{color:C.dim,fontSize:10}}>(W1)</span></span><span className="bas-val">{money(d.totalWages)}</span></div>
+              <div className="bas-row"><span className="bas-lbl">PAYG Withheld (ATO Scale 2) <span style={{color:C.dim,fontSize:10}}>(W2)</span></span><span className="bas-val" style={{ color:C.yellow }}>{money(d.totalPayg)}</span></div>
+              {d.iasPrePaidPAYG > 0 && (
+                <div className="bas-row"><span className="bas-lbl" style={{color:C.green}}>Less: Pre-paid via Monthly IAS</span><span className="bas-val" style={{color:C.green}}>− {money(d.iasPrePaidPAYG)}</span></div>
+              )}
+              <div className="bas-row"><span className="bas-lbl">Super (SGC — OTE basis)</span><span className="bas-val" style={{ color:C.blue }}>{money(d.totalSuper)}</span></div>
               <div className="bas-row"><span className="bas-lbl">Quarterly Insurance</span><span className="bas-val" style={{ color:C.purple }}>{money(d.totalIns)}</span></div>
               <div className="bas-tot"><span className="bas-tot-lbl">Total Employment Cost</span><span className="bas-tot-val">{money(d.totalWages+d.totalPayg+d.totalSuper)}</span></div>
             </div>
@@ -8562,15 +10231,32 @@ function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, d
 
           <div className="bc">
             <div className="bctit">💰 Estimated BAS — {selQ}</div>
-            <div className="bas-row"><span className="bas-lbl">Net GST Payable</span><span className="bas-val">{money(d.netGST)}</span></div>
-            <div className="bas-row"><span className="bas-lbl">PAYG Withholding</span><span className="bas-val">{money(d.totalPayg)}</span></div>
+            <div className="bas-row"><span className="bas-lbl">Net GST Payable <span style={{color:C.dim,fontSize:10}}>(1A−1B)</span></span><span className="bas-val">{money(d.netGST)}</span></div>
+            <div className="bas-row"><span className="bas-lbl">PAYG Withholding (total) <span style={{color:C.dim,fontSize:10}}>(W2)</span></span><span className="bas-val">{money(d.totalPayg)}</span></div>
+            {d.iasPrePaidPAYG > 0 && (
+              <div className="bas-row"><span className="bas-lbl" style={{color:C.green}}>Less: Pre-paid via Monthly IAS</span><span className="bas-val" style={{color:C.green}}>− {money(d.iasPrePaidPAYG)}</span></div>
+            )}
+            {d.iasPrePaidPAYG > 0 && (
+              <div className="bas-row"><span className="bas-lbl">PAYG remaining for BAS</span><span className="bas-val">{money(d.basPayg)}</span></div>
+            )}
             <div className="bas-tot"><span className="bas-tot-lbl">Estimated Total BAS</span><span className="bas-tot-val">{money(d.estBAS)}</span></div>
 
             {/* Save to history form */}
-            <div style={{ marginTop:16, paddingTop:14, borderTop:`1px solid ${C.border}`, display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
-              <input className="inp" style={{ flex:"1 1 200px" }} placeholder="Notes (optional, e.g. lodged via portal)"
-                value={editNotes} onChange={e => setEditNotes(e.target.value)}/>
-              <button className="btn" onClick={saveToHistory} style={{ whiteSpace:"nowrap" }}>
+            <div style={{ marginTop:16, paddingTop:14, borderTop:`1px solid ${C.border}` }}>
+              <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".6px", marginBottom:10 }}>Save to BAS History</div>
+              <div className="frow2" style={{ marginBottom:10 }}>
+                <div className="fg">
+                  <label className="flbl">Reviewed by (tax agent / accountant)</label>
+                  <input className="inp" placeholder="e.g. Smith & Co Accountants"
+                    value={editAgent} onChange={e => setEditAgent(e.target.value)}/>
+                </div>
+                <div className="fg">
+                  <label className="flbl">Notes</label>
+                  <input className="inp" placeholder="e.g. Lodged via ATO business portal"
+                    value={editNotes} onChange={e => setEditNotes(e.target.value)}/>
+                </div>
+              </div>
+              <button className="btn" onClick={saveToHistory}>
                 {existingEntry ? "💾 Update History" : "💾 Save to History"}
               </button>
             </div>
@@ -8597,49 +10283,55 @@ function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, d
               <div style={{ fontSize:12, color:C.dim, marginTop:6 }}>Go to the Summary tab, review a quarter, then click "Save to History".</div>
             </div>
           ) : (
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>Quarter</th>
-                  <th style={{ textAlign:"right" }}>Total Sales</th>
-                  <th style={{ textAlign:"right" }}>Net GST</th>
-                  <th style={{ textAlign:"right" }}>PAYG</th>
-                  <th style={{ textAlign:"right" }}>Est. BAS</th>
-                  <th>Status</th>
-                  <th>Saved</th>
-                  <th>Notes</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {[...basHistory].sort((a,b) => BAS_QUARTERS.indexOf(a.quarter) - BAS_QUARTERS.indexOf(b.quarter)).map(h => {
-                  const sc = STATUS_CFG[h.status] || STATUS_CFG.draft;
-                  return (
-                    <tr key={h.id}>
-                      <td style={{ fontWeight:700 }}>{h.quarter}</td>
-                      <td className="mono" style={{ textAlign:"right" }}>{money(h.totalRev)}</td>
-                      <td className="mono" style={{ textAlign:"right", color:C.yellow }}>{money(h.netGST)}</td>
-                      <td className="mono" style={{ textAlign:"right" }}>{money(h.totalPayg)}</td>
-                      <td className="mono" style={{ textAlign:"right", fontWeight:700, color:C.red }}>{money(h.estBAS)}</td>
-                      <td>
+            <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+              {[...basHistory].sort((a,b) => BAS_QUARTERS.indexOf(a.quarter) - BAS_QUARTERS.indexOf(b.quarter)).map(h => {
+                const sc = STATUS_CFG[h.status] || STATUS_CFG.draft;
+                return (
+                  <div key={h.id} style={{ border:`1px solid ${sc.border}`, borderLeft:`4px solid ${sc.col}`, borderRadius:10, padding:"14px 16px", background:sc.bg }}>
+                    {/* Header row */}
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:8, marginBottom:12 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                        <span style={{ fontWeight:800, fontSize:15 }}>{h.quarter}</span>
                         <select value={h.status} onChange={e => updateStatus(h.id, e.target.value)}
                           style={{ background:sc.bg, color:sc.col, border:`1px solid ${sc.border}`, borderRadius:6, padding:"3px 8px", fontSize:11, fontWeight:700, fontFamily:"inherit", cursor:"pointer" }}>
                           <option value="draft">Draft</option>
                           <option value="finalised">Finalised</option>
                           <option value="lodged">Lodged ✓</option>
                         </select>
-                      </td>
-                      <td className="mono" style={{ fontSize:11, color:C.muted }}>{h.savedDate}</td>
-                      <td style={{ fontSize:11, color:C.muted, maxWidth:150, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{h.notes||"—"}</td>
-                      <td style={{ whiteSpace:"nowrap" }}>
-                        <button className="btn-ic" title="View" onClick={() => { setSelQ(h.quarter); setTab("summary"); }}>👁️</button>
+                      </div>
+                      <div style={{ display:"flex", gap:6 }}>
+                        <button className="btn-ic" title="View quarter" onClick={() => { setSelQ(h.quarter); setTab("summary"); }}>👁️</button>
                         <button className="btn-ic" title="Delete" onClick={() => deleteEntry(h.id)}>🗑️</button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                      </div>
+                    </div>
+
+                    {/* Figure snapshot — 5 columns */}
+                    <div style={{ display:"flex", gap:0, marginBottom:12, borderRadius:8, overflow:"hidden", border:`1px solid ${C.border}` }}>
+                      {[
+                        { lbl:"Total Sales",  val:money(h.totalRev  || 0) },
+                        { lbl:"Net GST",      val:money(h.netGST    || 0) },
+                        { lbl:"PAYG",         val:money(h.totalPayg || 0) },
+                        { lbl:"Super (SGC)",  val:money(h.totalSuper|| 0) },
+                        { lbl:"Est. BAS",     val:money(h.estBAS    || 0), highlight:true },
+                      ].map((s,i) => (
+                        <div key={i} style={{ flex:1, padding:"8px 10px", background:s.highlight?"rgba(220,38,38,.06)":C.surface, borderRight:i<4?`1px solid ${C.border}`:"none" }}>
+                          <div style={{ fontSize:9, color:C.dim, textTransform:"uppercase", letterSpacing:".5px", marginBottom:3 }}>{s.lbl}</div>
+                          <div className="mono" style={{ fontSize:12, fontWeight:700, color:s.highlight?C.red:C.text }}>{s.val}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Audit trail row */}
+                    <div style={{ display:"flex", gap:16, flexWrap:"wrap", fontSize:11, color:C.muted }}>
+                      <span>💾 Saved {h.savedDate}</span>
+                      {h.reviewedBy && <span>👤 Reviewed by <strong style={{ color:C.text }}>{h.reviewedBy}</strong>{h.reviewedAt ? ` on ${h.reviewedAt}` : ""}</span>}
+                      {h.lodgedDate && <span>✅ Lodged {h.lodgedDate}{h.lodgedBy ? ` by ${h.lodgedBy}` : ""}</span>}
+                      {h.notes && <span style={{ fontStyle:"italic" }}>📝 {h.notes}</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       )}
@@ -8650,282 +10342,90 @@ function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, d
 // ════════════════════════════════════════════════════════════
 //  ANNUAL ACCOUNTANT PACK PAGE
 // ════════════════════════════════════════════════════════════
-function AccountantPackPage({ revenue, expenses, timesheets, employees, insurance, documents, showToast }) {
-  const [selFY,  setSelFY] = useState(FIN_YEARS[0]);
-  const [print,  setPrint] = useState(false);
-
-  const d = buildAnnualData(revenue, expenses, timesheets, employees, insurance, documents);
-
-  const PrintContent = () => (
-    <div className="pp-page">
-      <PPHeader title="Annual Accountant Pack" subtitle="Financial Year Summary" fy={selFY}/>
-
-      {d.warnings.length > 0 && (
-        <div className="pp-sec">
-          <div className="pp-sec-ttl">⚠️ Warnings & Flags</div>
-          {d.warnings.map((w,i) => <div key={i} className="pp-warn">⚠️ {w}</div>)}
-        </div>
-      )}
-
-      <div className="pp-sec">
-        <div className="pp-sec-ttl">Revenue Summary</div>
-        <div className="pp-row"><span className="pp-lbl">Total Revenue (incl. GST)</span><span className="pp-val">{money(d.totalRev)}</span></div>
-        <div className="pp-row"><span className="pp-lbl">GST Collected (÷11)</span><span className="pp-val">{money(d.totalRev/11)}</span></div>
-        <div className="pp-row"><span className="pp-lbl">Revenue ex-GST</span><span className="pp-val">{money(d.totalRev - d.totalRev/11)}</span></div>
-      </div>
-
-      <div className="pp-sec">
-        <div className="pp-sec-ttl">Expenses by Category</div>
-        <table className="pp-tbl">
-          <thead><tr><th>Category</th><th style={{ textAlign:"right" }}>Amount</th><th style={{ textAlign:"right" }}>% of Total</th></tr></thead>
-          <tbody>
-            {EXP_CATEGORIES.filter(c => d.bycat[c] > 0).map((c,i) => (
-              <tr key={i}>
-                <td>{(CAT_CONFIG[c]?.emoji ? CAT_CONFIG[c].emoji + ' ' : '') + (CAT_CONFIG[c]?.label || c.charAt(0).toUpperCase()+c.slice(1))}</td>
-                <td style={{ textAlign:"right", fontFamily:"DM Mono,monospace" }}>{money(d.bycat[c])}</td>
-                <td style={{ textAlign:"right", color:"#6B7280" }}>{d.totalExp > 0 ? `${((d.bycat[c]/d.totalExp)*100).toFixed(1)}%` : "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-          <tfoot><tr><td><strong>Total Expenses</strong></td><td style={{ textAlign:"right", fontFamily:"DM Mono,monospace" }}>{money(d.totalExp)}</td><td style={{ textAlign:"right" }}>100%</td></tr></tfoot>
-        </table>
-      </div>
-
-      <div className="pp-sec">
-        <div className="pp-sec-ttl">Wages & Employment Costs</div>
-        <div className="pp-row"><span className="pp-lbl">Total Gross Wages</span><span className="pp-val">{money(d.totalWages)}</span></div>
-        <div className="pp-row"><span className="pp-lbl">PAYG Withheld (ATO Scale 2)</span><span className="pp-val">{money(d.totalPayg)}</span></div>
-        <div className="pp-row"><span className="pp-lbl">Super (SGC)</span><span className="pp-val">{money(d.totalSuper)}</span></div>
-        <div className="pp-row"><span className="pp-lbl">Annual Insurance</span><span className="pp-val">{money(d.totalIns)}</span></div>
-        <div className="pp-tot"><span>Total Labour + Insurance Cost</span><span className="pp-tot-v">{money(d.totalWages+d.totalPayg+d.totalSuper+d.totalIns)}</span></div>
-      </div>
-
-      <div className="pp-sec">
-        <div className="pp-sec-ttl">Quarter-by-Quarter BAS Snapshots</div>
-        <table className="pp-tbl">
-          <thead><tr><th>Quarter</th><th style={{ textAlign:"right" }}>Revenue</th><th style={{ textAlign:"right" }}>GST Payable</th><th style={{ textAlign:"right" }}>PAYG</th><th style={{ textAlign:"right" }}>Est. BAS</th><th>Docs</th></tr></thead>
-          <tbody>
-            {d.qSnaps.map((q,i) => (
-              <tr key={i}>
-                <td style={{ fontWeight:600 }}>{q.q}</td>
-                <td style={{ textAlign:"right", fontFamily:"DM Mono,monospace" }}>{money(q.totalRev)}</td>
-                <td style={{ textAlign:"right", fontFamily:"DM Mono,monospace" }}>{money(q.netGST)}</td>
-                <td style={{ textAlign:"right", fontFamily:"DM Mono,monospace" }}>{money(q.totalPayg)}</td>
-                <td style={{ textAlign:"right", fontFamily:"DM Mono,monospace", fontWeight:700 }}>{money(q.estBAS)}</td>
-                <td><span className={`pp-badge ${q.verifiedDocs>0?"pp-b-g":"pp-b-y"}`}>{q.verifiedDocs} verified</span></td>
-              </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr>
-              <td>Annual Total</td>
-              <td style={{ textAlign:"right", fontFamily:"DM Mono,monospace" }}>{money(d.totalRev)}</td>
-              <td style={{ textAlign:"right", fontFamily:"DM Mono,monospace" }}>{money(d.totalRev/11 - d.totalExp/11)}</td>
-              <td style={{ textAlign:"right", fontFamily:"DM Mono,monospace" }}>{money(d.totalPayg)}</td>
-              <td style={{ textAlign:"right", fontFamily:"DM Mono,monospace" }}>{money(d.totalRev/11 - d.totalExp/11 + d.totalPayg)}</td>
-              <td><span className="pp-badge pp-b-g">{d.verifiedDocs} total</span></td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-
-      {d.assetPurch.length > 0 && (
-        <div className="pp-sec">
-          <div className="pp-sec-ttl">Asset Purchases — Equipment</div>
-          <table className="pp-tbl">
-            <thead><tr><th>Date</th><th>Description</th><th style={{ textAlign:"right" }}>Amount</th><th>Invoice</th></tr></thead>
-            <tbody>
-              {d.assetPurch.map((e,i) => (
-                <tr key={i}>
-                  <td style={{ fontFamily:"DM Mono,monospace" }}>{e.date}</td>
-                  <td>{e.desc}</td>
-                  <td style={{ textAlign:"right", fontFamily:"DM Mono,monospace" }}>{money(e.amount)}</td>
-                  <td><span className={`pp-badge ${e.invoice?"pp-b-g":"pp-b-r"}`}>{e.invoice?"Yes":"Missing"}</span></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {d.missingInv.length > 0 && (
-        <div className="pp-sec">
-          <div className="pp-sec-ttl">Missing Tax Invoices ({d.missingInv.length})</div>
-          <table className="pp-tbl">
-            <thead><tr><th>Date</th><th>Description</th><th>Category</th><th style={{ textAlign:"right" }}>Amount</th><th style={{ textAlign:"right" }}>GST Credit at Risk</th></tr></thead>
-            <tbody>
-              {d.missingInv.map((e,i) => (
-                <tr key={i}>
-                  <td style={{ fontFamily:"DM Mono,monospace" }}>{e.date}</td>
-                  <td>{e.desc}</td>
-                  <td>{e.cat}</td>
-                  <td style={{ textAlign:"right", fontFamily:"DM Mono,monospace" }}>{money(e.amount)}</td>
-                  <td style={{ textAlign:"right", fontFamily:"DM Mono,monospace", color:"#DC2626", fontWeight:700 }}>{money(e.amount/11)}</td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr>
-                <td colSpan={4}>Total GST Credits at Risk</td>
-                <td style={{ textAlign:"right", fontFamily:"DM Mono,monospace" }}>{money(d.missingInv.reduce((s,e)=>s+e.amount/11,0))}</td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      )}
-
-      <PPDisclaimer/>
-    </div>
-  );
-
-  return (
-    <>
-      {print && <PrintModal title="Annual Accountant Pack" onClose={() => setPrint(false)}
-        onExport={() => renderAccountantPackPDF({d, selFY})}><PrintContent/></PrintModal>}
-
-      <div className="hdr">
-        <div className="hdr-left"><div className="ptitle">📦 Annual Accountant Pack</div><div className="psub">Full financial year summary — accountant-ready for review</div></div>
-        <div className="hdr-right">
-          <select className="sel" value={selFY} onChange={e => setSelFY(e.target.value)} style={{ width:120 }}>
-            {FIN_YEARS.map(y => <option key={y}>{y}</option>)}
-          </select>
-          <button className="btn" onClick={() => setPrint(true)}>⬇️ Export PDF</button>
-        </div>
-      </div>
-
-      {d.warnings.map((w,i) => (
-        <div key={i} className="alert al-y"><span className="al-ico">⚠️</span><div><div className="al-msg">{w}</div></div></div>
-      ))}
-
-      <div className="g4">
-        {[
-          { lbl:"Total Revenue",    val:money(d.totalRev),   cls:"b" },
-          { lbl:"Total Expenses",   val:money(d.totalExp),   cls:"r" },
-          { lbl:"Total Wages",      val:money(d.totalWages), cls:"" },
-          { lbl:"Annual Insurance", val:money(d.totalIns),   cls:"p" },
-        ].map((c,i) => <div key={i} className="card"><div className="clbl">{c.lbl}</div><div className={`cval ${c.cls}`}>{c.val}</div></div>)}
-      </div>
-
-      {/* Expenses by category */}
-      <div className="bc">
-        <div className="bctit">Expenses by Category — {selFY}</div>
-        <table className="tbl">
-          <thead><tr><th>Category</th><th>Amount</th><th>% of Total</th><th>Breakdown</th></tr></thead>
-          <tbody>
-            {EXP_CATEGORIES.map((cat,i) => {
-              const v = d.bycat[cat] || 0;
-              if (!v) return null;
-              const pct = d.totalExp > 0 ? (v/d.totalExp)*100 : 0;
-              return (
-                <tr key={i}>
-                  <td style={{ fontWeight:600 }}>{(CAT_CONFIG[cat]?.emoji ? CAT_CONFIG[cat].emoji + ' ' : '') + (CAT_CONFIG[cat]?.label || cat.charAt(0).toUpperCase()+cat.slice(1))}</td>
-                  <td style={{ fontWeight:700 }}>{money(v)}</td>
-                  <td style={{ color:C.muted }}>{pct.toFixed(1)}%</td>
-                  <td style={{ width:140 }}>
-                    <div style={{ height:6, background:C.border, borderRadius:3, overflow:"hidden" }}>
-                      <div style={{ height:"100%", borderRadius:3, background:C.accent, width:`${pct}%` }}/>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-          <tfoot>
-            <tr>
-              <td>Total</td>
-              <td>{money(d.totalExp)}</td>
-              <td>100%</td>
-              <td></td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-
-      <div className="g2">
-        <div className="bc">
-          <div className="bctit">Wages & Employment — {selFY}</div>
-          <div className="bas-row"><span className="bas-lbl">Gross Wages</span><span className="bas-val">{money(d.totalWages)}</span></div>
-          <div className="bas-row"><span className="bas-lbl">PAYG Withholding</span><span className="bas-val" style={{ color:C.yellow }}>{money(d.totalPayg)}</span></div>
-          <div className="bas-row"><span className="bas-lbl">Superannuation</span><span className="bas-val" style={{ color:C.blue }}>{money(d.totalSuper)}</span></div>
-          <div className="bas-row"><span className="bas-lbl">Annual Insurance</span><span className="bas-val" style={{ color:C.purple }}>{money(d.totalIns)}</span></div>
-          <div className="bas-tot"><span className="bas-tot-lbl">Total Labour + Insurance</span><span className="bas-tot-val">{money(d.totalWages+d.totalPayg+d.totalSuper+d.totalIns)}</span></div>
-        </div>
-        <div className="bc">
-          <div className="bctit">Document Register — {selFY}</div>
-          {[
-            { lbl:"Total Documents",  val:d.totalDocs,   cls:"b" },
-            { lbl:"Verified",         val:d.verifiedDocs,cls:"g" },
-            { lbl:"Assets on File",   val:d.assetPurch.length, cls:"t" },
-            { lbl:"Missing Invoices", val:d.missingInv.length, cls:d.missingInv.length?"r":"g" },
-          ].map((s,i,arr) => (
-            <div key={i} style={{ display:"flex", justifyContent:"space-between", padding:"9px 0", borderBottom:i<arr.length-1?`1px solid ${C.border}`:"none" }}>
-              <span style={{ fontSize:13, color:C.muted }}>{s.lbl}</span>
-              <span className={`mono cval ${s.cls}`} style={{ fontSize:16 }}>{s.val}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="bc">
-        <div className="bctit">Quarter-by-Quarter BAS Snapshots</div>
-        <table className="tbl">
-          <thead><tr><th>Quarter</th><th>Revenue</th><th>GST Payable</th><th>PAYG</th><th>Est. BAS</th><th>Docs</th><th>Warnings</th></tr></thead>
-          <tbody>
-            {d.qSnaps.map((q,i) => (
-              <tr key={i}>
-                <td style={{ fontWeight:700 }}>{q.q}</td>
-                <td>{money(q.totalRev)}</td>
-                <td style={{ color:C.yellow }}>{money(q.netGST)}</td>
-                <td>{money(q.totalPayg)}</td>
-                <td style={{ fontWeight:700, color:C.accent }}>{money(q.estBAS)}</td>
-                <td><span className={`pill ${q.verifiedDocs>0?"pl-g":"pl-y"}`}>{q.verifiedDocs} verified</span></td>
-                <td>{q.warnings.length > 0 ? <span className="pill pl-r">{q.warnings.length} issue{q.warnings.length>1?"s":""}</span> : <span className="pill pl-g">All clear</span>}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {d.missingInv.length > 0 && (
-        <div className="bc">
-          <div className="bctit" style={{ color:C.red }}>⚠️ Missing Tax Invoices ({d.missingInv.length}) — GST Credits at Risk</div>
-          <table className="tbl">
-            <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Amount</th><th>GST Credit at Risk</th></tr></thead>
-            <tbody>
-              {d.missingInv.map((e,i) => (
-                <tr key={i}>
-                  <td className="mono">{e.date}</td>
-                  <td>{e.desc}</td>
-                  <td><span className="pill pl-p">{e.cat}</span></td>
-                  <td style={{ fontWeight:700 }}>{money(e.amount)}</td>
-                  <td style={{ color:C.red, fontWeight:700 }}>{money(e.amount/11)}</td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr>
-                <td colSpan={4}>Total at Risk</td>
-                <td style={{ color:C.red }}>{money(d.missingInv.reduce((s,e)=>s+e.amount/11,0))}</td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      )}
-    </>
-  );
-}
-
-// ════════════════════════════════════════════════════════════
-//  REPORTS PAGE
-// ════════════════════════════════════════════════════════════
-function ReportsPage({ revenue, expenses, timesheets, employees, insurance, documents }) {
-  const [print,   setPrint]   = useState(null); // "bas"|"annual"|"payroll"|"docregister"
+function ReportsPage({ revenue, expenses, timesheets, employees, insurance, documents, inventory, setInventory, bizName, bizABN }) {
+  const [print,   setPrint]   = useState(null);
   const [selQ,    setSelQ]    = useState(BAS_QUARTERS[0]);
   const [selFY,   setSelFY]   = useState(FIN_YEARS[0]);
+  const [tab,     setTab]     = useState("pl"); // "pl" | "reports"
+  const [plPeriod, setPlPeriod] = useState("quarter"); // "quarter" | "fy"
+  const [plQ,     setPlQ]     = useState(BAS_QUARTERS[0]);
+  const [plFY,    setPlFY]    = useState(FIN_YEARS[0]);
+  const [stockForm, setStockForm] = useState({ quarter: BAS_QUARTERS[0], opening:"", closing:"", notes:"" });
 
   const bas    = buildBASData(revenue, expenses, timesheets, employees, insurance, documents, selQ);
   const annual = buildAnnualData(revenue, expenses, timesheets, employees, insurance, documents);
   const rows   = annotateTimesheets(employees, timesheets);
+
+  // ── P&L calculation ────────────────────────────────────────
+  const [plDateMode, setPlDateMode] = useState("payment"); // "payment" | "invoice"
+
+  const plRange = plPeriod === "quarter"
+    ? QUARTER_DATES[plQ] || {}
+    : FY_DATES[plFY]     || {};
+  const { from: plFrom = "", to: plTo = "9999-99-99" } = plRange;
+  const plLabel = plPeriod === "quarter" ? plQ : plFY;
+
+  // Date mode: "payment" uses e.date, "invoice" uses e.invoice_date || e.date (accrual basis)
+  const expDateFor = e => plDateMode === "invoice" ? (e.invoice_date || e.date) : e.date;
+
+  const plRev  = revenue.filter(r => inRange(r.date, plFrom, plTo)).reduce((s,r) => s+revTotal(r), 0);
+  const plGSTTaxable = revenue.filter(r => inRange(r.date, plFrom, plTo)).reduce((s,r) => s+revGSTTaxable(r), 0);
+  const plGST  = plGSTTaxable / 11;
+  const plRevExGST = plRev - plGST;
+
+  // COGS = opening stock + purchases in period - closing stock
+  const plPurchases = expenses
+    .filter(e => inRange(expDateFor(e), plFrom, plTo) && COGS_CATS.has(e.cat))
+    .reduce((s,e) => s+e.amount, 0);
+
+  const stockEntry  = inventory.find(i => i.quarter === (plPeriod === "quarter" ? plQ : null));
+  const openingStock = stockEntry?.opening || 0;
+  const closingStock = stockEntry?.closing || 0;
+  const trueCOGS    = openingStock + plPurchases - closingStock;
+  const grossProfit = plRevExGST - trueCOGS;
+  const grossMargin = plRevExGST > 0 ? (grossProfit / plRevExGST) * 100 : 0;
+
+  // Operating expenses (non-COGS)
+  const plOpExp = expenses
+    .filter(e => inRange(expDateFor(e), plFrom, plTo) && !COGS_CATS.has(e.cat))
+    .reduce((s,e) => s+e.amount, 0);
+
+  // Wages (filter by week date)
+  const plTs    = annotateTimesheets(employees, timesheets)
+    .filter(t => { const d = weekToDate(t.week); return d && inRange(d, plFrom, plTo); });
+  const plWages = plTs.reduce((s,t) => s+t.gross, 0);
+  const plSuper = plTs.reduce((s,t) => s+t.super, 0);
+  const plInsQ  = insurance.reduce((s,i) => s+i.annual/4, 0);
+
+  const totalOpex    = plOpExp + plWages + plSuper + plInsQ;
+  const operatingProfit = grossProfit - totalOpex;
+  const operatingMargin = plRevExGST > 0 ? (operatingProfit / plRevExGST) * 100 : 0;
+
+  // Expense breakdown for P&L
+  const plExpByCat = EXP_CATEGORIES.map(cat => ({
+    cat,
+    cfg: CAT_CONFIG[cat],
+    amount: expenses.filter(e => inRange(e.date, plFrom, plTo) && e.cat === cat).reduce((s,e)=>s+e.amount,0),
+    isCOGS: COGS_CATS.has(cat),
+  })).filter(c => c.amount > 0).sort((a,b) => b.amount - a.amount);
+
+  const saveStock = () => {
+    const entry = {
+      id: stockEntry?.id || Date.now(),
+      quarter: stockForm.quarter,
+      opening: parseFloat(stockForm.opening) || 0,
+      closing: parseFloat(stockForm.closing) || 0,
+      notes: stockForm.notes,
+    };
+    setInventory(p => stockEntry
+      ? p.map(i => i.id === stockEntry.id ? entry : i)
+      : [...p, entry]
+    );
+    setStockForm({ quarter: BAS_QUARTERS[0], opening:"", closing:"", notes:"" });
+  };
+
+  // Margin colour helper
+  const marginCol = m => m >= 60 ? C.green : m >= 40 ? C.yellow : C.red;
 
   const BASPrint = () => (
     <div className="pp-page">
@@ -9058,99 +10558,480 @@ function ReportsPage({ revenue, expenses, timesheets, employees, insurance, docu
     },
   ];
 
+  const plRow = (lbl, val, opts={}) => (
+    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:`1px solid ${opts.last?'transparent':C.border}`, ...(opts.indent?{paddingLeft:16}:{}) }}>
+      <span style={{ fontSize: opts.big?14:12.5, fontWeight: opts.bold||opts.big?700:400, color: opts.dim?C.dim:C.text }}>{lbl}</span>
+      <span className="mono" style={{ fontSize: opts.big?16:13, fontWeight: opts.bold||opts.big?800:600, color: opts.col||C.text }}>{val}</span>
+    </div>
+  );
+
   return (
     <>
-      {print === "bas"         && <PrintModal title="BAS Support Summary"    onClose={()=>setPrint(null)}
-        onExport={() => renderBASSummaryPDF({d:bas, quarter:selQ})}><BASPrint/></PrintModal>}
-      {print === "annual"      && <PrintModal title="Annual Accountant Pack"  onClose={()=>setPrint(null)}
-        onExport={() => renderAccountantPackPDF({d:annual, selFY})}><div className="pp-page"><PPHeader title="Annual Accountant Pack" subtitle="Financial Year Summary" fy={selFY}/>{annual.warnings.map((w,i)=><div key={i} className="pp-warn">⚠️ {w}</div>)}<div className="pp-sec"><div className="pp-sec-ttl">Expenses by Category</div><table className="pp-tbl"><thead><tr><th>Category</th><th style={{textAlign:"right"}}>Amount</th></tr></thead><tbody>{EXP_CATEGORIES.filter(c=>annual.bycat[c]>0).map((c,i)=><tr key={i}><td>{c}</td><td style={{textAlign:"right",fontFamily:"DM Mono,monospace"}}>{money(annual.bycat[c])}</td></tr>)}</tbody><tfoot><tr><td>Total</td><td style={{textAlign:"right",fontFamily:"DM Mono,monospace"}}>{money(annual.totalExp)}</td></tr></tfoot></table></div><PPDisclaimer/></div></PrintModal>}
-      {print === "payroll"     && <PrintModal title="Payroll Summary"         onClose={()=>setPrint(null)}
-        onExport={() => renderPayrollPDF({employees, allRows:rows, selFY})}><PayrollPrint/></PrintModal>}
-      {print === "docregister" && <PrintModal title="Document Register"       onClose={()=>setPrint(null)}
-        onExport={() => renderDocRegisterPDF({documents, selFY})}><DocRegPrint/></PrintModal>}
+      {print === "bas"         && <PrintModal title="BAS Support Summary"    onClose={()=>setPrint(null)} onExport={() => renderBASSummaryPDF({d:bas, quarter:selQ, bizName, bizABN})}><BASPrint/></PrintModal>}
+      {print === "annual"      && <PrintModal title="Annual Accountant Pack"  onClose={()=>setPrint(null)} onExport={() => renderAccountantPackPDF({d:annual, selFY, revenue, expenses, timesheets, employees, bizName, bizABN})}><div className="pp-page"><PPHeader title="Annual Accountant Pack" subtitle="Financial Year Summary" fy={selFY}/>{annual.warnings.map((w,i)=><div key={i} className="pp-warn">⚠️ {w}</div>)}<div className="pp-sec"><div className="pp-sec-ttl">Expenses by Category</div><table className="pp-tbl"><thead><tr><th>Category</th><th style={{textAlign:"right"}}>Amount</th></tr></thead><tbody>{EXP_CATEGORIES.filter(c=>annual.bycat[c]>0).map((c,i)=><tr key={i}><td>{c}</td><td style={{textAlign:"right",fontFamily:"DM Mono,monospace"}}>{money(annual.bycat[c])}</td></tr>)}</tbody><tfoot><tr><td>Total</td><td style={{textAlign:"right",fontFamily:"DM Mono,monospace"}}>{money(annual.totalExp)}</td></tr></tfoot></table></div><PPDisclaimer/></div></PrintModal>}
+      {print === "payroll"     && <PrintModal title="Payroll Summary"         onClose={()=>setPrint(null)} onExport={() => renderPayrollPDF({employees, allRows:rows, selFY})}><PayrollPrint/></PrintModal>}
+      {print === "docregister" && <PrintModal title="Document Register"       onClose={()=>setPrint(null)} onExport={() => renderDocRegisterPDF({documents, selFY})}><DocRegPrint/></PrintModal>}
 
       <div className="hdr">
-        <div className="hdr-left"><div className="ptitle">🖨️ Reports & Exports</div><div className="psub">Generate and print accountant-ready reports — for review, not lodgment</div></div>
+        <div className="hdr-left"><div className="ptitle">🖨️ Reports & P&L</div><div className="psub">Profit & Loss · Exports · Accountant-ready reports</div></div>
       </div>
 
-      <div className="alert al-y">
-        <span className="al-ico">⚠️</span>
-        <div>
-          <div className="al-ttl">Management Reports Only</div>
-          <div className="al-msg">These reports are for planning and accountant review only. Mise does not lodge BAS or tax returns with the ATO. All figures must be verified by a registered tax agent before lodgment.</div>
-        </div>
-      </div>
-
-      <div className="rep-grid">
-        {reports.map(r => (
-          <div key={r.id} className="rep-card">
-            <div className="rep-ico">{r.ico}</div>
-            <div className="rep-ttl">{r.ttl}</div>
-            <div className="rep-dsc">{r.dsc}</div>
-            {r.ctrl && <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-              <span style={{ fontSize:11, color:C.muted }}>Period:</span>
-              {r.ctrl}
-            </div>}
-            <div className="rep-btns">
-              <button className="btn" onClick={() => setPrint(r.id)}>⬇️ Export PDF</button>
-              <button className="btn-g" onClick={() => setPrint(r.id)}>⬇️ Export PDF</button>
-            </div>
-          </div>
+      {/* Tabs */}
+      <div style={{ display:"flex", gap:6, marginBottom:16, borderBottom:`1px solid ${C.border}`, paddingBottom:0 }}>
+        {[["pl","📊 P&L Statement"],["reports","🖨️ Reports & Exports"]].map(([id,lbl]) => (
+          <button key={id} onClick={() => setTab(id)} style={{ padding:"8px 16px", fontSize:12, fontWeight:600, fontFamily:"inherit", cursor:"pointer", border:"none", borderBottom: tab===id ? `2px solid ${C.accent}` : "2px solid transparent", background:"none", color: tab===id ? C.accent : C.muted, transition:"all .15s" }}>
+            {lbl}
+          </button>
         ))}
       </div>
 
-      <div className="bc">
-        <div className="bctit">📐 Report Validation Status</div>
-        <table className="tbl">
-          <thead><tr><th>Report</th><th>Data Completeness</th><th>Warnings</th><th>Status</th></tr></thead>
-          <tbody>
-            {[
-              { name:"BAS Summary",       data:revenue.length>0&&expenses.length>0, warn:bas.warnings.length,    warnOk:bas.warnings.length===0 },
-              { name:"Annual Pack",        data:revenue.length>0,                   warn:annual.warnings.length,  warnOk:annual.warnings.length===0 },
-              { name:"Payroll Pack",       data:employees.length>0&&timesheets.length>0, warn:employees.filter(e=>!e.tfn).length, warnOk:employees.filter(e=>!e.tfn).length===0 },
-              { name:"Document Register",  data:documents.length>0,                 warn:documents.filter(d=>d.status==="missing").length, warnOk:documents.filter(d=>d.status==="missing").length===0 },
-            ].map((r,i) => (
-              <tr key={i}>
-                <td style={{ fontWeight:600 }}>{r.name}</td>
-                <td>{r.data ? <span className="pill pl-g">✅ Data present</span> : <span className="pill pl-r">❌ No data</span>}</td>
-                <td>{r.warn === 0 ? <span className="pill pl-g">None</span> : <span className="pill pl-y">{r.warn} warning{r.warn>1?"s":""}</span>}</td>
-                <td>{r.data && r.warnOk ? <span className="pill pl-g">Ready</span> : r.data ? <span className="pill pl-y">Ready with warnings</span> : <span className="pill pl-r">Incomplete</span>}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {/* ── P&L TAB ── */}
+      {tab === "pl" && (
+        <>
+          {/* Period selector + export */}
+          <div style={{ display:"flex", gap:10, alignItems:"center", marginBottom:16, flexWrap:"wrap" }}>
+            <div style={{ display:"flex", background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden" }}>
+              {[["quarter","By Quarter"],["fy","By Financial Year"]].map(([v,l]) => (
+                <button key={v} onClick={() => setPlPeriod(v)} style={{ padding:"7px 14px", fontSize:11.5, fontWeight:600, fontFamily:"inherit", cursor:"pointer", border:"none", background: plPeriod===v ? C.accent : "transparent", color: plPeriod===v ? "#0C0F0D" : C.muted, transition:"all .15s" }}>{l}</button>
+              ))}
+            </div>
+            {plPeriod === "quarter"
+              ? <select className="sel" style={{ width:150 }} value={plQ} onChange={e => setPlQ(e.target.value)}>{BAS_QUARTERS.map(q => <option key={q}>{q}</option>)}</select>
+              : <select className="sel" style={{ width:120 }} value={plFY} onChange={e => setPlFY(e.target.value)}>{FIN_YEARS.map(y => <option key={y}>{y}</option>)}</select>
+            }
+            {/* Expense date mode — cash vs accrual */}
+            <div style={{ display:"flex", background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:8, overflow:"hidden" }}>
+              {[["payment","Cash (payment date)"],["invoice","Accrual (invoice date)"]].map(([v,l]) => (
+                <button key={v} onClick={() => setPlDateMode(v)}
+                  style={{ padding:"7px 12px", fontSize:11, fontWeight:600, fontFamily:"inherit", cursor:"pointer", border:"none",
+                    background: plDateMode===v ? (v==="invoice"?C.teal:C.accent) : "transparent",
+                    color: plDateMode===v ? "#0C0F0D" : C.muted, transition:"all .15s" }}>{l}</button>
+              ))}
+            </div>
+            {plDateMode === "invoice" && (
+              <span style={{ fontSize:10.5, color:C.teal, background:"rgba(57,211,187,.08)", border:"1px solid rgba(57,211,187,.25)", borderRadius:6, padding:"3px 8px" }}>
+                Using invoice dates where available
+              </span>
+            )}
+            <button className="btn" style={{ marginLeft:"auto" }} onClick={() => {
+              const pdf = renderPnLPDF({
+                bizName, bizABN, label:plLabel, period:plPeriod,
+                plRev, plGST, plRevExGST,
+                openingStock, plPurchases, closingStock, trueCOGS,
+                grossProfit, grossMargin,
+                plWages, plSuper, plInsQ, plOpEx:plOpExp, plOpExp, totalOpex,
+                operatingProfit, operatingMargin,
+                plExpByCat,
+              });
+              pdfDownload(pdf, `PnL_${plLabel.replace(/\s/g,'_')}.pdf`);
+            }}>⬇️ Export PDF</button>
+          </div>
 
-      <div className="disc">
-        <div className="d-ttl">⚖️ Report Disclaimer</div>
-        <div className="d-txt">All reports generated by Mise are <strong>management summaries only</strong> intended to assist business owners and their accountants in preparing for BAS lodgment and annual tax returns. They do not constitute a lodged BAS, tax return, or any document formally submitted to the ATO. All figures are estimates based on data entered into Mise and have not been audited or independently verified. Always engage a <strong>registered tax agent</strong> before lodging. Visit <strong>ato.gov.au</strong> for official guidance and lodgment obligations.</div>
+          {/* KPI cards */}
+          <div className="g4" style={{ marginBottom:14 }}>
+            {[
+              { lbl:"Revenue (ex-GST)", val:money(plRevExGST), cls:"b" },
+              { lbl:"Gross Profit",     val:money(grossProfit), cls: grossProfit>=0?"g":"r" },
+              { lbl:"Gross Margin",     val:`${grossMargin.toFixed(1)}%`, cls: grossMargin>=60?"g":grossMargin>=40?"y":"r" },
+              { lbl:"Operating Profit", val:money(operatingProfit), cls: operatingProfit>=0?"g":"r" },
+            ].map((c,i) => <div key={i} className="card"><div className="clbl">{c.lbl}</div><div className={`cval ${c.cls}`}>{c.val}</div></div>)}
+          </div>
+
+          <div className="g2">
+            {/* P&L Statement */}
+            <div className="bc" style={{ marginBottom:0 }}>
+              <div className="bctit">P&L Statement — {plLabel}</div>
+
+              {/* Revenue */}
+              <div style={{ fontSize:10, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".8px", marginBottom:4, marginTop:4 }}>Revenue</div>
+              {plRow("Total Sales (incl. GST)", money(plRev), { dim:true })}
+              {plRow("Less: GST Collected (÷11)", `− ${money(plGST)}`, { dim:true })}
+              {plRow("Net Revenue (ex-GST)", money(plRevExGST), { bold:true, col:C.blue })}
+
+              {/* COGS */}
+              <div style={{ fontSize:10, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".8px", marginBottom:4, marginTop:14 }}>Cost of Goods Sold (COGS)</div>
+              {/* Stocktake warning */}
+              {!stockEntry && plPurchases > 0 && (
+                <div style={{ background:"rgba(217,119,6,.07)", border:"1px solid rgba(217,119,6,.25)", borderRadius:7, padding:"7px 11px", marginBottom:8, fontSize:11, color:C.yellow, display:"flex", gap:7, alignItems:"center" }}>
+                  <span>⚠️</span>
+                  <span><strong>No stocktake for {plLabel}.</strong> COGS = purchases only — may be overstated. Add opening &amp; closing stock below for accurate gross margin.</span>
+                </div>
+              )}
+              {openingStock > 0 && plRow("Opening Stock", money(openingStock), { indent:true, dim:true })}
+              {plRow("Purchases (food, packaging, delivery)", money(plPurchases), { indent:true, dim:true })}
+              {closingStock > 0 && plRow("Less: Closing Stock", `− ${money(closingStock)}`, { indent:true, dim:true })}
+              {plRow("Total COGS", money(trueCOGS), { bold:true, col:C.yellow })}
+
+              {/* Gross Profit */}
+              <div style={{ background: grossProfit>=0 ? "rgba(5,150,105,.06)" : "rgba(220,38,38,.06)", border:`1px solid ${grossProfit>=0?C.green:C.red}30`, borderRadius:8, padding:"10px 12px", margin:"10px 0" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <span style={{ fontSize:13, fontWeight:700 }}>Gross Profit</span>
+                  <span className="mono" style={{ fontSize:15, fontWeight:800, color: grossProfit>=0?C.green:C.red }}>{money(grossProfit)}</span>
+                </div>
+                <div style={{ fontSize:11, color:C.muted, marginTop:3 }}>Gross Margin: <strong style={{ color:marginCol(grossMargin) }}>{grossMargin.toFixed(1)}%</strong> {grossMargin >= 60 ? "✅ Healthy" : grossMargin >= 40 ? "⚠️ Watch" : "🔴 At Risk"}</div>
+              </div>
+
+              {/* Operating expenses */}
+              <div style={{ fontSize:10, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".8px", marginBottom:4, marginTop:14 }}>Operating Expenses</div>
+              {plRow("Gross Wages", money(plWages), { indent:true, dim:true })}
+              {plRow("Superannuation (SGC)", money(plSuper), { indent:true, dim:true })}
+              {plRow(`Insurance (quarterly share)`, money(plInsQ), { indent:true, dim:true })}
+              {plRow("Other Operating Expenses", money(plOpExp), { indent:true, dim:true })}
+              {plRow("Total Operating Expenses", money(totalOpex), { bold:true, col:C.red })}
+
+              {/* Operating Profit */}
+              <div style={{ background: operatingProfit>=0 ? "rgba(5,150,105,.08)" : "rgba(220,38,38,.08)", border:`1px solid ${operatingProfit>=0?C.green:C.red}40`, borderRadius:8, padding:"10px 12px", marginTop:10 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <span style={{ fontSize:14, fontWeight:700 }}>Operating Profit (EBIT)</span>
+                  <span className="mono" style={{ fontSize:17, fontWeight:800, color: operatingProfit>=0?C.green:C.red }}>{money(operatingProfit)}</span>
+                </div>
+                <div style={{ fontSize:11, color:C.muted, marginTop:3 }}>Operating Margin: <strong style={{ color:marginCol(operatingMargin) }}>{operatingMargin.toFixed(1)}%</strong></div>
+              </div>
+            </div>
+
+            {/* Right column: Expense breakdown + stock take */}
+            <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+              {/* Expense breakdown */}
+              <div className="bc" style={{ marginBottom:0 }}>
+                <div className="bctit">Expense Breakdown</div>
+                {plExpByCat.length === 0
+                  ? <div style={{ fontSize:12, color:C.dim, padding:"12px 0" }}>No expenses in this period.</div>
+                  : plExpByCat.map((c,i) => (
+                    <div key={i} style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 0", borderBottom:`1px solid ${C.border}` }}>
+                      <span style={{ fontSize:14, flexShrink:0 }}>{c.cfg?.emoji || "📎"}</span>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontSize:11.5, fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{c.cfg?.label || c.cat}</div>
+                        {c.isCOGS && <div style={{ fontSize:9.5, color:C.yellow, fontWeight:700 }}>COGS</div>}
+                      </div>
+                      <span className="mono" style={{ fontSize:12, fontWeight:700, flexShrink:0 }}>{money(c.amount)}</span>
+                    </div>
+                  ))
+                }
+              </div>
+
+              {/* Stock take input */}
+              <div className="bc" style={{ marginBottom:0 }}>
+                <div className="bctit">📦 Stock Take
+                  <span style={{ fontSize:11, fontWeight:400, color:C.muted, marginLeft:8 }}>for accurate COGS calculation</span>
+                </div>
+                <div style={{ fontSize:11.5, color:C.muted, marginBottom:12, lineHeight:1.6 }}>
+                  COGS = Opening Stock + Purchases − Closing Stock.<br/>
+                  Enter stocktake values per quarter to get true gross profit.
+                </div>
+                <div className="frow2" style={{ marginBottom:10 }}>
+                  <div className="fg">
+                    <label className="flbl">Quarter</label>
+                    <select className="sel" value={stockForm.quarter} onChange={e => setStockForm({...stockForm, quarter:e.target.value})}>
+                      {BAS_QUARTERS.map(q => <option key={q}>{q}</option>)}
+                    </select>
+                  </div>
+                  <div className="fg">
+                    <label className="flbl">Opening Stock ($)</label>
+                    <input className="inp" type="number" placeholder="0.00" value={stockForm.opening} onChange={e => setStockForm({...stockForm,opening:e.target.value})}/>
+                  </div>
+                  <div className="fg">
+                    <label className="flbl">Closing Stock ($)</label>
+                    <input className="inp" type="number" placeholder="0.00" value={stockForm.closing} onChange={e => setStockForm({...stockForm,closing:e.target.value})}/>
+                  </div>
+                  <div className="fg">
+                    <label className="flbl">Notes</label>
+                    <input className="inp" placeholder="e.g. End of quarter stocktake" value={stockForm.notes} onChange={e => setStockForm({...stockForm,notes:e.target.value})}/>
+                  </div>
+                </div>
+                <button className="btn" onClick={saveStock} style={{ marginBottom:14 }}>💾 Save Stock Take</button>
+                {inventory.length > 0 && (
+                  <table className="tbl">
+                    <thead><tr><th>Quarter</th><th style={{textAlign:"right"}}>Opening</th><th style={{textAlign:"right"}}>Closing</th><th style={{textAlign:"right"}}>Movement</th><th>Notes</th></tr></thead>
+                    <tbody>
+                      {inventory.map(inv => (
+                        <tr key={inv.id}>
+                          <td style={{ fontWeight:700 }}>{inv.quarter}</td>
+                          <td className="mono" style={{ textAlign:"right" }}>{money(inv.opening)}</td>
+                          <td className="mono" style={{ textAlign:"right" }}>{money(inv.closing)}</td>
+                          <td className="mono" style={{ textAlign:"right", color: inv.closing > inv.opening ? C.red : C.green }}>
+                            {inv.closing > inv.opening ? "+" : ""}{money(inv.closing - inv.opening)}
+                          </td>
+                          <td style={{ fontSize:11, color:C.muted }}>{inv.notes || "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ── REPORTS TAB ── */}
+      {tab === "reports" && (
+        <>
+          <div className="alert al-y">
+            <span className="al-ico">⚠️</span>
+            <div>
+              <div className="al-ttl">Management Reports Only</div>
+              <div className="al-msg">These reports are for planning and accountant review only. Mise does not lodge BAS or tax returns with the ATO. All figures must be verified by a registered tax agent before lodgment.</div>
+            </div>
+          </div>
+
+          <div className="rep-grid">
+            {reports.map(r => (
+              <div key={r.id} className="rep-card">
+                <div className="rep-ico">{r.ico}</div>
+                <div className="rep-ttl">{r.ttl}</div>
+                <div className="rep-dsc">{r.dsc}</div>
+                {r.ctrl && <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                  <span style={{ fontSize:11, color:C.muted }}>Period:</span>
+                  {r.ctrl}
+                </div>}
+                <div className="rep-btns">
+                  <button className="btn" onClick={() => setPrint(r.id)}>⬇️ Export PDF</button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="bc">
+            <div className="bctit">📐 Report Validation Status</div>
+            <table className="tbl">
+              <thead><tr><th>Report</th><th>Data Completeness</th><th>Warnings</th><th>Status</th></tr></thead>
+              <tbody>
+                {[
+                  { name:"BAS Summary",       data:revenue.length>0&&expenses.length>0, warn:bas.warnings.length,    warnOk:bas.warnings.length===0 },
+                  { name:"Annual Pack",        data:revenue.length>0,                   warn:annual.warnings.length,  warnOk:annual.warnings.length===0 },
+                  { name:"Payroll Pack",       data:employees.length>0&&timesheets.length>0, warn:employees.filter(e=>!e.tfn).length, warnOk:employees.filter(e=>!e.tfn).length===0 },
+                  { name:"Document Register",  data:documents.length>0,                 warn:documents.filter(d=>d.status==="missing").length, warnOk:documents.filter(d=>d.status==="missing").length===0 },
+                ].map((r,i) => (
+                  <tr key={i}>
+                    <td style={{ fontWeight:600 }}>{r.name}</td>
+                    <td>{r.data ? <span className="pill pl-g">✅ Data present</span> : <span className="pill pl-r">❌ No data</span>}</td>
+                    <td>{r.warn === 0 ? <span className="pill pl-g">None</span> : <span className="pill pl-y">{r.warn} warning{r.warn>1?"s":""}</span>}</td>
+                    <td>{r.data && r.warnOk ? <span className="pill pl-g">Ready</span> : r.data ? <span className="pill pl-y">Ready with warnings</span> : <span className="pill pl-r">Incomplete</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="disc">
+            <div className="d-ttl">⚖️ Report Disclaimer</div>
+            <div className="d-txt">All reports generated by Mise are <strong>management summaries only</strong> intended to assist business owners and their accountants in preparing for BAS lodgment and annual tax returns. They do not constitute a lodged BAS, tax return, or any document formally submitted to the ATO. All figures are estimates based on data entered into Mise and have not been audited or independently verified. Always engage a <strong>registered tax agent</strong> before lodging.</div>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+// ── Mobile bottom tab bar ─────────────────────────────────────
+function BottomTabBar({ page, setPage, flagCount }) {
+  const [showMore, setShowMore] = useState(false);
+
+  const tabs = [
+    { id:"dashboard", ico:"📊", lbl:"Home"     },
+    { id:"revenue",   ico:"💵", lbl:"Revenue"  },
+    { id:"wages",     ico:"👤", lbl:"Staff"    },
+    { id:"documents", ico:"📁", lbl:"Docs"     },
+    { id:"more",      ico:"⋯",  lbl:"More"     },
+  ];
+
+  const morePages = [
+    { id:"expenses",   ico:"🧾", lbl:"Expenses"      },
+    { id:"bassummary", ico:"📋", lbl:"BAS Summary"   },
+    { id:"reports",    ico:"🖨️", lbl:"Reports & P&L" },
+    { id:"insurance",  ico:"🛡️", lbl:"Insurance"     },
+    { id:"taxsaver",   ico:"🔍", lbl:"Audit Ready", badge: flagCount > 0 ? `${flagCount}` : null },
+    { id:"ias",        ico:"🧾", lbl:"Monthly IAS"   },
+    { id:"dayworkers", ico:"⚡", lbl:"Day Workers"   },
+    { id:"settings",   ico:"⚙️", lbl:"Settings"      },
+  ];
+
+  const isMoreActive = morePages.some(p => p.id === page);
+
+  return (
+    <>
+      {/* More drawer */}
+      {showMore && (
+        <div style={{ position:"fixed", bottom:64, left:0, right:0, zIndex:99, background:C.surface, borderTop:`1px solid ${C.border}`, padding:"12px 16px", display:"flex", flexWrap:"wrap", gap:8 }}>
+          {morePages.map(p => (
+            <button key={p.id} onClick={() => { setPage(p.id); setShowMore(false); }}
+              style={{ display:"flex", alignItems:"center", gap:8, padding:"9px 14px", borderRadius:10, cursor:"pointer", fontFamily:"inherit", fontSize:13, fontWeight:600,
+                border:`1px solid ${page===p.id?C.accent:C.border}`,
+                background: page===p.id ? "rgba(143,203,114,.12)" : C.surfaceAlt,
+                color: page===p.id ? C.accent : C.text, flex:"1 1 140px", position:"relative" }}>
+              <span style={{ fontSize:18 }}>{p.ico}</span>
+              {p.lbl}
+              {p.badge && <span style={{ marginLeft:"auto", background:C.red, color:"#fff", borderRadius:10, padding:"1px 6px", fontSize:10, fontWeight:700 }}>{p.badge}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+      {/* Backdrop */}
+      {showMore && <div onClick={() => setShowMore(false)} style={{ position:"fixed", inset:0, zIndex:98 }}/>}
+
+      <div className="btab">
+        {tabs.map(t => {
+          const isMore = t.id === "more";
+          const active = isMore ? (showMore || isMoreActive) : page === t.id;
+          return (
+            <button key={t.id} className={`btab-item${active?" on":""}`}
+              onClick={() => {
+                if (isMore) { setShowMore(v => !v); }
+                else { setPage(t.id); setShowMore(false); }
+              }}>
+              <span className="btab-ico" style={{ fontSize: isMore ? 22 : 20, fontWeight: isMore ? 700 : 400 }}>{t.ico}</span>
+              <span className="btab-lbl">{t.lbl}</span>
+              {isMore && flagCount > 0 && (
+                <span style={{ position:"absolute", top:4, right:"calc(50% - 14px)", background:C.red, color:"#fff", borderRadius:8, padding:"0 5px", fontSize:9, fontWeight:700 }}>{flagCount}</span>
+              )}
+            </button>
+          );
+        })}
       </div>
     </>
   );
 }
 
-// ════════════════════════════════════════════════════════════
-//  ROOT APP
-// ════════════════════════════════════════════════════════════
+// ── Onboarding modal — shown when bizName is still default ─────
+function OnboardingModal({ onDone, setBizName, setBizABN, setIndustry }) {
+  const [step, setStep]   = useState(0); // 0=name, 1=abn, 2=type
+  const [name, setName]   = useState("");
+  const [abn,  setAbn]    = useState("");
+  const [ind,  setInd]    = useState("restaurant");
+
+  const INDUSTRIES = [
+    { id:"restaurant", emoji:"🍽️", label:"Restaurant",    desc:"Full-service dining, takeaway" },
+    { id:"café",       emoji:"☕",  label:"Café",           desc:"Coffee, bakery, brunch" },
+    { id:"bar",        emoji:"🍺",  label:"Bar / Pub",      desc:"Licensed venue, cocktail bar" },
+    { id:"other",      emoji:"🏪",  label:"Other",          desc:"Retail, food truck, other" },
+  ];
+
+  const finish = () => {
+    if (name.trim()) setBizName(name.trim());
+    if (abn.trim())  setBizABN(abn.trim());
+    setIndustry(ind);
+    onDone();
+  };
+
+  const stepContent = [
+    /* Step 0 – Name */
+    <>
+      <div style={{ fontSize:28, marginBottom:12 }}>🏪</div>
+      <div style={{ fontSize:20, fontWeight:700, marginBottom:6, letterSpacing:"-.4px", fontFamily:"'Fraunces',serif" }}>What's your business called?</div>
+      <div style={{ fontSize:12.5, color:C.muted, marginBottom:20, lineHeight:1.6 }}>This appears on all your payslips, BAS summaries and PDF exports.</div>
+      <input className="inp" style={{ fontSize:16, padding:"12px 14px" }} placeholder="e.g. The Local Bistro" value={name} onChange={e => setName(e.target.value)} autoFocus
+        onKeyDown={e => e.key==="Enter" && name.trim() && setStep(1)}/>
+      <div className="fbtns" style={{ marginTop:16 }}>
+        <button className="btn" disabled={!name.trim()} onClick={() => setStep(1)} style={{ width:"100%", opacity:name.trim()?1:.5 }}>Next →</button>
+      </div>
+      <button onClick={finish} style={{ marginTop:10, background:"none", border:"none", color:C.dim, fontSize:11, cursor:"pointer", fontFamily:"inherit" }}>Skip setup — I'll do this in Settings</button>
+    </>,
+
+    /* Step 1 – ABN */
+    <>
+      <div style={{ fontSize:28, marginBottom:12 }}>🔢</div>
+      <div style={{ fontSize:20, fontWeight:700, marginBottom:6, letterSpacing:"-.4px", fontFamily:"'Fraunces',serif" }}>What's your ABN?</div>
+      <div style={{ fontSize:12.5, color:C.muted, marginBottom:20, lineHeight:1.6 }}>Your 11-digit Australian Business Number. Appears on BAS summaries and accountant reports. You can skip this and add it later.</div>
+      <input className="inp" style={{ fontSize:16, padding:"12px 14px" }} placeholder="12 345 678 901" value={abn} onChange={e => setAbn(e.target.value)}
+        onKeyDown={e => e.key==="Enter" && setStep(2)}/>
+      <div className="fbtns" style={{ marginTop:16 }}>
+        <button className="btn" onClick={() => setStep(2)} style={{ flex:1 }}>Next →</button>
+        <button className="btn-g" onClick={() => setStep(2)} style={{ flex:1 }}>Skip</button>
+      </div>
+    </>,
+
+    /* Step 2 – Industry */
+    <>
+      <div style={{ fontSize:28, marginBottom:12 }}>🎯</div>
+      <div style={{ fontSize:20, fontWeight:700, marginBottom:6, letterSpacing:"-.4px", fontFamily:"'Fraunces',serif" }}>What kind of venue?</div>
+      <div style={{ fontSize:12.5, color:C.muted, marginBottom:18, lineHeight:1.6 }}>Mise adjusts expense categories, GST rules and Audit Ready checks based on your business type.</div>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:20 }}>
+        {INDUSTRIES.map(i => (
+          <button key={i.id} onClick={() => setInd(i.id)} style={{
+            padding:"14px 10px", borderRadius:12, cursor:"pointer", fontFamily:"inherit", textAlign:"center",
+            border:`2px solid ${ind===i.id?C.accent:C.border}`,
+            background: ind===i.id ? "rgba(143,203,114,.10)" : C.surface,
+            transition:"all .15s",
+          }}>
+            <div style={{ fontSize:24, marginBottom:6 }}>{i.emoji}</div>
+            <div style={{ fontWeight:700, fontSize:12.5, color: ind===i.id ? C.accent : C.text }}>{i.label}</div>
+            <div style={{ fontSize:10, color:C.muted, marginTop:3 }}>{i.desc}</div>
+          </button>
+        ))}
+      </div>
+      <button className="btn" onClick={finish} style={{ width:"100%", fontSize:14, padding:"12px" }}>Let's go →</button>
+    </>,
+  ];
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.6)", zIndex:200, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+      <div style={{ background:C.bg, border:`1px solid ${C.border}`, borderRadius:18, padding:"32px 28px", maxWidth:420, width:"100%", position:"relative" }}>
+        {/* Step dots */}
+        <div style={{ display:"flex", gap:6, justifyContent:"center", marginBottom:24 }}>
+          {[0,1,2].map(i => (
+            <div key={i} style={{ width: i===step?20:6, height:6, borderRadius:3, background:i===step?C.accent:C.border, transition:"all .2s" }}/>
+          ))}
+        </div>
+        {stepContent[step]}
+      </div>
+    </div>
+  );
+}
+
+
 
 export default function App() {
   const [screen,          setScreen]          = useState("landing");
   const [page,            setPage]            = useState("dashboard");
-  const [industry,        setIndustry]        = useState("restaurant"); // restaurant | café | bar | other
   const [dismissedAlerts, setDismissedAlerts] = useState([]);
-  const [revenue,    setRevenue]    = useState(SEED_REVENUE);
-  const [expenses,   setExpenses]   = useState(SEED_EXPENSES);
-  const [employees,  setEmployees]  = useState(SEED_EMPLOYEES);
-  const [timesheets, setTimesheets] = useState(SEED_TIMESHEETS);
-  const [roster,     setRoster]     = useState(SEED_ROSTER);
-  const [insurance,  setInsurance]  = useState(SEED_INSURANCE);
-  const [leave,      setLeave]      = useState(SEED_LEAVE);
-  const [ias,        setIas]        = useState(SEED_IAS);
-  const [basHistory, setBasHistory] = useState([]);  // [{id, quarter, data, status, savedDate, lodgedDate, notes}]
-  const [documents,  setDocuments]  = useState(SEED_DOCUMENTS);
-  const [toast,      setToast]      = useState(null);
-
+  const [toast,           setToast]           = useState(null);
   const showToast = msg => { setToast(msg); setTimeout(() => setToast(null), 2800); };
+
+  // ── localStorage persistence helper ──────────────────────
+  // Reads from localStorage on first render, falls back to seed data.
+  // Every setter automatically writes back to localStorage.
+  const lsGet = (key, seed) => {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : seed;
+    } catch { return seed; }
+  };
+  const usePersisted = (key, seed) => {
+    const [val, setVal] = useState(() => lsGet(key, seed));
+    const set = v => {
+      const next = typeof v === "function" ? v(val) : v;
+      setVal(next);
+      try { localStorage.setItem(key, JSON.stringify(next)); } catch {}
+    };
+    return [val, set];
+  };
+
+  // ── Persisted state ───────────────────────────────────────
+  const [revenue,    setRevenue]    = usePersisted("mise_revenue",    SEED_REVENUE);
+  const [expenses,   setExpenses]   = usePersisted("mise_expenses",   SEED_EXPENSES);
+  const [employees,  setEmployees]  = usePersisted("mise_employees",  SEED_EMPLOYEES);
+  const [timesheets, setTimesheets] = usePersisted("mise_timesheets", SEED_TIMESHEETS);
+  const [roster,     setRoster]     = usePersisted("mise_roster",     SEED_ROSTER);
+  const [insurance,  setInsurance]  = usePersisted("mise_insurance",  SEED_INSURANCE);
+  const [leave,      setLeave]      = usePersisted("mise_leave",      SEED_LEAVE);
+  const [ias,        setIas]        = usePersisted("mise_ias",        SEED_IAS);
+  const [basHistory, setBasHistory] = usePersisted("mise_bashistory", []);
+  const [documents,  setDocuments]  = usePersisted("mise_documents",  SEED_DOCUMENTS);
+  const [inventory,  setInventory]  = usePersisted("mise_inventory",  SEED_INVENTORY);
+  const [industry,   setIndustryRaw]= usePersisted("mise_industry",   "restaurant");
+  const setIndustry = v => { setIndustryRaw(v); };
+
+  // ── Business identity ─────────────────────────────────────
+  const [bizName, setBizNameRaw] = useState(() => localStorage.getItem("mise_biz_name") || "My Restaurant");
+  const [bizABN,  setBizABNRaw]  = useState(() => localStorage.getItem("mise_biz_abn")  || "");
+  const setBizName = v => { setBizNameRaw(v); localStorage.setItem("mise_biz_name", v); };
+  const setBizABN  = v => { setBizABNRaw(v);  localStorage.setItem("mise_biz_abn",  v); };
+
+  // ── Show onboarding when bizName is still default ────────
+  const [showOnboarding, setShowOnboarding] = useState(
+    () => (localStorage.getItem("mise_biz_name") || "My Restaurant") === "My Restaurant"
+  );
+  const [showRateAlert, setShowRateAlert] = useState(() => !checkRateVersion());
 
   const analysed  = analyseExpenses(expenses);
   const insExpiring = insurance.filter(i => {
@@ -9169,23 +11050,47 @@ export default function App() {
   return (
     <>
       <style>{CSS}</style>
+      {showOnboarding && screen === "app" && (
+        <OnboardingModal
+          onDone={() => setShowOnboarding(false)}
+          setBizName={setBizName}
+          setBizABN={setBizABN}
+          setIndustry={setIndustry}
+        />
+      )}
+      {/* ── Tax rate update alert ── */}
+      {showRateAlert && screen === "app" && (
+        <div style={{ position:"fixed", bottom: showOnboarding ? 0 : 70, left:0, right:0, zIndex:150,
+          background:"linear-gradient(90deg,rgba(37,99,235,.95),rgba(37,99,235,.88))",
+          padding:"12px 20px", display:"flex", alignItems:"center", gap:14, flexWrap:"wrap" }}>
+          <span style={{ fontSize:18 }}>📢</span>
+          <div style={{ flex:1, minWidth:200 }}>
+            <div style={{ fontSize:12.5, fontWeight:700, color:"#fff" }}>Tax rate update — {TAX_RATE_VERSION}</div>
+            <div style={{ fontSize:11.5, color:"rgba(255,255,255,.8)", marginTop:2 }}>{TAX_RATE_NOTES}</div>
+          </div>
+          <button onClick={() => { dismissRateAlert(); setShowRateAlert(false); }}
+            style={{ background:"rgba(255,255,255,.2)", border:"1px solid rgba(255,255,255,.4)", borderRadius:8, padding:"7px 14px", fontSize:12, fontWeight:700, color:"#fff", cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
+            Got it ✓
+          </button>
+        </div>
+      )}
       <div className="layout">
         <Sidebar page={page} setPage={setPage} onLogout={() => setScreen("landing")} flagCount={flagCount} industry={industry}/>
         <main className="main">
-          {page === "dashboard"      && <DashboardPage revenue={revenue} expenses={expenses} employees={employees} timesheets={timesheets} insurance={insurance} setPage={setPage}/>}
+          {page === "dashboard"      && <DashboardPage revenue={revenue} expenses={expenses} employees={employees} timesheets={timesheets} insurance={insurance} setPage={setPage} bizName={bizName} roster={roster}/>}
           {page === "revenue"        && <RevenuePage   revenue={revenue}   setRevenue={setRevenue}   showToast={showToast}/>}
           {page === "expenses"       && <ExpensesPage  expenses={expenses} setExpenses={setExpenses} showToast={showToast} industry={industry} dismissed={dismissedAlerts} setDismissed={setDismissedAlerts}/>}
-          {page === "wages"          && <WagesPage     employees={employees} setEmployees={setEmployees} timesheets={timesheets} setTimesheets={setTimesheets} roster={roster} setRoster={setRoster} leave={leave} setLeave={setLeave} showToast={showToast}/>}
+          {page === "wages"          && <WagesPage     employees={employees} setEmployees={setEmployees} timesheets={timesheets} setTimesheets={setTimesheets} roster={roster} setRoster={setRoster} leave={leave} setLeave={setLeave} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN}/>}
+          {page === "dayworkers"     && <WagesPage     employees={employees} setEmployees={setEmployees} timesheets={timesheets} setTimesheets={setTimesheets} roster={roster} setRoster={setRoster} leave={leave} setLeave={setLeave} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN} initialTab="dayworkers"/>}
           {page === "insurance"      && <InsurancePage insurance={insurance} setInsurance={setInsurance} employees={employees} timesheets={timesheets} showToast={showToast}/>}
-          {page === "tax"            && <TaxSummaryPage revenue={revenue} expenses={expenses} employees={employees} timesheets={timesheets}/>}
           {page === "taxsaver"       && <TaxSaverPage  expenses={expenses} setExpenses={setExpenses} employees={employees} timesheets={timesheets} setTimesheets={setTimesheets} showToast={showToast}/>}
-          {page === "ias"            && <IASPage        timesheets={timesheets} employees={employees} ias={ias} setIas={setIas} showToast={showToast}/>}
+          {page === "ias"            && <IASPage        timesheets={timesheets} employees={employees} ias={ias} setIas={setIas} showToast={showToast} bizName={bizName} bizABN={bizABN}/>}
           {page === "documents"      && <DocumentsPage documents={documents} setDocuments={setDocuments} employees={employees} showToast={showToast}/>}
-          {page === "bassummary"     && <BASSummaryPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} basHistory={basHistory} setBasHistory={setBasHistory} showToast={showToast}/>}
-          {page === "accountantpack" && <AccountantPackPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} showToast={showToast}/>}
-          {page === "reports"        && <ReportsPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents}/>}
-          {page === "settings"       && <SettingsPage industry={industry} setIndustry={setIndustry} showToast={showToast}/>}
+          {page === "bassummary"     && <BASSummaryPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} basHistory={basHistory} setBasHistory={setBasHistory} showToast={showToast} bizName={bizName} bizABN={bizABN} ias={ias}/>}
+          {page === "reports"        && <ReportsPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} inventory={inventory} setInventory={setInventory} bizName={bizName} bizABN={bizABN}/>}
+          {page === "settings"       && <SettingsPage industry={industry} setIndustry={setIndustry} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN}/>}
         </main>
+        <BottomTabBar page={page} setPage={setPage} flagCount={flagCount}/>
         {toast && <Toast msg={toast} onDone={() => setToast(null)}/>}
       </div>
     </>

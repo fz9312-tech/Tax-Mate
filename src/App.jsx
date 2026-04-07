@@ -6739,11 +6739,10 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
 // ════════════════════════════════════════════════════════════
 //  STAFF & WAGES PAGE
 // ════════════════════════════════════════════════════════════
-function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster, setRoster, leave, setLeave, showToast, bizName, setBizName, bizABN, setBizABN, initialTab }) {
+function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster, setRoster, leave, setLeave, showToast, bizName, setBizName, bizABN, setBizABN, initialTab, dayWorkers = [], setDayWorkers }) {
   const [tab, setTab] = useState(initialTab || "roster");
   const [empModal,   setEmpModal]   = useState(null);
   const [tsModal,    setTsModal]    = useState(null);
-  const [dayWorkers, setDayWorkers] = useState([]);
   // Leave form state
   const [lf, setLf] = useState({ eid:"", type:"annual", date:todayStr, hours:"", notes:"", editId:null });
 
@@ -9234,7 +9233,7 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
         {/* Storage status */}
         {(() => {
           try {
-            const keys = ["mise_revenue","mise_expenses","mise_employees","mise_timesheets","mise_roster","mise_insurance","mise_leave","mise_ias","mise_bashistory","mise_documents","mise_inventory"];
+            const keys = ["mise_revenue","mise_expenses","mise_employees","mise_timesheets","mise_roster","mise_insurance","mise_leave","mise_ias","mise_bashistory","mise_documents","mise_inventory","mise_dayworkers"];
             const stored = keys.filter(k => localStorage.getItem(k));
             const totalBytes = keys.reduce((s,k) => s + (localStorage.getItem(k)||"").length, 0);
             const kb = (totalBytes/1024).toFixed(1);
@@ -9254,7 +9253,7 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
           </div>
           <button className="btn-r" style={{ padding:"8px 16px", fontSize:13 }} onClick={() => {
             if (!window.confirm("This will delete ALL your data and reset to demo. Are you sure?")) return;
-            const keys = ["mise_revenue","mise_expenses","mise_employees","mise_timesheets","mise_roster","mise_insurance","mise_leave","mise_ias","mise_bashistory","mise_documents","mise_inventory","mise_biz_name","mise_biz_abn","mise_industry"];
+            const keys = ["mise_revenue","mise_expenses","mise_employees","mise_timesheets","mise_roster","mise_insurance","mise_leave","mise_ias","mise_bashistory","mise_documents","mise_inventory","mise_dayworkers","mise_biz_name","mise_biz_abn","mise_industry"];
             keys.forEach(k => localStorage.removeItem(k));
             showToast("Data reset — reloading…");
             setTimeout(() => window.location.reload(), 1200);
@@ -11117,6 +11116,7 @@ export default function App() {
   const [documents,  setDocuments]  = usePersisted("mise_documents",  SEED_DOCUMENTS);
   const [inventory,  setInventory]  = usePersisted("mise_inventory",  SEED_INVENTORY);
   const [industry,   setIndustryRaw]= usePersisted("mise_industry",   "restaurant");
+  const [dayWorkers, setDayWorkers] = usePersisted("mise_dayworkers", []);
   const setIndustry = v => { setIndustryRaw(v); };
 
   // ── Business identity ─────────────────────────────────────
@@ -11235,8 +11235,8 @@ export default function App() {
           {page === "dashboard"      && <DashboardPage revenue={revenue} expenses={expenses} employees={employees} timesheets={timesheets} insurance={insurance} setPage={setPage} bizName={bizName} roster={roster}/>}
           {page === "revenue"        && <RevenuePage   revenue={revenue}   setRevenue={setRevenue}   showToast={showToast}/>}
           {page === "expenses"       && <ExpensesPage  expenses={expenses} setExpenses={setExpenses} showToast={showToast} industry={industry} dismissed={dismissedAlerts} setDismissed={setDismissedAlerts}/>}
-          {page === "wages"          && <WagesPage     employees={employees} setEmployees={setEmployees} timesheets={timesheets} setTimesheets={setTimesheets} roster={roster} setRoster={setRoster} leave={leave} setLeave={setLeave} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN}/>}
-          {page === "dayworkers"     && <WagesPage     employees={employees} setEmployees={setEmployees} timesheets={timesheets} setTimesheets={setTimesheets} roster={roster} setRoster={setRoster} leave={leave} setLeave={setLeave} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN} initialTab="dayworkers"/>}
+          {page === "wages"          && <WagesPage     employees={employees} setEmployees={setEmployees} timesheets={timesheets} setTimesheets={setTimesheets} roster={roster} setRoster={setRoster} leave={leave} setLeave={setLeave} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN} dayWorkers={dayWorkers} setDayWorkers={setDayWorkers}/>}
+          {page === "dayworkers"     && <WagesPage     employees={employees} setEmployees={setEmployees} timesheets={timesheets} setTimesheets={setTimesheets} roster={roster} setRoster={setRoster} leave={leave} setLeave={setLeave} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN} dayWorkers={dayWorkers} setDayWorkers={setDayWorkers} initialTab="dayworkers"/>}
           {page === "insurance"      && <InsurancePage insurance={insurance} setInsurance={setInsurance} employees={employees} timesheets={timesheets} showToast={showToast}/>}
           {page === "taxsaver"       && <TaxSaverPage  expenses={expenses} setExpenses={setExpenses} employees={employees} timesheets={timesheets} setTimesheets={setTimesheets} showToast={showToast}/>}
           {page === "ias"            && <IASPage        timesheets={timesheets} employees={employees} ias={ias} setIas={setIas} showToast={showToast} bizName={bizName} bizABN={bizABN}/>}

@@ -2651,7 +2651,52 @@ function LandingPage({ onGo }) {
 //  AUTH
 // ════════════════════════════════════════════════════════════
 function AuthPage({ onLogin }) {
-  const [mode, setMode] = useState("login");
+  const [mode,    setMode]    = useState("login");   // "login" | "signup" | "magic" | "sent"
+  const [email,   setEmail]   = useState("");
+  const [password,setPassword]= useState("");
+  const [bizName, setBizName] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState("");
+
+  const handleAuth = async () => {
+    setError(""); setLoading(true);
+    try {
+      if (mode === "magic") {
+        const { error } = await window._supabase.auth.signInWithOtp({
+          email, options: { emailRedirectTo: window.location.origin }
+        });
+        if (error) throw error;
+        setMode("sent");
+      } else if (mode === "signup") {
+        const { data, error } = await window._supabase.auth.signUp({ email, password });
+        if (error) throw error;
+        // Create business row for new user
+        if (data.user) {
+          await window._supabase.from("businesses").insert({
+            owner_id: data.user.id,
+            name: bizName || "My Restaurant",
+          });
+        }
+        onLogin();
+      } else {
+        const { error } = await window._supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        onLogin();
+      }
+    } catch(e) {
+      setError(e.message || "Something went wrong");
+    } finally { setLoading(false); }
+  };
+
+  if (mode === "sent") return (
+    <div className="auth-pg"><div className="auth-box" style={{ textAlign:"center" }}>
+      <div style={{ fontSize:48, marginBottom:16 }}>📬</div>
+      <div className="a-ttl">Check your email</div>
+      <div className="a-sub" style={{ marginBottom:20 }}>We sent a magic link to <strong>{email}</strong>. Click it to sign in.</div>
+      <button className="btn-g" onClick={() => setMode("magic")}>Send again</button>
+    </div></div>
+  );
+
   return (
     <div className="auth-pg">
       <div className="auth-box">
@@ -2659,29 +2704,45 @@ function AuthPage({ onLogin }) {
           <div className="logo-box">M</div>
           <div><div className="logo-name">Mise</div><div className="logo-sub">HOSPITALITY FINANCE</div></div>
         </div>
-        <div className="a-ttl">{mode === "login" ? "Welcome back" : "Create account"}</div>
-        <div className="a-sub">{mode === "login" ? "Log in to your dashboard" : "Start your free trial"}</div>
+        <div className="a-ttl">{mode === "signup" ? "Create account" : mode === "magic" ? "Magic link sign in" : "Welcome back"}</div>
+        <div className="a-sub">{mode === "signup" ? "Start your free trial" : mode === "magic" ? "No password needed" : "Log in to your dashboard"}</div>
+
+        {error && <div style={{ background:"rgba(220,38,38,.1)", border:"1px solid rgba(220,38,38,.3)", borderRadius:8, padding:"9px 13px", fontSize:12, color:C.red, marginBottom:12 }}>{error}</div>}
+
         <div className="a-form">
           {mode === "signup" && (
             <div className="fg">
               <label className="flbl">Business Name</label>
-              <input className="inp" placeholder="e.g. The Local Café"/>
+              <input className="inp" placeholder="e.g. The Local Café" value={bizName} onChange={e => setBizName(e.target.value)}/>
             </div>
           )}
-          <div className="fg"><label className="flbl">Email</label><input className="inp" type="email" defaultValue="demo@mise.com.au"/></div>
-          <div className="fg"><label className="flbl">Password</label><input className="inp" type="password" defaultValue="demo1234"/></div>
-          <button className="btn" style={{ width:"100%", padding:11 }} onClick={onLogin}>
-            {mode === "login" ? "Log In \u2192" : "Create Account \u2192"}
+          <div className="fg">
+            <label className="flbl">Email</label>
+            <input className="inp" type="email" placeholder="you@yourbiz.com.au" value={email} onChange={e => setEmail(e.target.value)}
+              onKeyDown={e => e.key==="Enter" && handleAuth()}/>
+          </div>
+          {mode !== "magic" && (
+            <div className="fg">
+              <label className="flbl">Password</label>
+              <input className="inp" type="password" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)}
+                onKeyDown={e => e.key==="Enter" && handleAuth()}/>
+            </div>
+          )}
+          <button className="btn" style={{ width:"100%", padding:11, opacity:loading?0.7:1 }} onClick={handleAuth} disabled={loading}>
+            {loading ? "Please wait…" : mode === "magic" ? "Send Magic Link →" : mode === "signup" ? "Create Account →" : "Log In →"}
           </button>
+          {mode !== "magic" && (
+            <button onClick={() => { setMode("magic"); setError(""); }}
+              style={{ width:"100%", marginTop:8, padding:"9px", borderRadius:9, border:`1px solid ${C.border}`, background:"none", color:C.muted, cursor:"pointer", fontFamily:"inherit", fontSize:12 }}>
+              ✉️ Sign in with Magic Link (no password)
+            </button>
+          )}
         </div>
         <div className="a-sw">
           {mode === "login"
-            ? <><span>No account? </span><a onClick={() => setMode("signup")}>Sign up free</a></>
-            : <><span>Have account? </span><a onClick={() => setMode("login")}>Log in</a></>}
+            ? <><span>No account? </span><a onClick={() => { setMode("signup"); setError(""); }}>Sign up free</a></>
+            : <><span>Have account? </span><a onClick={() => { setMode("login"); setError(""); }}>Log in</a></>}
         </div>
-        <p style={{ fontSize:10.5, color:C.dim, textAlign:"center", marginTop:12 }}>
-          Demo account — click Log In to explore
-        </p>
       </div>
     </div>
   );
@@ -10985,24 +11046,55 @@ export default function App() {
   const [page,            setPage]            = useState("dashboard");
   const [dismissedAlerts, setDismissedAlerts] = useState([]);
   const [toast,           setToast]           = useState(null);
+  const [dbReady,         setDbReady]         = useState(false); // true once initial load done
+  const [bizId,           setBizId]           = useState(null);  // UUID of business row
   const showToast = msg => { setToast(msg); setTimeout(() => setToast(null), 2800); };
 
-  // ── localStorage persistence helper ──────────────────────
-  // Reads from localStorage on first render, falls back to seed data.
-  // Every setter automatically writes back to localStorage.
-  const lsGet = (key, seed) => {
-    try {
-      const raw = localStorage.getItem(key);
-      return raw ? JSON.parse(raw) : seed;
-    } catch { return seed; }
-  };
-  const usePersisted = (key, seed) => {
-    const [val, setVal] = useState(() => lsGet(key, seed));
+  // ── Supabase client (injected via index.html script tag) ────
+  const sb = () => window._supabase;
+
+  // ── Supabase-backed usePersisted ────────────────────────────
+  // Interface identical to the old localStorage version:
+  //   const [val, setVal] = usePersisted("table_name", seedData)
+  //
+  // Storage strategy: ONE ROW per table per business.
+  //   The entire array is stored as a single JSONB value.
+  //   This means zero schema migrations when data shapes change.
+  //
+  // Fallback: if Supabase unavailable, silently falls back to localStorage.
+  const usePersisted = (table, seed) => {
+    const lsKey = `mise_${table}`;
+    const [val, setVal] = useState(() => {
+      // Initialise from localStorage while Supabase loads
+      try { const r = localStorage.getItem(lsKey); return r ? JSON.parse(r) : seed; }
+      catch { return seed; }
+    });
+
+    // Load from Supabase once bizId is known
+    React.useEffect(() => {
+      if (!bizId) return;
+      sb().from(table).select("data").eq("business_id", bizId).limit(1)
+        .then(({ data, error }) => {
+          if (error) return; // keep localStorage value
+          if (data && data.length > 0) {
+            setVal(data[0].data);
+            try { localStorage.setItem(lsKey, JSON.stringify(data[0].data)); } catch {}
+          }
+        });
+    }, [bizId]);
+
     const set = v => {
       const next = typeof v === "function" ? v(val) : v;
       setVal(next);
-      try { localStorage.setItem(key, JSON.stringify(next)); } catch {}
+      // Write localStorage immediately (instant UI response)
+      try { localStorage.setItem(lsKey, JSON.stringify(next)); } catch {}
+      // Write Supabase in background (if ready)
+      if (bizId) {
+        sb().from(table).upsert({ business_id: bizId, data: next }, { onConflict: "business_id" })
+          .then(({ error }) => { if (error) console.warn("Supabase write error:", table, error.message); });
+      }
     };
+
     return [val, set];
   };
 
@@ -11024,8 +11116,56 @@ export default function App() {
   // ── Business identity ─────────────────────────────────────
   const [bizName, setBizNameRaw] = useState(() => localStorage.getItem("mise_biz_name") || "My Restaurant");
   const [bizABN,  setBizABNRaw]  = useState(() => localStorage.getItem("mise_biz_abn")  || "");
-  const setBizName = v => { setBizNameRaw(v); localStorage.setItem("mise_biz_name", v); };
-  const setBizABN  = v => { setBizABNRaw(v);  localStorage.setItem("mise_biz_abn",  v); };
+  const setBizName = v => {
+    setBizNameRaw(v); localStorage.setItem("mise_biz_name", v);
+    if (bizId) sb().from("businesses").update({ name: v }).eq("id", bizId).then(() => {});
+  };
+  const setBizABN = v => {
+    setBizABNRaw(v); localStorage.setItem("mise_biz_abn", v);
+    if (bizId) sb().from("businesses").update({ abn: v }).eq("id", bizId).then(() => {});
+  };
+
+  // ── Auth: detect session on load, handle deep-link magic-link ──
+  React.useEffect(() => {
+    if (!window._supabase) return; // Supabase not configured yet
+
+    // Handle magic link callback (URL contains #access_token)
+    sb().auth.getSession().then(({ data: { session } }) => {
+      if (session) bootFromSession(session);
+    });
+
+    const { data: { subscription } } = sb().auth.onAuthStateChange((_event, session) => {
+      if (session) bootFromSession(session);
+      else { setScreen("landing"); setBizId(null); }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const bootFromSession = async (session) => {
+    // Find or create business row for this user
+    let { data: biz } = await sb().from("businesses").select("id,name,abn,industry")
+      .eq("owner_id", session.user.id).limit(1);
+
+    if (!biz || biz.length === 0) {
+      // First login — create business row
+      const { data: newBiz } = await sb().from("businesses")
+        .insert({ owner_id: session.user.id, name: "My Restaurant" })
+        .select().single();
+      biz = newBiz ? [newBiz] : [];
+    }
+
+    if (biz && biz.length > 0) {
+      setBizId(biz[0].id);
+      setBizNameRaw(biz[0].name || "My Restaurant");
+      setBizABNRaw(biz[0].abn  || "");
+      setIndustryRaw(biz[0].industry || "restaurant");
+      localStorage.setItem("mise_biz_name", biz[0].name || "My Restaurant");
+      localStorage.setItem("mise_biz_abn",  biz[0].abn  || "");
+    }
+    setDbReady(true);
+    setScreen("app");
+  };
 
   // ── Show onboarding when bizName is still default ────────
   const [showOnboarding, setShowOnboarding] = useState(
@@ -11045,7 +11185,16 @@ export default function App() {
                   + insExpiring;
 
   if (screen === "landing") return (<><style>{CSS}</style><LandingPage onGo={() => setScreen("auth")}/></>);
-  if (screen === "auth")    return (<><style>{CSS}</style><AuthPage onLogin={() => setScreen("app")}/></>);
+  if (screen === "auth")    return (<><style>{CSS}</style><AuthPage onLogin={() => {}}/></>);
+  // Loading screen while Supabase fetches data
+  if (!dbReady && bizId) return (
+    <><style>{CSS}</style>
+    <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:C.bg, flexDirection:"column", gap:16 }}>
+      <div style={{ width:40, height:40, border:`3px solid ${C.border}`, borderTop:`3px solid ${C.accent}`, borderRadius:"50%", animation:"spin 0.8s linear infinite" }}/>
+      <div style={{ fontSize:13, color:C.muted }}>Loading your data…</div>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div></>
+  );
 
   return (
     <>
@@ -11075,7 +11224,7 @@ export default function App() {
         </div>
       )}
       <div className="layout">
-        <Sidebar page={page} setPage={setPage} onLogout={() => setScreen("landing")} flagCount={flagCount} industry={industry}/>
+        <Sidebar page={page} setPage={setPage} onLogout={async () => { if(window._supabase) await sb().auth.signOut(); setScreen("landing"); setBizId(null); }} flagCount={flagCount} industry={industry}/>
         <main className="main">
           {page === "dashboard"      && <DashboardPage revenue={revenue} expenses={expenses} employees={employees} timesheets={timesheets} insurance={insurance} setPage={setPage} bizName={bizName} roster={roster}/>}
           {page === "revenue"        && <RevenuePage   revenue={revenue}   setRevenue={setRevenue}   showToast={showToast}/>}

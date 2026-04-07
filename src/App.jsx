@@ -11075,10 +11075,16 @@ export default function App() {
       if (!bizId) return;
       sb().from(table).select("data").eq("business_id", bizId).limit(1)
         .then(({ data, error }) => {
-          if (error) return; // keep localStorage value
+          if (error) return;
           if (data && data.length > 0) {
+            // Existing data found — load it
             setVal(data[0].data);
             try { localStorage.setItem(lsKey, JSON.stringify(data[0].data)); } catch {}
+          } else {
+            // No data in Supabase for this user — start fresh (not demo seed data)
+            const empty = Array.isArray(seed) ? [] : (typeof seed === "string" ? seed : {});
+            setVal(empty);
+            try { localStorage.setItem(lsKey, JSON.stringify(empty)); } catch {}
           }
         });
     }, [bizId]);

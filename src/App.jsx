@@ -11056,31 +11056,30 @@ export default function App() {
   // Interface identical to the old localStorage version:
   //   const [val, setVal] = usePersisted("table_name", seedData)
   //
-  // Storage strategy: ONE ROW per table per business.
+  // Storage strategy: ONE ROW per table per business (UNIQUE on business_id).
   //   The entire array is stored as a single JSONB value.
-  //   This means zero schema migrations when data shapes change.
-  //
-  // Fallback: if Supabase unavailable, silently falls back to localStorage.
+  //   Fallback: if Supabase unavailable, silently falls back to localStorage.
   const usePersisted = (table, seed) => {
     const lsKey = `mise_${table}`;
     const [val, setVal] = useState(() => {
-      // Initialise from localStorage while Supabase loads
       try { const r = localStorage.getItem(lsKey); return r ? JSON.parse(r) : seed; }
       catch { return seed; }
     });
+    // Use a ref so the setter always has the latest bizId without stale closure
+    const bizIdRef = React.useRef(bizId);
+    React.useEffect(() => { bizIdRef.current = bizId; }, [bizId]);
 
     // Load from Supabase once bizId is known
     React.useEffect(() => {
       if (!bizId) return;
       sb().from(table).select("data").eq("business_id", bizId).limit(1)
         .then(({ data, error }) => {
-          if (error) return;
+          if (error) { console.warn("Supabase read error:", table, error.message); return; }
           if (data && data.length > 0) {
-            // Existing data found — load it
             setVal(data[0].data);
             try { localStorage.setItem(lsKey, JSON.stringify(data[0].data)); } catch {}
           } else {
-            // No data in Supabase for this user — start fresh (not demo seed data)
+            // No data for this user — start fresh
             const empty = Array.isArray(seed) ? [] : (typeof seed === "string" ? seed : {});
             setVal(empty);
             try { localStorage.setItem(lsKey, JSON.stringify(empty)); } catch {}
@@ -11089,15 +11088,21 @@ export default function App() {
     }, [bizId]);
 
     const set = v => {
-      const next = typeof v === "function" ? v(val) : v;
-      setVal(next);
-      // Write localStorage immediately (instant UI response)
-      try { localStorage.setItem(lsKey, JSON.stringify(next)); } catch {}
-      // Write Supabase in background (if ready)
-      if (bizId) {
-        sb().from(table).upsert({ business_id: bizId, data: next }, { onConflict: "business_id" })
-          .then(({ error }) => { if (error) console.warn("Supabase write error:", table, error.message); });
-      }
+      setVal(prev => {
+        const next = typeof v === "function" ? v(prev) : v;
+        // Write localStorage immediately
+        try { localStorage.setItem(lsKey, JSON.stringify(next)); } catch {}
+        // Write Supabase — use ref to get current bizId
+        const currentBizId = bizIdRef.current;
+        if (currentBizId && window._supabase) {
+          sb().from(table)
+            .upsert({ business_id: currentBizId, data: next }, { onConflict: "business_id" })
+            .then(({ error }) => {
+              if (error) console.warn("Supabase write error:", table, error.message);
+            });
+        }
+        return next;
+      });
     };
 
     return [val, set];

@@ -593,18 +593,76 @@ const COGS_CATS = new Set([
 // Helper: filter by date range
 const inRange = (dateStr, from, to) => dateStr >= from && dateStr <= to;
 
-// Revenue total — handles legacy {amount}, standard {dine_in,takeaway,delivery}, and new {other_sales:[]}
-const revTotal = r => r.amount != null
-  ? r.amount
-  : (r.dine_in || 0) + (r.takeaway || 0) + (r.delivery || 0)
-    + (r.other_sales ? r.other_sales.reduce((s,o) => s+(o.amount||0), 0) : 0);
+// ────────────────────────────────────────────────────────────
+// Unified sales channel model (v2): one revenue record has a
+// `channels` array of { name, amount, gstInclusive }.
+//
+// getChannels(r) normalises all historical shapes into v2:
+//   v0 legacy:   { amount }
+//   v1 split:    { dine_in, takeaway, delivery, other_sales[] }
+//   v2 channels: { channels[] }
+// Old rows are translated on read — no SQL migration needed.
+// ────────────────────────────────────────────────────────────
+const CHANNEL_PRESETS = [
+  // Owner collects GST (declare ÷11)
+  { name: "Dine-in",            gstInclusive: true  },
+  { name: "Takeaway",           gstInclusive: true  },
+  { name: "Catering",           gstInclusive: true  },
+  { name: "Walk-in",            gstInclusive: true  },
+  // Platform remits GST (nothing to declare)
+  { name: "Uber Eats",          gstInclusive: false },
+  { name: "DoorDash",           gstInclusive: false },
+  { name: "Menulog",            gstInclusive: false },
+  { name: "Deliveroo",          gstInclusive: false },
+  { name: "Shopify",            gstInclusive: false },
+  { name: "eBay",               gstInclusive: false },
+  { name: "Amazon",             gstInclusive: false },
+  { name: "Etsy",               gstInclusive: false },
+  { name: "Delivery Platform",  gstInclusive: false }, // legacy label
+];
+const PLATFORM_KEYWORDS = [
+  "uber eats","ubereats","doordash","menulog","deliveroo","grubhub",
+  "shopify","ebay","amazon","etsy",
+];
+const inferGstInclusive = name => {
+  const n = (name || "").toLowerCase().trim();
+  const preset = CHANNEL_PRESETS.find(p => p.name.toLowerCase() === n);
+  if (preset) return preset.gstInclusive;
+  if (PLATFORM_KEYWORDS.some(k => n.includes(k))) return false;
+  return true; // default: owner-collected
+};
 
-// GST-taxable revenue — delivery platforms and marketplace platforms remit GST themselves
-// Dine-in and Takeaway: owner collects GST → declare ÷11
-// Delivery (Uber Eats, DoorDash) + Other Sales (Shopify, eBay, Amazon): platform remits GST
-const revGSTTaxable = r => r.amount != null
-  ? r.amount                    // legacy: treat all as taxable (old entries)
-  : (r.dine_in || 0) + (r.takeaway || 0); // delivery + other_sales excluded (platforms remit GST)
+const getChannels = r => {
+  if (!r) return [];
+  if (Array.isArray(r.channels)) return r.channels.filter(c => c && c.name);
+  // v1 split
+  const out = [];
+  if ((r.dine_in  || 0) > 0) out.push({ name:"Dine-in",           amount:r.dine_in,  gstInclusive:true  });
+  if ((r.takeaway || 0) > 0) out.push({ name:"Takeaway",          amount:r.takeaway, gstInclusive:true  });
+  if ((r.delivery || 0) > 0) out.push({ name:"Delivery Platform", amount:r.delivery, gstInclusive:false });
+  (r.other_sales || []).forEach(o => {
+    if (o && o.name && (o.amount || 0) > 0) {
+      out.push({ name:o.name, amount:o.amount, gstInclusive: inferGstInclusive(o.name) });
+    }
+  });
+  // v0 legacy flat amount — only if nothing else matched
+  if (out.length === 0 && (r.amount || 0) > 0) {
+    out.push({ name:"Sales", amount:r.amount, gstInclusive:true });
+  }
+  return out;
+};
+
+// Revenue total — sums every channel regardless of GST treatment
+const revTotal = r => getChannels(r).reduce((s,c) => s + (c.amount || 0), 0);
+
+// GST-taxable revenue — only channels the owner collects GST on
+const revGSTTaxable = r => getChannels(r).reduce((s,c) => s + (c.gstInclusive ? (c.amount || 0) : 0), 0);
+
+// ASCII sanitiser for MiniPDF output — user-defined channel names may contain Unicode (中文 etc.)
+const pdfSafeName = s => {
+  const a = (s || "").replace(/[^\x20-\x7E]/g, "").trim();
+  return a || "Other Channel";
+};
 
 // Timesheets use ISO week — convert week to a date (Monday of that week)
 const weekToDate = w => {
@@ -657,11 +715,31 @@ const DOC_STATUS = { verified:"Verified", pending:"Pending Review", missing:"Mis
 //  SEED DATA
 // ════════════════════════════════════════════════════════════
 const SEED_REVENUE = [
-  { id:1, date:"2025-07-01", dine_in:1400, takeaway:820,  delivery:450 },
-  { id:2, date:"2025-07-02", dine_in:980,  takeaway:960,  delivery:570 },
-  { id:3, date:"2025-07-03", dine_in:1650, takeaway:740,  delivery:330 },
-  { id:4, date:"2025-07-04", dine_in:2100, takeaway:890,  delivery:730 },
-  { id:5, date:"2025-07-05", dine_in:1820, takeaway:1040, delivery:430 },
+  { id:1, date:"2025-07-01", channels:[
+    { name:"Dine-in",           amount:1400, gstInclusive:true  },
+    { name:"Takeaway",          amount:820,  gstInclusive:true  },
+    { name:"Delivery Platform", amount:450,  gstInclusive:false },
+  ]},
+  { id:2, date:"2025-07-02", channels:[
+    { name:"Dine-in",           amount:980,  gstInclusive:true  },
+    { name:"Takeaway",          amount:960,  gstInclusive:true  },
+    { name:"Delivery Platform", amount:570,  gstInclusive:false },
+  ]},
+  { id:3, date:"2025-07-03", channels:[
+    { name:"Dine-in",           amount:1650, gstInclusive:true  },
+    { name:"Takeaway",          amount:740,  gstInclusive:true  },
+    { name:"Delivery Platform", amount:330,  gstInclusive:false },
+  ]},
+  { id:4, date:"2025-07-04", channels:[
+    { name:"Dine-in",           amount:2100, gstInclusive:true  },
+    { name:"Takeaway",          amount:890,  gstInclusive:true  },
+    { name:"Delivery Platform", amount:730,  gstInclusive:false },
+  ]},
+  { id:5, date:"2025-07-05", channels:[
+    { name:"Dine-in",           amount:1820, gstInclusive:true  },
+    { name:"Takeaway",          amount:1040, gstInclusive:true  },
+    { name:"Delivery Platform", amount:430,  gstInclusive:false },
+  ]},
 ];
 
 const SEED_EXPENSES = [
@@ -1470,23 +1548,29 @@ const renderAccountantPackPDF = ({d, selFY, revenue, expenses, timesheets, emplo
     y+=8;
   }
 
-  // ── Revenue channel split ─────────────────────────────
-  const totDineIn   = revenue.reduce((s,r)=>s+(r.dine_in||0),0);
-  const totTakeaway = revenue.reduce((s,r)=>s+(r.takeaway||0),0);
-  const totDelivery = revenue.reduce((s,r)=>s+(r.delivery||0),0);
-  if(totDineIn+totTakeaway+totDelivery>0){
-    y=pdfSecTitle(pdf, y, 'REVENUE BY CHANNEL');
-    y=pdfTable(pdf, y,
+  // ── Revenue channel split (dynamic — aggregated by channel name) ────
+  const channelAgg = new Map();
+  revenue.forEach(r => {
+    getChannels(r).forEach(c => {
+      channelAgg.set(c.name, (channelAgg.get(c.name) || 0) + (c.amount || 0));
+    });
+  });
+  const channelRows = [...channelAgg.entries()]
+    .sort((a,b) => b[1] - a[1])
+    .map(([name, amt]) => [
+      pdfSafeName(name),
+      `$${amt.toFixed(2)}`,
+      `${d.totalRev > 0 ? (amt / d.totalRev * 100).toFixed(1) : 0}%`,
+    ]);
+  if (channelRows.length > 0) {
+    y = pdfSecTitle(pdf, y, 'REVENUE BY CHANNEL');
+    y = pdfTable(pdf, y,
       ['Channel','Amount (AUD)','% of Total'],
-      [
-        ['Dine-in',   `$${totDineIn.toFixed(2)}`,   `${d.totalRev>0?(totDineIn/d.totalRev*100).toFixed(1):0}%`],
-        ['Takeaway',  `$${totTakeaway.toFixed(2)}`,  `${d.totalRev>0?(totTakeaway/d.totalRev*100).toFixed(1):0}%`],
-        ['Delivery',  `$${totDelivery.toFixed(2)}`,  `${d.totalRev>0?(totDelivery/d.totalRev*100).toFixed(1):0}%`],
-      ],
-      [W-M*2-180,90,90],
-      { rowH:14, footerRow:['TOTAL',`$${d.totalRev.toFixed(2)}`,'100%'], numCols:[1,2] }
+      channelRows,
+      [W-M*2-180, 90, 90],
+      { rowH:14, footerRow:['TOTAL', `$${d.totalRev.toFixed(2)}`, '100%'], numCols:[1,2] }
     );
-    y+=8;
+    y += 8;
   }
 
   // ── Expenses by category ──────────────────────────────
@@ -3116,7 +3200,7 @@ function DashboardPage({ revenue, expenses, employees, timesheets, insurance, se
                     : <div style={{ fontSize:14, fontWeight:600, color:C.red }}>Not recorded yet</div>
                   }
                   {todayRevEntry && <div style={{ fontSize:11, color:C.muted, marginTop:3 }}>
-                    Dine-in {money(todayRevEntry.dine_in||0)} · Takeaway {money(todayRevEntry.takeaway||0)} · Delivery {money(todayRevEntry.delivery||0)}
+                    {getChannels(todayRevEntry).map(c => `${c.name} ${money(c.amount)}`).join(" · ") || "No channels"}
                   </div>}
                 </div>
                 <button onClick={() => setPage("revenue")}
@@ -3463,9 +3547,35 @@ function DashboardPage({ revenue, expenses, employees, timesheets, insurance, se
 //  REVENUE PAGE
 // ════════════════════════════════════════════════════════════
 function RevenuePage({ revenue, setRevenue, showToast }) {
-  const BLANK = { date:todayStr, dine_in:"", takeaway:"", delivery:"", other_sales:[] };
-  const [f,        setF]        = useState(BLANK);
+  // ── Last-used channel template (localStorage) ─────────────
+  const LAST_CHANNELS_KEY = "mise_last_channels";
+  const DEFAULT_CHANNELS = [
+    { name:"Dine-in",  amount:"", gstInclusive:true },
+    { name:"Takeaway", amount:"", gstInclusive:true },
+  ];
+  const getStoredChannels = () => {
+    try {
+      const raw = localStorage.getItem(LAST_CHANNELS_KEY);
+      if (!raw) return null;
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr) || arr.length === 0) return null;
+      return arr.map(c => ({ name:c.name || "", amount:"", gstInclusive:c.gstInclusive !== false }));
+    } catch { return null; }
+  };
+  const saveChannelTemplate = channels => {
+    try {
+      const tpl = channels.filter(c => c.name).map(c => ({ name:c.name, gstInclusive: !!c.gstInclusive }));
+      if (tpl.length > 0) localStorage.setItem(LAST_CHANNELS_KEY, JSON.stringify(tpl));
+    } catch {}
+  };
+  const makeBlank = () => ({
+    date: todayStr,
+    channels: (getStoredChannels() || DEFAULT_CHANNELS).map(c => ({...c})),
+  });
+
+  const [f,        setF]        = useState(makeBlank);
   const [editId,   setEditId]   = useState(null);
+  const [expandedId, setExpandedId] = useState(null);
   const [showImport,  setShowImport]  = useState(false);
   const [csvRaw,      setCsvRaw]      = useState("");
   const [csvHeaders,  setCsvHeaders]  = useState([]);
@@ -3473,8 +3583,6 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
   const [csvPreview,  setCsvPreview]  = useState([]);
   const [csvError,    setCsvError]    = useState("");
   const [csvStep,     setCsvStep]     = useState("upload");
-  // Other sales channel suggestions
-  const OTHER_PRESETS = ["Uber Eats","DoorDash","Menulog","Shopify","eBay","Amazon","Etsy","Direct Online"];
 
   // ── CSV mapping memory — remember by header fingerprint ──
   const csvMapKey    = hdrs => "mise_csv_" + hdrs.slice().sort().join("|").slice(0,100);
@@ -3490,7 +3598,6 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
       const headers = lines[0].split(",").map(h => h.replace(/"/g,"").trim());
       setCsvHeaders(headers);
 
-      // Check for saved mapping first, then auto-guess
       const recalled = recallMap(headers);
       const guess = (keys, hdrs) => hdrs.find(h => keys.some(k => h.toLowerCase().includes(k))) || "";
       const autoMap = Object.keys(recalled).length > 0 ? recalled : {
@@ -3502,17 +3609,12 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
       };
       const wasRecalled = Object.keys(recalled).length > 0;
       setCsvMapping(autoMap);
-      // If we have a remembered mapping, skip straight to preview
-      if (wasRecalled) {
-        setCsvStep("map"); // still show map step but pre-filled — user can verify
-        showToast("✅ Column mapping recalled from last import");
-      } else {
-        setCsvStep("map");
-      }
+      setCsvStep("map");
+      if (wasRecalled) showToast("✅ Column mapping recalled from last import");
     } catch(e) { setCsvError("Could not read file: " + e.message); }
   };
 
-  // ── Step 2: apply mapping and parse rows ─────────────────
+  // ── Step 2: apply mapping and parse rows (outputs channels[] format) ──
   const applyMapping = () => {
     setCsvError("");
     try {
@@ -3521,7 +3623,6 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
       const idx   = k => csvMapping[k] ? hdrs.indexOf(csvMapping[k]) : -1;
       const dateIdx = idx("date");
       if (dateIdx === -1) { setCsvError("Please select a Date column."); return; }
-      // Save this mapping for next time
       saveMap(hdrs, csvMapping);
 
       const parseAmt = (cols, i) => i >= 0 ? (parseFloat(String(cols[i]||"0").replace(/[$,\s]/g,"")) || 0) : 0;
@@ -3540,16 +3641,22 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
         const cols = lines[i].split(",").map(c => c.replace(/"/g,"").trim());
         const parsedDate = parseDate(cols[dateIdx]);
         if (!parsedDate || isNaN(new Date(parsedDate))) continue;
-        let dine_in=0, takeaway=0, delivery=0;
+
+        const channels = [];
         if (dineIdx>=0 || takeIdx>=0 || delivIdx>=0) {
-          dine_in  = parseAmt(cols, dineIdx);
-          takeaway = parseAmt(cols, takeIdx);
-          delivery = parseAmt(cols, delivIdx);
-        } else if (totIdx>=0) {
-          dine_in  = parseAmt(cols, totIdx); // total → dine-in fallback
+          const d = parseAmt(cols, dineIdx);
+          const t = parseAmt(cols, takeIdx);
+          const v = parseAmt(cols, delivIdx);
+          if (d > 0) channels.push({ name:"Dine-in",           amount:d, gstInclusive:true  });
+          if (t > 0) channels.push({ name:"Takeaway",          amount:t, gstInclusive:true  });
+          if (v > 0) channels.push({ name:"Delivery Platform", amount:v, gstInclusive:false });
+        } else if (totIdx >= 0) {
+          const a = parseAmt(cols, totIdx);
+          if (a > 0) channels.push({ name:"Sales", amount:a, gstInclusive:true });
         }
-        if (dine_in+takeaway+delivery===0) continue;
-        rows.push({ date:parsedDate, dine_in, takeaway, delivery });
+        if (channels.length === 0) continue;
+        const total = channels.reduce((s,c) => s+c.amount, 0);
+        rows.push({ date:parsedDate, channels, total });
       }
       if (rows.length===0) { setCsvError("No valid rows found after applying this mapping. Check your column selections."); return; }
       setCsvPreview(rows);
@@ -3561,7 +3668,7 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
     const existing = new Set(revenue.map(r => r.date));
     const toAdd    = csvPreview.filter(r => !existing.has(r.date));
     const dupes    = csvPreview.length - toAdd.length;
-    setRevenue(p => [...p, ...toAdd.map(r => ({ id:Date.now()+Math.random(), date:r.date, dine_in:r.dine_in, takeaway:r.takeaway, delivery:r.delivery }))]);
+    setRevenue(p => [...p, ...toAdd.map(r => ({ id:Date.now()+Math.random(), date:r.date, channels:r.channels }))]);
     showToast(`✅ Imported ${toAdd.length} rows${dupes ? ` (${dupes} skipped — date exists)` : ""}`);
     setCsvRaw(""); setCsvHeaders([]); setCsvMapping({}); setCsvPreview([]);
     setCsvStep("upload"); setShowImport(false);
@@ -3569,118 +3676,105 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
 
   const resetImport = () => { setCsvRaw(""); setCsvHeaders([]); setCsvMapping({}); setCsvPreview([]); setCsvError(""); setCsvStep("upload"); };
 
-  const din   = parseFloat(f.dine_in)  || 0;
-  const tak   = parseFloat(f.takeaway) || 0;
-  const del   = parseFloat(f.delivery) || 0;
-  const otherTotal = (f.other_sales||[]).reduce((s,o) => s+(parseFloat(o.amount)||0), 0);
-  const total = din + tak + del + otherTotal;
+  // ── Form channel mutators ───────────────────────────────
+  const updateChannel = (i, patch) => {
+    setF(prev => {
+      const next = [...prev.channels];
+      next[i] = { ...next[i], ...patch };
+      return { ...prev, channels: next };
+    });
+  };
+  const updateChannelName = (i, name) => {
+    // Auto-infer GST based on name, but only if user hasn't explicitly set it this session
+    setF(prev => {
+      const next = [...prev.channels];
+      next[i] = { ...next[i], name, gstInclusive: inferGstInclusive(name) };
+      return { ...prev, channels: next };
+    });
+  };
+  const removeChannel = i => {
+    setF(prev => ({ ...prev, channels: prev.channels.filter((_, j) => j !== i) }));
+  };
+  const addEmptyChannel = () => {
+    setF(prev => ({ ...prev, channels: [...prev.channels, { name:"", amount:"", gstInclusive:true }] }));
+  };
+  const addPresetChannel = preset => {
+    setF(prev => ({ ...prev, channels: [...prev.channels, { name:preset.name, amount:"", gstInclusive:preset.gstInclusive }] }));
+  };
+
+  // Totals for form
+  const formTotal       = (f.channels || []).reduce((s,c) => s + (parseFloat(c.amount) || 0), 0);
+  const formGSTTaxable  = (f.channels || []).reduce((s,c) => s + (c.gstInclusive ? (parseFloat(c.amount) || 0) : 0), 0);
 
   const save = () => {
-    if (!total) return;
-    const entry = {
-      date:f.date, dine_in:din, takeaway:tak, delivery:del,
-      other_sales: (f.other_sales||[]).filter(o => o.name && parseFloat(o.amount)>0)
-        .map(o => ({ name:o.name.trim(), amount:parseFloat(o.amount)||0 }))
-    };
+    const cleanChannels = (f.channels || [])
+      .filter(c => c.name && c.name.trim() && parseFloat(c.amount) > 0)
+      .map(c => ({
+        name: c.name.trim(),
+        amount: parseFloat(c.amount) || 0,
+        gstInclusive: !!c.gstInclusive,
+      }));
+    if (cleanChannels.length === 0) { showToast("Add at least one channel with an amount."); return; }
+    const entry = { date:f.date, channels:cleanChannels };
     if (editId) {
-      setRevenue(p => p.map(r => r.id === editId ? {...r,...entry} : r));
+      // Preserve record identity but drop any legacy v1 fields by replacing fully
+      setRevenue(p => p.map(r => r.id === editId ? { id:r.id, ...entry } : r));
       showToast("Entry updated!"); setEditId(null);
     } else {
       setRevenue(p => [...p, { id:Date.now(), ...entry }]);
       showToast("Sales added!");
     }
-    setF(BLANK);
+    saveChannelTemplate(cleanChannels);
+    setF(makeBlank());
   };
+
   const startEdit = r => {
     setEditId(r.id);
-    setF({ date:r.date, dine_in:String(r.dine_in||r.amount||""), takeaway:String(r.takeaway||""), delivery:String(r.delivery||""), other_sales:(r.other_sales||[]).map(o=>({name:o.name,amount:String(o.amount)})) });
+    const chs = getChannels(r);
+    setF({
+      date: r.date,
+      channels: chs.length > 0
+        ? chs.map(c => ({ name:c.name, amount:String(c.amount || ""), gstInclusive: c.gstInclusive !== false }))
+        : DEFAULT_CHANNELS.map(c => ({...c})),
+    });
     window.scrollTo({top:0,behavior:"smooth"});
   };
-  const cancelEdit = () => { setEditId(null); setF(BLANK); };
-  const del_ = id => { setRevenue(p => p.filter(x => x.id !== id)); if (editId===id) cancelEdit(); showToast("Deleted."); };
+  const cancelEdit = () => { setEditId(null); setF(makeBlank()); };
+  const clearForm  = () => { setF(makeBlank()); };
+  const del_ = id => { setRevenue(p => p.filter(x => x.id !== id)); if (editId===id) cancelEdit(); if (expandedId===id) setExpandedId(null); showToast("Deleted."); };
 
-  // ── CSV Import ────────────────────────────────────────────
-  // Accepts exports from Square, Lightspeed, Kounta, Hike, Impos, or generic CSV
-  // Required: a date column + at least one amount column
-  const parseCSV = text => {
-    setCsvError(""); setCsvPreview([]);
-    try {
-      const lines = text.trim().split(/\r?\n/).filter(l => l.trim());
-      if (lines.length < 2) { setCsvError("CSV must have a header row and at least one data row."); return; }
+  // ── Aggregated totals for overview cards & history footer ──
+  const totalAll = revenue.reduce((s,r) => s + revTotal(r), 0);
+  const totalGST = revenue.reduce((s,r) => s + revGSTTaxable(r), 0) / 11;
 
-      // Parse header — case-insensitive
-      const rawHeaders = lines[0].split(",").map(h => h.replace(/"/g,"").trim().toLowerCase());
+  // Top channels by volume — for the 3 overview slots next to Total
+  const channelTotalsMap = new Map();
+  revenue.forEach(r => {
+    getChannels(r).forEach(c => {
+      channelTotalsMap.set(c.name, (channelTotalsMap.get(c.name) || 0) + (c.amount || 0));
+    });
+  });
+  const topChannels = [...channelTotalsMap.entries()].sort((a,b) => b[1] - a[1]).slice(0, 3);
+  const cardTone = ["t", "", "p"]; // matches original colour scheme
 
-      // Find date column
-      const dateIdx = rawHeaders.findIndex(h =>
-        h.includes("date") || h.includes("day") || h==="transaction date" || h==="sale date"
-      );
-      if (dateIdx === -1) { setCsvError("No date column found. Rename a column to 'Date'."); return; }
+  // ── "Repeat last" button ────────────────────────────────
+  const lastEntry = revenue.length > 0
+    ? [...revenue].sort((a,b) => b.date.localeCompare(a.date))[0]
+    : null;
+  const yesterdayStr = (() => { const d = new Date(); d.setDate(d.getDate()-1); return d.toISOString().slice(0,10); })();
+  const repeatEntry = !editId && lastEntry ? lastEntry : null;
 
-      // Find amount columns — flexible matching
-      const findCol = (...keys) => rawHeaders.findIndex(h => keys.some(k => h.includes(k)));
-      const dineIdx    = findCol("dine","dine-in","eat in","table","in store","instore");
-      const takeIdx    = findCol("takeaway","take away","pickup","pick up","counter");
-      const delivIdx   = findCol("delivery","deliver","online","uber","doordash","menulog","3rd party");
-      const totalIdx   = findCol("total sales","total revenue","gross sales","net sales","total","amount","sales");
-
-      const rows = [];
-      for (let i = 1; i < lines.length; i++) {
-        const cols = lines[i].split(",").map(c => c.replace(/"/g,"").trim());
-        if (cols.length < 2) continue;
-
-        // Parse date — try several formats
-        let rawDate = cols[dateIdx] || "";
-        let parsedDate = "";
-        // Try YYYY-MM-DD
-        if (/^\d{4}-\d{2}-\d{2}/.test(rawDate)) parsedDate = rawDate.slice(0,10);
-        // Try DD/MM/YYYY or D/M/YYYY
-        else if (/\d{1,2}\/\d{1,2}\/\d{4}/.test(rawDate)) {
-          const [d,mo,yr] = rawDate.split("/");
-          parsedDate = `${yr}-${mo.padStart(2,"0")}-${d.padStart(2,"0")}`;
-        }
-        // Try MM/DD/YYYY (US format)
-        else if (/\d{1,2}\/\d{1,2}\/\d{2,4}/.test(rawDate)) {
-          const parts = rawDate.split("/");
-          const yr = parts[2].length===2 ? "20"+parts[2] : parts[2];
-          parsedDate = `${yr}-${parts[0].padStart(2,"0")}-${parts[1].padStart(2,"0")}`;
-        }
-        if (!parsedDate || isNaN(new Date(parsedDate))) continue;
-
-        const parseAmt = idx => idx >= 0 ? (parseFloat(String(cols[idx]||"0").replace(/[$,\s]/g,"")) || 0) : 0;
-
-        let dine_in=0, takeaway=0, delivery=0;
-        if (dineIdx>=0 || takeIdx>=0 || delivIdx>=0) {
-          dine_in  = parseAmt(dineIdx);
-          takeaway = parseAmt(takeIdx);
-          delivery = parseAmt(delivIdx);
-        } else if (totalIdx >= 0) {
-          // Only total — put it all in dine_in as fallback
-          dine_in = parseAmt(totalIdx);
-        } else continue;
-
-        if (dine_in + takeaway + delivery === 0) continue;
-        rows.push({ date:parsedDate, dine_in, takeaway, delivery, raw:lines[i] });
-      }
-
-      if (rows.length === 0) { setCsvError("No valid rows found. Check your CSV has a Date column and at least one amount column."); return; }
-      setCsvPreview(rows);
-    } catch(e) {
-      setCsvError("Could not parse CSV: " + e.message);
-    }
-  };
-
-
-  const totalDineIn   = revenue.reduce((s,r) => s+(r.dine_in||0), 0);
-  const totalTakeaway = revenue.reduce((s,r) => s+(r.takeaway||0), 0);
-  const totalDelivery = revenue.reduce((s,r) => s+(r.delivery||0), 0);
-  const totalOther    = revenue.reduce((s,r) => s+((r.other_sales||[]).reduce((a,o)=>a+(o.amount||0),0)), 0);
-  const totalAll      = revenue.reduce((s,r) => s+revTotal(r), 0);
+  // ── Preset chips that aren't already in the form ────────
+  const usedNames = new Set((f.channels || []).map(c => (c.name || "").toLowerCase()));
+  const availablePresets = CHANNEL_PRESETS.filter(p => !usedNames.has(p.name.toLowerCase()));
 
   return (
     <>
       <div className="hdr">
-        <div className="hdr-left"><div className="ptitle">Revenue Tracking</div><div className="psub">Log daily sales by channel — or import from your POS</div></div>
+        <div className="hdr-left">
+          <div className="ptitle">Revenue Tracking</div>
+          <div className="psub">Log daily sales by channel — or import from your POS</div>
+        </div>
         <div className="hdr-right">
           <button className="btn-g" onClick={() => { setShowImport(v=>!v); setCsvPreview([]); setCsvError(""); }}>
             {showImport ? "✕ Close Import" : "📥 Import CSV"}
@@ -3688,20 +3782,29 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
         </div>
       </div>
 
+      {/* ── Overview cards: Total + top 3 channels ── */}
       <div className="g4">
-        {[
-          { lbl:"Total Sales",        val:money(totalAll),        cls:"b" },
-          { lbl:"Dine-in",            val:money(totalDineIn),     cls:"t" },
-          { lbl:"Takeaway",           val:money(totalTakeaway),   cls:"" },
-          { lbl:"Delivery Platform",  val:money(totalDelivery),   cls:"p" },
-          ...(totalOther > 0 ? [{ lbl:"Other Channels", val:money(totalOther), cls:"" }] : []),
-        ].map((c,i) => <div key={i} className="card"><div className="clbl">{c.lbl}</div><div className={`cval ${c.cls}`}>{c.val}</div></div>)}
+        <div className="card">
+          <div className="clbl">Total Sales</div>
+          <div className="cval b">{money(totalAll)}</div>
+        </div>
+        {topChannels.map(([name, amt], i) => (
+          <div key={name} className="card">
+            <div className="clbl" title={name}>{name.length > 18 ? name.slice(0,16) + "…" : name}</div>
+            <div className={`cval ${cardTone[i] || ""}`}>{money(amt)}</div>
+          </div>
+        ))}
+        {Array.from({ length: Math.max(0, 3 - topChannels.length) }).map((_,i) => (
+          <div key={`empty-${i}`} className="card" style={{ opacity:.35 }}>
+            <div className="clbl">—</div>
+            <div className="cval">$0.00</div>
+          </div>
+        ))}
       </div>
 
       {/* ── CSV Import Panel ── */}
       {showImport && (
         <div className="bc" style={{ marginBottom:14, border:`1px solid ${C.teal}44` }}>
-          {/* Step progress */}
           <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:14 }}>
             <div className="bctit" style={{ margin:0 }}>📥 Import from POS / CSV</div>
             <div style={{ marginLeft:"auto", display:"flex", gap:6, fontSize:10, fontWeight:700 }}>
@@ -3716,7 +3819,7 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
 
           {csvError && <div className="alert al-r" style={{ marginBottom:10 }}><span className="al-ico">❌</span><div><div className="al-ttl">Error</div><div className="al-msg">{csvError}</div></div></div>}
 
-          {/* ── STEP 1: Upload ── */}
+          {/* STEP 1: Upload */}
           {csvStep === "upload" && (
             <>
               <div style={{ fontSize:12, color:C.muted, marginBottom:12, lineHeight:1.7 }}>
@@ -3732,56 +3835,49 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
                   placeholder={"Paste CSV here...\nDate,Total Sales\n01/07/2025,2670"}
                   value={csvRaw} onChange={e => setCsvRaw(e.target.value)}/>
                 <label style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:4, background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:8, padding:"12px 16px", cursor:"pointer", fontSize:11, color:C.muted, whiteSpace:"nowrap" }}>
-                  <span style={{ fontSize:22 }}>📁</span>Upload .csv
-                  <input type="file" accept=".csv,text/csv" style={{ display:"none" }} onChange={e => {
-                    const file=e.target.files[0]; if(!file) return;
-                    const reader=new FileReader(); reader.onload=ev=>setCsvRaw(ev.target.result); reader.readAsText(file);
-                  }}/>
+                  📁 Or upload file
+                  <input type="file" accept=".csv,.txt" style={{display:"none"}}
+                    onChange={e => { const file = e.target.files?.[0]; if (!file) return; const r = new FileReader(); r.onload = ev => detectHeaders(String(ev.target?.result || "")); r.readAsText(file); }}/>
                 </label>
               </div>
-              <div style={{ display:"flex", gap:10, marginTop:12 }}>
-                <button className="btn" disabled={!csvRaw.trim()} onClick={() => detectHeaders(csvRaw)} style={{ opacity:csvRaw.trim()?1:.5 }}>Next: Map Columns →</button>
+              <div style={{ display:"flex", gap:10, marginTop:10 }}>
+                <button className="btn" disabled={!csvRaw.trim()} onClick={() => detectHeaders(csvRaw)}>Detect columns →</button>
                 <button className="btn-g" onClick={() => { setShowImport(false); resetImport(); }}>Cancel</button>
               </div>
             </>
           )}
 
-          {/* ── STEP 2: Column Mapping ── */}
+          {/* STEP 2: Map columns */}
           {csvStep === "map" && (
             <>
-              <div style={{ fontSize:12, color:C.muted, marginBottom:14 }}>
-                Mise found <strong style={{ color:C.text }}>{csvHeaders.length} columns</strong> in your file. Tell us what each column contains — leave blank if not applicable.
+              <div style={{ fontSize:12, color:C.muted, marginBottom:10 }}>
+                We detected <b style={{color:C.text}}>{csvHeaders.length}</b> columns. Confirm which maps to what — we'll remember your choices for next time.
               </div>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:16 }}>
+              <div style={{ display:"grid", gridTemplateColumns:"140px 1fr", gap:"8px 12px", marginBottom:12, fontSize:12, alignItems:"center" }}>
                 {[
-                  { key:"date",     lbl:"📅 Date column", required:true, hint:"Which column has the date?" },
-                  { key:"dine_in",  lbl:"🍽️ Dine-in sales",              hint:"In-house / table service" },
-                  { key:"takeaway", lbl:"🥡 Takeaway / Pickup",          hint:"Counter / phone orders" },
-                  { key:"delivery", lbl:"🛵 Delivery Platform",          hint:"Uber Eats, DoorDash, etc." },
-                  { key:"total",    lbl:"💰 Total / All channels",       hint:"Use if no channel breakdown" },
-                ].map(field => (
-                  <div key={field.key} className="fg">
-                    <label className="flbl">{field.lbl} {field.required && <span style={{ color:C.red }}>*</span>}</label>
-                    <select className="sel" value={csvMapping[field.key]||""} onChange={e => setCsvMapping(p=>({...p,[field.key]:e.target.value}))}>
-                      <option value="">— Not in this file —</option>
-                      {csvHeaders.map((h,i) => <option key={i} value={h}>{h}</option>)}
+                  ["date",     "📅 Date",            true],
+                  ["dine_in",  "🍽️ Dine-in",         false],
+                  ["takeaway", "🥡 Takeaway",        false],
+                  ["delivery", "🛵 Delivery",        false],
+                  ["total",    "💵 Total (fallback)",false],
+                ].map(([k,lbl,req]) => (
+                  <React.Fragment key={k}>
+                    <div style={{ fontWeight:600, color: req ? C.text : C.muted }}>{lbl}{req && <span style={{color:C.red,marginLeft:4}}>*</span>}</div>
+                    <select className="inp" value={csvMapping[k] || ""} onChange={e => setCsvMapping({...csvMapping, [k]:e.target.value})}>
+                      <option value="">— none —</option>
+                      {csvHeaders.map(h => <option key={h} value={h}>{h}</option>)}
                     </select>
-                    <span className="fhint">{field.hint}</span>
-                    {csvMapping[field.key] && (
-                      <span style={{ fontSize:10, color:C.teal }}>✓ mapped to "{csvMapping[field.key]}"</span>
-                    )}
-                  </div>
+                  </React.Fragment>
                 ))}
               </div>
               <div style={{ display:"flex", gap:10 }}>
                 <button className="btn" onClick={applyMapping}>Preview Import →</button>
                 <button className="btn-g" onClick={() => setCsvStep("upload")}>← Back</button>
-                <button className="btn-g" onClick={() => { setShowImport(false); resetImport(); }}>Cancel</button>
               </div>
             </>
           )}
 
-          {/* ── STEP 3: Preview & Confirm ── */}
+          {/* STEP 3: Preview & Confirm */}
           {csvStep === "preview" && csvPreview.length > 0 && (
             <>
               <div style={{ fontSize:12, fontWeight:700, color:C.teal, marginBottom:8 }}>
@@ -3789,17 +3885,25 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
               </div>
               <div style={{ maxHeight:220, overflowY:"auto", marginBottom:12 }}>
                 <table className="tbl">
-                  <thead><tr><th>Date</th><th style={{textAlign:"right"}}>Dine-in</th><th style={{textAlign:"right"}}>Takeaway</th><th style={{textAlign:"right"}}>Delivery</th><th style={{textAlign:"right"}}>Total</th><th style={{textAlign:"right"}}>GST (taxable)</th></tr></thead>
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Channels</th>
+                      <th style={{textAlign:"right"}}>Total</th>
+                      <th style={{textAlign:"right"}}>GST (taxable)</th>
+                    </tr>
+                  </thead>
                   <tbody>
                     {csvPreview.map((r,i) => {
-                      const taxable = (r.dine_in||0)+(r.takeaway||0);
+                      const taxable = r.channels.filter(c => c.gstInclusive).reduce((s,c) => s+c.amount, 0);
+                      const exists = revenue.some(x => x.date === r.date);
                       return (
-                        <tr key={i} style={{ background: revenue.some(x=>x.date===r.date) ? "rgba(212,168,67,.07)" : undefined }}>
-                          <td className="mono">{r.date}{revenue.some(x=>x.date===r.date) && <span style={{ fontSize:9, color:C.yellow, marginLeft:6 }}>exists</span>}</td>
-                          <td className="mono" style={{textAlign:"right"}}>{r.dine_in>0?money(r.dine_in):"—"}</td>
-                          <td className="mono" style={{textAlign:"right"}}>{r.takeaway>0?money(r.takeaway):"—"}</td>
-                          <td className="mono" style={{textAlign:"right"}}>{r.delivery>0?money(r.delivery):"—"}</td>
-                          <td className="mono" style={{textAlign:"right",fontWeight:700}}>{money((r.dine_in||0)+(r.takeaway||0)+(r.delivery||0))}</td>
+                        <tr key={i} style={{ background: exists ? "rgba(212,168,67,.07)" : undefined }}>
+                          <td className="mono">{r.date}{exists && <span style={{ fontSize:9, color:C.yellow, marginLeft:6 }}>exists</span>}</td>
+                          <td style={{ fontSize:11, color:C.muted }}>
+                            {r.channels.map(c => `${c.name} ${money(c.amount)}`).join(" · ")}
+                          </td>
+                          <td className="mono" style={{textAlign:"right",fontWeight:700}}>{money(r.total)}</td>
                           <td className="mono" style={{textAlign:"right",color:C.yellow}}>{taxable>0?money(taxable/11):"—"}</td>
                         </tr>
                       );
@@ -3820,115 +3924,126 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
         </div>
       )}
 
-      {/* GST note */}
+      {/* ── GST note ── */}
       <div className="alert al-t" style={{ marginBottom:14 }}>
         <span className="al-ico">💡</span>
-        <div><div className="al-ttl">Channel GST note</div>
-        <div className="al-msg">Dine-in &amp; Takeaway: enter the full amount including GST — Mise calculates GST at ÷11. Delivery &amp; Other Sales channels (Uber Eats, Shopify, eBay, Amazon etc): enter the gross amount; the platform remits GST separately — no GST to declare on these.</div></div>
+        <div>
+          <div className="al-ttl">Channel GST note</div>
+          <div className="al-msg">Toggle <b>GST inc.</b> per channel. Owner-collected channels (Dine-in, Takeaway, Catering) remit GST at ÷11. Platform-remitted channels (Uber Eats, DoorDash, Shopify etc.) have nothing to declare — the platform handles GST.</div>
+        </div>
       </div>
 
+      {/* ── Add / Edit form ── */}
       <div className="fsec" style={{ border: editId ? `1px solid ${C.yellow}` : undefined }}>
         <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", flexWrap:"wrap", gap:8, marginBottom:10 }}>
           <div className="ftit" style={{ marginBottom:0 }}>{editId ? "✏️ Edit Entry" : "Add Sales"}</div>
-          {/* Repeat yesterday — pre-fills form with yesterday's amounts for quick entry */}
-          {!editId && (() => {
-            const yesterday = new Date(); yesterday.setDate(yesterday.getDate()-1);
-            const yStr = yesterday.toISOString().slice(0,10);
-            const yEntry = [...revenue].reverse().find(r => r.date === yStr)
-                        || [...revenue].reverse()[0];
-            if (!yEntry) return null;
-            return (
-              <button onClick={() => setF({ date:todayStr, dine_in:String(yEntry.dine_in||""), takeaway:String(yEntry.takeaway||""), delivery:String(yEntry.delivery||""), other_sales:(yEntry.other_sales||[]).map(o=>({name:o.name,amount:String(o.amount)})) })}
-                style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 12px", borderRadius:8, cursor:"pointer", fontFamily:"inherit", fontSize:11.5, fontWeight:700, flexShrink:0,
-                  background:"rgba(143,203,114,.12)", border:`1px solid rgba(143,203,114,.35)`, color:C.accent }}>
-                🔁 Repeat {yEntry.date === yStr ? "Yesterday" : "Last Entry"}
-                <span style={{ fontWeight:400, color:C.muted, fontSize:10.5 }}>({money(revTotal(yEntry))})</span>
-              </button>
-            );
-          })()}
+          {repeatEntry && (
+            <button onClick={() => {
+                const chs = getChannels(repeatEntry);
+                setF({
+                  date: todayStr,
+                  channels: chs.map(c => ({ name:c.name, amount:String(c.amount || ""), gstInclusive: c.gstInclusive !== false })),
+                });
+              }}
+              style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 12px", borderRadius:8, cursor:"pointer", fontFamily:"inherit", fontSize:11.5, fontWeight:700, flexShrink:0,
+                background:"rgba(143,203,114,.12)", border:`1px solid rgba(143,203,114,.35)`, color:C.accent }}>
+              🔁 Repeat {repeatEntry.date === yesterdayStr ? "Yesterday" : "Last Entry"}
+              <span style={{ fontWeight:400, color:C.muted, fontSize:10.5 }}>({money(revTotal(repeatEntry))})</span>
+            </button>
+          )}
         </div>
         {editId && <div style={{ fontSize:11, color:C.yellow, marginBottom:10, background:"rgba(212,168,67,.08)", borderRadius:6, padding:"6px 10px" }}>Editing existing entry — make your changes and click Save.</div>}
-        {/* Mobile: single column stack for channel inputs */}
+
         <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:12 }}>
           <div className="fg">
             <label className="flbl">Date</label>
             <input className="inp" type="date" value={f.date} onChange={e => setF({...f,date:e.target.value})}/>
           </div>
-          <div className="fg">
-            <label className="flbl">Dine-in ($)</label>
-            <input className="inp" type="number" placeholder="0.00" value={f.dine_in} onChange={e => setF({...f,dine_in:e.target.value})} inputMode="decimal"/>
-            {din > 0 && <span className="fhint">GST: {money(din/11)}</span>}
-          </div>
-          <div className="fg">
-            <label className="flbl">Takeaway ($)</label>
-            <input className="inp" type="number" placeholder="0.00" value={f.takeaway} onChange={e => setF({...f,takeaway:e.target.value})} inputMode="decimal"/>
-            {tak > 0 && <span className="fhint">GST: {money(tak/11)}</span>}
-          </div>
-          <div className="fg">
-            <label className="flbl">Delivery Platform ($)</label>
-            <input className="inp" type="number" placeholder="0.00" value={f.delivery} onChange={e => setF({...f,delivery:e.target.value})} inputMode="decimal"/>
-            {del > 0 && <span className="fhint" style={{color:C.teal}}>Platform remits GST — no GST to declare on this amount</span>}
-          </div>
 
-          {/* ── Other Sales (Shopify, eBay, Amazon, etc.) ── */}
+          {/* Unified Sales Channels list */}
           <div className="fg">
             <label className="flbl" style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-              <span>Other Sales Channels</span>
-              <button onClick={() => setF({...f, other_sales:[...(f.other_sales||[]), {name:"",amount:""}]})}
+              <span>Sales Channels</span>
+              <button onClick={addEmptyChannel}
                 style={{background:"none",border:`1px dashed ${C.border}`,borderRadius:6,padding:"2px 10px",fontSize:11,color:C.accent,cursor:"pointer",fontFamily:"inherit",fontWeight:700}}>
                 + Add Channel
               </button>
             </label>
-            {/* Quick-add preset chips */}
-            {(f.other_sales||[]).length === 0 && (
-              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:4}}>
-                {OTHER_PRESETS.map(p => (
-                  <button key={p} onClick={() => setF({...f, other_sales:[...(f.other_sales||[]), {name:p,amount:""}]})}
+
+            {availablePresets.length > 0 && (
+              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:6,marginBottom:2}}>
+                {availablePresets.map(p => (
+                  <button key={p.name} onClick={() => addPresetChannel(p)}
+                    title={p.gstInclusive ? "Owner collects GST (÷11)" : "Platform remits GST"}
                     style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:20,padding:"3px 10px",fontSize:11,color:C.muted,cursor:"pointer",fontFamily:"inherit"}}>
-                    {p}
+                    + {p.name}
                   </button>
                 ))}
               </div>
             )}
-            {(f.other_sales||[]).map((o,i) => (
-              <div key={i} style={{display:"flex",gap:6,marginTop:6,alignItems:"center"}}>
-                <input className="inp" placeholder="Channel name (e.g. Shopify)" value={o.name}
-                  onChange={e => { const ns=[...(f.other_sales||[])]; ns[i]={...ns[i],name:e.target.value}; setF({...f,other_sales:ns}); }}
-                  style={{flex:2}}/>
-                <input className="inp" type="number" placeholder="0.00" value={o.amount} inputMode="decimal"
-                  onChange={e => { const ns=[...(f.other_sales||[])]; ns[i]={...ns[i],amount:e.target.value}; setF({...f,other_sales:ns}); }}
-                  style={{flex:1}}/>
-                <button onClick={() => { const ns=(f.other_sales||[]).filter((_,j)=>j!==i); setF({...f,other_sales:ns}); }}
-                  style={{background:"none",border:"none",color:C.dim,cursor:"pointer",fontSize:16,padding:"0 4px",lineHeight:1}}>✕</button>
-              </div>
-            ))}
-            {otherTotal > 0 && <span className="fhint" style={{color:C.teal}}>Platform remits GST — no GST to declare on these amounts</span>}
+
+            {(f.channels || []).length === 0 && (
+              <div style={{fontSize:11,color:C.muted,padding:"12px 0"}}>No channels yet — add one above or tap a preset.</div>
+            )}
+
+            {(f.channels || []).map((c, i) => {
+              const amtNum = parseFloat(c.amount) || 0;
+              return (
+                <div key={i} style={{display:"flex",gap:6,marginTop:8,alignItems:"center",flexWrap:"wrap"}}>
+                  <input className="inp" placeholder="Channel name (e.g. Dine-in)" value={c.name}
+                    onChange={e => updateChannelName(i, e.target.value)}
+                    style={{flex:"2 1 140px", minWidth:"120px"}}/>
+                  <input className="inp" type="number" placeholder="0.00" value={c.amount} inputMode="decimal"
+                    onChange={e => updateChannel(i, { amount:e.target.value })}
+                    style={{flex:"1 1 100px", minWidth:"90px"}}/>
+                  <label style={{display:"flex",alignItems:"center",gap:4,fontSize:11,cursor:"pointer",whiteSpace:"nowrap",padding:"6px 8px",borderRadius:6,
+                    background: c.gstInclusive ? "rgba(212,168,67,.08)" : "rgba(57,211,187,.08)",
+                    border: `1px solid ${c.gstInclusive ? "rgba(212,168,67,.3)" : "rgba(57,211,187,.3)"}`,
+                    color: c.gstInclusive ? C.yellow : C.teal }}>
+                    <input type="checkbox" checked={c.gstInclusive}
+                      onChange={e => updateChannel(i, { gstInclusive:e.target.checked })} style={{margin:0}}/>
+                    GST inc.
+                  </label>
+                  <button onClick={() => removeChannel(i)}
+                    style={{background:"none",border:"none",color:C.dim,cursor:"pointer",fontSize:16,padding:"0 4px",lineHeight:1}}>✕</button>
+                  {amtNum > 0 && (
+                    <span style={{fontSize:10, width:"100%", paddingLeft:2, marginTop:-2,
+                      color: c.gstInclusive ? C.yellow : C.teal}}>
+                      {c.gstInclusive ? `GST: ${money(amtNum/11)}` : "Platform remits GST — nothing to declare"}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
+
         <div className="fbtns">
           <button className="btn" onClick={save}>{editId ? "Save Changes" : "Add Entry"}</button>
-          {editId ? <button className="btn-g" onClick={cancelEdit}>Cancel</button>
-                  : <button className="btn-g" onClick={() => setF(BLANK)}>Clear</button>}
-          {total > 0 && (
+          {editId
+            ? <button className="btn-g" onClick={cancelEdit}>Cancel</button>
+            : <button className="btn-g" onClick={clearForm}>Clear</button>}
+          {formTotal > 0 && (
             <div style={{ marginLeft:"auto", textAlign:"right" }}>
               <div className="clbl">Total today</div>
-              <div className="mono" style={{ fontSize:20, fontWeight:700, color:C.green }}>{money(total)}</div>
-              <div style={{ fontSize:10, color:C.muted }}>GST: {money(total/11)}</div>
+              <div className="mono" style={{ fontSize:20, fontWeight:700, color:C.green }}>{money(formTotal)}</div>
+              <div style={{ fontSize:10, color:C.muted }}>
+                GST: {money(formGSTTaxable/11)}{formGSTTaxable < formTotal && <span style={{color:C.teal, marginLeft:4}}>(excl. platform-remitted)</span>}
+              </div>
             </div>
           )}
         </div>
       </div>
 
+      {/* ── Sales History (expandable rows) ── */}
       <div className="bc">
         <div className="bctit">Sales History</div>
         <table className="tbl">
           <thead>
             <tr>
+              <th style={{width:32}}></th>
               <th>Date</th>
-              <th style={{textAlign:"right"}}>Dine-in</th>
-              <th style={{textAlign:"right"}}>Takeaway</th>
-              <th style={{textAlign:"right"}}>Delivery</th>
-              <th style={{textAlign:"right"}}>Other</th>
+              <th>Channels</th>
               <th style={{textAlign:"right"}}>Total</th>
               <th style={{textAlign:"right"}}>GST</th>
               <th style={{textAlign:"center"}}>Actions</th>
@@ -3936,28 +4051,70 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
           </thead>
           <tbody>
             {revenue.length === 0
-              ? <tr><td colSpan={8}><div className="empty-state"><div className="empty-icon">📭</div><div className="empty-txt">No entries yet. Add manually above or import a CSV from your POS.</div></div></td></tr>
-              : revenue.slice().reverse().map(r => {
-                  const t  = revTotal(r);
-                  const di = r.dine_in  || (r.amount && !r.takeaway ? r.amount : 0) || 0;
-                  const ta = r.takeaway || 0;
-                  const de = r.delivery || 0;
-                  const ot = (r.other_sales||[]).reduce((s,o)=>s+(o.amount||0),0);
-                  const otNames = (r.other_sales||[]).filter(o=>o.amount>0).map(o=>o.name).join(", ");
+              ? <tr><td colSpan={6}><div className="empty-state"><div className="empty-icon">📭</div><div className="empty-txt">No entries yet. Add manually above or import a CSV from your POS.</div></div></td></tr>
+              : [...revenue].sort((a,b) => b.date.localeCompare(a.date)).map(r => {
+                  const chs   = getChannels(r);
+                  const total = revTotal(r);
+                  const gst   = revGSTTaxable(r) / 11;
+                  const isExpanded = expandedId === r.id;
+                  const summary = chs.length === 0 ? "—"
+                    : chs.length <= 2 ? chs.map(c => c.name).join(", ")
+                    : `${chs.slice(0,2).map(c => c.name).join(", ")} +${chs.length - 2}`;
                   return (
-                    <tr key={r.id} style={{ background: editId===r.id ? "rgba(212,168,67,.07)" : undefined }}>
-                      <td className="mono">{r.date}</td>
-                      <td className="mono" style={{textAlign:"right",color:C.teal}}>{di>0?money(di):"—"}</td>
-                      <td className="mono" style={{textAlign:"right"}}>{ta>0?money(ta):"—"}</td>
-                      <td className="mono" style={{textAlign:"right",color:C.purple}}>{de>0?money(de):"—"}</td>
-                      <td className="mono" style={{textAlign:"right",color:C.blue}} title={otNames||undefined}>{ot>0?money(ot):"—"}</td>
-                      <td className="mono" style={{textAlign:"right",fontWeight:700}}>{money(t)}</td>
-                      <td className="mono" style={{textAlign:"right",color:C.yellow}}>{(di+ta)>0?money((di+ta)/11):"—"}</td>
-                      <td style={{textAlign:"center",whiteSpace:"nowrap"}}>
-                        <button className="btn-ic" title="Edit" onClick={() => startEdit(r)}>✏️</button>
-                        <button className="btn-ic" title="Delete" onClick={() => del_(r.id)}>🗑️</button>
-                      </td>
-                    </tr>
+                    <React.Fragment key={r.id}>
+                      <tr style={{
+                        background: editId===r.id ? "rgba(212,168,67,.07)" : (isExpanded ? "rgba(57,211,187,.04)" : undefined),
+                        cursor:"pointer"
+                      }} onClick={() => setExpandedId(isExpanded ? null : r.id)}>
+                        <td style={{textAlign:"center",color:C.muted,userSelect:"none",fontSize:10}}>
+                          {isExpanded ? "▼" : "▶"}
+                        </td>
+                        <td className="mono">{r.date}</td>
+                        <td style={{fontSize:11, color:C.muted}}>
+                          <span style={{fontWeight:600, color:C.text, marginRight:8}}>
+                            {chs.length} {chs.length === 1 ? "channel" : "channels"}
+                          </span>
+                          <span>{summary}</span>
+                        </td>
+                        <td className="mono" style={{textAlign:"right",fontWeight:700}}>{money(total)}</td>
+                        <td className="mono" style={{textAlign:"right",color:C.yellow}}>{gst > 0 ? money(gst) : "—"}</td>
+                        <td style={{textAlign:"center",whiteSpace:"nowrap"}} onClick={e => e.stopPropagation()}>
+                          <button className="btn-ic" title="Edit" onClick={() => startEdit(r)}>✏️</button>
+                          <button className="btn-ic" title="Delete" onClick={() => del_(r.id)}>🗑️</button>
+                        </td>
+                      </tr>
+                      {isExpanded && (
+                        <tr style={{ background:"rgba(57,211,187,.04)" }}>
+                          <td></td>
+                          <td colSpan={5} style={{padding:"6px 12px 12px"}}>
+                            {chs.length === 0 ? (
+                              <div style={{fontSize:11, color:C.muted}}>No channels recorded for this day.</div>
+                            ) : (
+                              <table style={{width:"100%", fontSize:12, borderCollapse:"collapse"}}>
+                                <thead>
+                                  <tr style={{color:C.muted, fontSize:10, textTransform:"uppercase", letterSpacing:".5px"}}>
+                                    <th style={{textAlign:"left", padding:"4px 8px", fontWeight:600}}>Channel</th>
+                                    <th style={{textAlign:"right", padding:"4px 8px", fontWeight:600}}>Amount</th>
+                                    <th style={{textAlign:"right", padding:"4px 8px", fontWeight:600}}>GST Treatment</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {chs.map((c, i) => (
+                                    <tr key={i}>
+                                      <td style={{padding:"4px 8px"}}>{c.name}</td>
+                                      <td className="mono" style={{padding:"4px 8px", textAlign:"right"}}>{money(c.amount)}</td>
+                                      <td className="mono" style={{padding:"4px 8px", textAlign:"right", fontSize:11, color: c.gstInclusive ? C.yellow : C.teal}}>
+                                        {c.gstInclusive ? `GST ${money(c.amount/11)} (÷11)` : "Platform remits"}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   );
                 })
             }
@@ -3965,13 +4122,9 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
           {revenue.length > 0 && (
             <tfoot>
               <tr>
-                <td style={{fontWeight:700}}>TOTAL</td>
-                <td className="mono" style={{textAlign:"right",fontWeight:700,color:C.teal}}>{money(totalDineIn)}</td>
-                <td className="mono" style={{textAlign:"right",fontWeight:700}}>{money(totalTakeaway)}</td>
-                <td className="mono" style={{textAlign:"right",fontWeight:700,color:C.purple}}>{money(totalDelivery)}</td>
-                <td className="mono" style={{textAlign:"right",fontWeight:700,color:C.blue}}>{totalOther>0?money(totalOther):"—"}</td>
+                <td colSpan={3} style={{fontWeight:700}}>TOTAL</td>
                 <td className="mono" style={{textAlign:"right",fontWeight:700}}>{money(totalAll)}</td>
-                <td className="mono" style={{textAlign:"right",color:C.yellow}}>{money((totalDineIn+totalTakeaway)/11)}</td>
+                <td className="mono" style={{textAlign:"right",fontWeight:700,color:C.yellow}}>{money(totalGST)}</td>
                 <td></td>
               </tr>
             </tfoot>

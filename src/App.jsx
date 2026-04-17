@@ -593,17 +593,18 @@ const COGS_CATS = new Set([
 // Helper: filter by date range
 const inRange = (dateStr, from, to) => dateStr >= from && dateStr <= to;
 
-// Revenue total — handles both old {amount} and new {dine_in, takeaway, delivery} structure
+// Revenue total — handles legacy {amount}, standard {dine_in,takeaway,delivery}, and new {other_sales:[]}
 const revTotal = r => r.amount != null
   ? r.amount
-  : (r.dine_in || 0) + (r.takeaway || 0) + (r.delivery || 0);
+  : (r.dine_in || 0) + (r.takeaway || 0) + (r.delivery || 0)
+    + (r.other_sales ? r.other_sales.reduce((s,o) => s+(o.amount||0), 0) : 0);
 
-// GST-taxable revenue — delivery platforms remit GST themselves, so exclude delivery from owner's GST calc
+// GST-taxable revenue — delivery platforms and marketplace platforms remit GST themselves
 // Dine-in and Takeaway: owner collects GST → declare ÷11
-// Delivery (Uber Eats, DoorDash etc): platform collects & remits GST → owner gets net, no GST to declare
+// Delivery (Uber Eats, DoorDash) + Other Sales (Shopify, eBay, Amazon): platform remits GST
 const revGSTTaxable = r => r.amount != null
   ? r.amount                    // legacy: treat all as taxable (old entries)
-  : (r.dine_in || 0) + (r.takeaway || 0); // delivery excluded
+  : (r.dine_in || 0) + (r.takeaway || 0); // delivery + other_sales excluded (platforms remit GST)
 
 // Timesheets use ISO week — convert week to a date (Monday of that week)
 const weekToDate = w => {
@@ -2758,7 +2759,7 @@ function Sidebar({ page, setPage, onLogout, flagCount }) {
     { sec:"Overview" },
     { id:"dashboard", ico:"📊", lbl:"Dashboard" },
     { sec:"Tracking" },
-    { id:"revenue",   ico:"💵", lbl:"Revenue" },
+    { id:"revenue",   ico:"💵", lbl:"Sales" },
     { id:"expenses",  ico:"🧾", lbl:"Expenses" },
     { sec:"People" },
     { id:"wages",     ico:"👤", lbl:"Staff & Wages" },
@@ -3310,7 +3311,7 @@ function DashboardPage({ revenue, expenses, employees, timesheets, insurance, se
                 ]}/>
               </div>
               <div className="bc">
-                <div className="bctit">Daily Revenue — {monthLabel}</div>
+                <div className="bctit">Sales — {monthLabel}</div>
                 <BarChart data={revMonth.slice(-7).map(r=>({label:r.date.slice(8),v:revTotal(r)}))}/>
               </div>
             </div>
@@ -3462,7 +3463,7 @@ function DashboardPage({ revenue, expenses, employees, timesheets, insurance, se
 //  REVENUE PAGE
 // ════════════════════════════════════════════════════════════
 function RevenuePage({ revenue, setRevenue, showToast }) {
-  const BLANK = { date:todayStr, dine_in:"", takeaway:"", delivery:"" };
+  const BLANK = { date:todayStr, dine_in:"", takeaway:"", delivery:"", other_sales:[] };
   const [f,        setF]        = useState(BLANK);
   const [editId,   setEditId]   = useState(null);
   const [showImport,  setShowImport]  = useState(false);
@@ -3472,6 +3473,8 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
   const [csvPreview,  setCsvPreview]  = useState([]);
   const [csvError,    setCsvError]    = useState("");
   const [csvStep,     setCsvStep]     = useState("upload");
+  // Other sales channel suggestions
+  const OTHER_PRESETS = ["Uber Eats","DoorDash","Menulog","Shopify","eBay","Amazon","Etsy","Direct Online"];
 
   // ── CSV mapping memory — remember by header fingerprint ──
   const csvMapKey    = hdrs => "mise_csv_" + hdrs.slice().sort().join("|").slice(0,100);
@@ -3569,21 +3572,30 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
   const din   = parseFloat(f.dine_in)  || 0;
   const tak   = parseFloat(f.takeaway) || 0;
   const del   = parseFloat(f.delivery) || 0;
-  const total = din + tak + del;
+  const otherTotal = (f.other_sales||[]).reduce((s,o) => s+(parseFloat(o.amount)||0), 0);
+  const total = din + tak + del + otherTotal;
 
   const save = () => {
     if (!total) return;
-    const entry = { date:f.date, dine_in:din, takeaway:tak, delivery:del };
+    const entry = {
+      date:f.date, dine_in:din, takeaway:tak, delivery:del,
+      other_sales: (f.other_sales||[]).filter(o => o.name && parseFloat(o.amount)>0)
+        .map(o => ({ name:o.name.trim(), amount:parseFloat(o.amount)||0 }))
+    };
     if (editId) {
       setRevenue(p => p.map(r => r.id === editId ? {...r,...entry} : r));
       showToast("Entry updated!"); setEditId(null);
     } else {
       setRevenue(p => [...p, { id:Date.now(), ...entry }]);
-      showToast("Revenue added!");
+      showToast("Sales added!");
     }
     setF(BLANK);
   };
-  const startEdit = r => { setEditId(r.id); setF({ date:r.date, dine_in:String(r.dine_in||r.amount||""), takeaway:String(r.takeaway||""), delivery:String(r.delivery||"") }); window.scrollTo({top:0,behavior:"smooth"}); };
+  const startEdit = r => {
+    setEditId(r.id);
+    setF({ date:r.date, dine_in:String(r.dine_in||r.amount||""), takeaway:String(r.takeaway||""), delivery:String(r.delivery||""), other_sales:(r.other_sales||[]).map(o=>({name:o.name,amount:String(o.amount)})) });
+    window.scrollTo({top:0,behavior:"smooth"});
+  };
   const cancelEdit = () => { setEditId(null); setF(BLANK); };
   const del_ = id => { setRevenue(p => p.filter(x => x.id !== id)); if (editId===id) cancelEdit(); showToast("Deleted."); };
 
@@ -3662,6 +3674,7 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
   const totalDineIn   = revenue.reduce((s,r) => s+(r.dine_in||0), 0);
   const totalTakeaway = revenue.reduce((s,r) => s+(r.takeaway||0), 0);
   const totalDelivery = revenue.reduce((s,r) => s+(r.delivery||0), 0);
+  const totalOther    = revenue.reduce((s,r) => s+((r.other_sales||[]).reduce((a,o)=>a+(o.amount||0),0)), 0);
   const totalAll      = revenue.reduce((s,r) => s+revTotal(r), 0);
 
   return (
@@ -3677,10 +3690,11 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
 
       <div className="g4">
         {[
-          { lbl:"Total Revenue",    val:money(totalAll),        cls:"b" },
-          { lbl:"Dine-in",          val:money(totalDineIn),     cls:"t" },
-          { lbl:"Takeaway",         val:money(totalTakeaway),   cls:"" },
-          { lbl:"Delivery Platform",val:money(totalDelivery),   cls:"p" },
+          { lbl:"Total Sales",        val:money(totalAll),        cls:"b" },
+          { lbl:"Dine-in",            val:money(totalDineIn),     cls:"t" },
+          { lbl:"Takeaway",           val:money(totalTakeaway),   cls:"" },
+          { lbl:"Delivery Platform",  val:money(totalDelivery),   cls:"p" },
+          ...(totalOther > 0 ? [{ lbl:"Other Channels", val:money(totalOther), cls:"" }] : []),
         ].map((c,i) => <div key={i} className="card"><div className="clbl">{c.lbl}</div><div className={`cval ${c.cls}`}>{c.val}</div></div>)}
       </div>
 
@@ -3810,12 +3824,12 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
       <div className="alert al-t" style={{ marginBottom:14 }}>
         <span className="al-ico">💡</span>
         <div><div className="al-ttl">Channel GST note</div>
-        <div className="al-msg">Dine-in &amp; Takeaway: enter the full amount including GST — Mise calculates GST at ÷11. Delivery platforms (Uber Eats, DoorDash): enter the gross sale amount; the platform remits GST separately.</div></div>
+        <div className="al-msg">Dine-in &amp; Takeaway: enter the full amount including GST — Mise calculates GST at ÷11. Delivery &amp; Other Sales channels (Uber Eats, Shopify, eBay, Amazon etc): enter the gross amount; the platform remits GST separately — no GST to declare on these.</div></div>
       </div>
 
       <div className="fsec" style={{ border: editId ? `1px solid ${C.yellow}` : undefined }}>
         <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", flexWrap:"wrap", gap:8, marginBottom:10 }}>
-          <div className="ftit" style={{ marginBottom:0 }}>{editId ? "✏️ Edit Entry" : "Add Daily Revenue"}</div>
+          <div className="ftit" style={{ marginBottom:0 }}>{editId ? "✏️ Edit Entry" : "Add Sales"}</div>
           {/* Repeat yesterday — pre-fills form with yesterday's amounts for quick entry */}
           {!editId && (() => {
             const yesterday = new Date(); yesterday.setDate(yesterday.getDate()-1);
@@ -3824,7 +3838,7 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
                         || [...revenue].reverse()[0];
             if (!yEntry) return null;
             return (
-              <button onClick={() => setF({ date:todayStr, dine_in:String(yEntry.dine_in||""), takeaway:String(yEntry.takeaway||""), delivery:String(yEntry.delivery||"") })}
+              <button onClick={() => setF({ date:todayStr, dine_in:String(yEntry.dine_in||""), takeaway:String(yEntry.takeaway||""), delivery:String(yEntry.delivery||""), other_sales:(yEntry.other_sales||[]).map(o=>({name:o.name,amount:String(o.amount)})) })}
                 style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 12px", borderRadius:8, cursor:"pointer", fontFamily:"inherit", fontSize:11.5, fontWeight:700, flexShrink:0,
                   background:"rgba(143,203,114,.12)", border:`1px solid rgba(143,203,114,.35)`, color:C.accent }}>
                 🔁 Repeat {yEntry.date === yStr ? "Yesterday" : "Last Entry"}
@@ -3855,6 +3869,41 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
             <input className="inp" type="number" placeholder="0.00" value={f.delivery} onChange={e => setF({...f,delivery:e.target.value})} inputMode="decimal"/>
             {del > 0 && <span className="fhint" style={{color:C.teal}}>Platform remits GST — no GST to declare on this amount</span>}
           </div>
+
+          {/* ── Other Sales (Shopify, eBay, Amazon, etc.) ── */}
+          <div className="fg">
+            <label className="flbl" style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <span>Other Sales Channels</span>
+              <button onClick={() => setF({...f, other_sales:[...(f.other_sales||[]), {name:"",amount:""}]})}
+                style={{background:"none",border:`1px dashed ${C.border}`,borderRadius:6,padding:"2px 10px",fontSize:11,color:C.accent,cursor:"pointer",fontFamily:"inherit",fontWeight:700}}>
+                + Add Channel
+              </button>
+            </label>
+            {/* Quick-add preset chips */}
+            {(f.other_sales||[]).length === 0 && (
+              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:4}}>
+                {OTHER_PRESETS.map(p => (
+                  <button key={p} onClick={() => setF({...f, other_sales:[...(f.other_sales||[]), {name:p,amount:""}]})}
+                    style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:20,padding:"3px 10px",fontSize:11,color:C.muted,cursor:"pointer",fontFamily:"inherit"}}>
+                    {p}
+                  </button>
+                ))}
+              </div>
+            )}
+            {(f.other_sales||[]).map((o,i) => (
+              <div key={i} style={{display:"flex",gap:6,marginTop:6,alignItems:"center"}}>
+                <input className="inp" placeholder="Channel name (e.g. Shopify)" value={o.name}
+                  onChange={e => { const ns=[...(f.other_sales||[])]; ns[i]={...ns[i],name:e.target.value}; setF({...f,other_sales:ns}); }}
+                  style={{flex:2}}/>
+                <input className="inp" type="number" placeholder="0.00" value={o.amount} inputMode="decimal"
+                  onChange={e => { const ns=[...(f.other_sales||[])]; ns[i]={...ns[i],amount:e.target.value}; setF({...f,other_sales:ns}); }}
+                  style={{flex:1}}/>
+                <button onClick={() => { const ns=(f.other_sales||[]).filter((_,j)=>j!==i); setF({...f,other_sales:ns}); }}
+                  style={{background:"none",border:"none",color:C.dim,cursor:"pointer",fontSize:16,padding:"0 4px",lineHeight:1}}>✕</button>
+              </div>
+            ))}
+            {otherTotal > 0 && <span className="fhint" style={{color:C.teal}}>Platform remits GST — no GST to declare on these amounts</span>}
+          </div>
         </div>
         <div className="fbtns">
           <button className="btn" onClick={save}>{editId ? "Save Changes" : "Add Entry"}</button>
@@ -3871,7 +3920,7 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
       </div>
 
       <div className="bc">
-        <div className="bctit">Revenue History</div>
+        <div className="bctit">Sales History</div>
         <table className="tbl">
           <thead>
             <tr>
@@ -3879,6 +3928,7 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
               <th style={{textAlign:"right"}}>Dine-in</th>
               <th style={{textAlign:"right"}}>Takeaway</th>
               <th style={{textAlign:"right"}}>Delivery</th>
+              <th style={{textAlign:"right"}}>Other</th>
               <th style={{textAlign:"right"}}>Total</th>
               <th style={{textAlign:"right"}}>GST</th>
               <th style={{textAlign:"center"}}>Actions</th>
@@ -3886,20 +3936,23 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
           </thead>
           <tbody>
             {revenue.length === 0
-              ? <tr><td colSpan={7}><div className="empty-state"><div className="empty-icon">📭</div><div className="empty-txt">No entries yet. Add manually above or import a CSV from your POS.</div></div></td></tr>
+              ? <tr><td colSpan={8}><div className="empty-state"><div className="empty-icon">📭</div><div className="empty-txt">No entries yet. Add manually above or import a CSV from your POS.</div></div></td></tr>
               : revenue.slice().reverse().map(r => {
-                  const t = revTotal(r);
+                  const t  = revTotal(r);
                   const di = r.dine_in  || (r.amount && !r.takeaway ? r.amount : 0) || 0;
                   const ta = r.takeaway || 0;
                   const de = r.delivery || 0;
+                  const ot = (r.other_sales||[]).reduce((s,o)=>s+(o.amount||0),0);
+                  const otNames = (r.other_sales||[]).filter(o=>o.amount>0).map(o=>o.name).join(", ");
                   return (
                     <tr key={r.id} style={{ background: editId===r.id ? "rgba(212,168,67,.07)" : undefined }}>
                       <td className="mono">{r.date}</td>
                       <td className="mono" style={{textAlign:"right",color:C.teal}}>{di>0?money(di):"—"}</td>
                       <td className="mono" style={{textAlign:"right"}}>{ta>0?money(ta):"—"}</td>
                       <td className="mono" style={{textAlign:"right",color:C.purple}}>{de>0?money(de):"—"}</td>
+                      <td className="mono" style={{textAlign:"right",color:C.blue}} title={otNames||undefined}>{ot>0?money(ot):"—"}</td>
                       <td className="mono" style={{textAlign:"right",fontWeight:700}}>{money(t)}</td>
-                      <td className="mono" style={{textAlign:"right",color:C.yellow}}>{((r.dine_in||(r.amount&&!r.takeaway?r.amount:0)||0)+(r.takeaway||0))>0?money(((r.dine_in||(r.amount&&!r.takeaway?r.amount:0)||0)+(r.takeaway||0))/11):"—"}</td>
+                      <td className="mono" style={{textAlign:"right",color:C.yellow}}>{(di+ta)>0?money((di+ta)/11):"—"}</td>
                       <td style={{textAlign:"center",whiteSpace:"nowrap"}}>
                         <button className="btn-ic" title="Edit" onClick={() => startEdit(r)}>✏️</button>
                         <button className="btn-ic" title="Delete" onClick={() => del_(r.id)}>🗑️</button>
@@ -3916,8 +3969,9 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
                 <td className="mono" style={{textAlign:"right",fontWeight:700,color:C.teal}}>{money(totalDineIn)}</td>
                 <td className="mono" style={{textAlign:"right",fontWeight:700}}>{money(totalTakeaway)}</td>
                 <td className="mono" style={{textAlign:"right",fontWeight:700,color:C.purple}}>{money(totalDelivery)}</td>
+                <td className="mono" style={{textAlign:"right",fontWeight:700,color:C.blue}}>{totalOther>0?money(totalOther):"—"}</td>
                 <td className="mono" style={{textAlign:"right",fontWeight:700}}>{money(totalAll)}</td>
-                <td className="mono" style={{textAlign:"right",color:C.yellow}}>{money((revenue.reduce((s,r)=>s+(r.dine_in||(r.amount&&!r.takeaway?r.amount:0)||0)+(r.takeaway||0),0))/11)}</td>
+                <td className="mono" style={{textAlign:"right",color:C.yellow}}>{money((totalDineIn+totalTakeaway)/11)}</td>
                 <td></td>
               </tr>
             </tfoot>
@@ -10889,7 +10943,7 @@ function BottomTabBar({ page, setPage, flagCount }) {
 
   const tabs = [
     { id:"dashboard", ico:"📊", lbl:"Home"     },
-    { id:"revenue",   ico:"💵", lbl:"Revenue"  },
+    { id:"revenue",   ico:"💵", lbl:"Sales"  },
     { id:"wages",     ico:"👤", lbl:"Staff"    },
     { id:"documents", ico:"📁", lbl:"Docs"     },
     { id:"more",      ico:"⋯",  lbl:"More"     },

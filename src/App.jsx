@@ -664,6 +664,23 @@ const pdfSafeName = s => {
   return a || "Other Channel";
 };
 
+// ────────────────────────────────────────────────────────────
+// Expense GST — supports partial GST amounts on mixed invoices.
+//   • e.gst_amount (number): explicit GST value from invoice → use as-is
+//   • e.gst (boolean, no gst_amount): full GST → amount/11
+//   • e.gst === false: no GST → 0
+// Backward compatible: old records without gst_amount fall through to /11.
+// ────────────────────────────────────────────────────────────
+const expGST = e => {
+  if (!e) return 0;
+  if (e.gst_amount != null && e.gst_amount !== "") {
+    const n = Number(e.gst_amount);
+    return isNaN(n) ? 0 : n;
+  }
+  if (e.gst) return (e.amount || 0) / 11;
+  return 0;
+};
+
 // Timesheets use ISO week — convert week to a date (Monday of that week)
 const weekToDate = w => {
   if (!w) return "";
@@ -1458,7 +1475,7 @@ const renderExpenseReportPDF = ({filtered, totalExp, gstCreds, missingCred, hasF
       e.date, e.cat,
       e.desc.length>26?e.desc.slice(0,26)+'…':e.desc,
       `$${e.amount.toFixed(2)}`,
-      e.gst?`$${(e.amount/11).toFixed(2)}`:'—',
+      e.gst?`$${expGST(e).toFixed(2)}`:'—',
       e.invoice?'Yes':{text:'No',color:'#DC2626'},
     ]),
     cols,
@@ -2097,7 +2114,7 @@ function buildBASData(revenue, expenses, timesheets, employees, insurance, docs,
   const totalRev   = qRev.reduce((s,r) => s + revTotal(r), 0);
   const gstTaxable = qRev.reduce((s,r) => s + revGSTTaxable(r), 0);
   const gstColl    = gstTaxable / 11;
-  const gstCreds   = qExp.filter(e => e.gst).reduce((s,e) => s + e.amount/11, 0);
+  const gstCreds   = qExp.filter(e => e.gst).reduce((s,e) => s + expGST(e), 0);
   const netGST     = gstColl - gstCreds;
   const totalWages = qTs.reduce((s,t) => s + t.gross,  0);
   const totalPayg  = qTs.reduce((s,t) => s + t.payg,   0);
@@ -2913,7 +2930,7 @@ function DashboardPage({ revenue, expenses, employees, timesheets, insurance, se
   const totalExp   = expMonth.reduce((s,e) => s+e.amount, 0);
   const gstTaxable = revMonth.reduce((s,r) => s+revGSTTaxable(r), 0);
   const gstColl    = gstTaxable / 11;
-  const gstCreds   = expMonth.filter(e=>e.gst).reduce((s,e)=>s+e.amount/11, 0);
+  const gstCreds   = expMonth.filter(e=>e.gst).reduce((s,e)=>s+expGST(e), 0);
   const gstPay     = gstColl - gstCreds;
   const totalWages = tsMonth.reduce((s,t)=>s+t.gross, 0);
   const totalPayg  = tsMonth.reduce((s,t)=>s+t.payg,  0);
@@ -3292,7 +3309,7 @@ function DashboardPage({ revenue, expenses, employees, timesheets, insurance, se
         const qRev    = qRevAll.reduce((s,r) => s+revTotal(r), 0);
         const qGSTTaxable = qRevAll.reduce((s,r) => s+revGSTTaxable(r), 0);
         const qGST    = qGSTTaxable / 11;
-        const qCreds  = qExpAll.filter(e=>e.gst).reduce((s,e)=>s+e.amount/11, 0);
+        const qCreds  = qExpAll.filter(e=>e.gst).reduce((s,e)=>s+expGST(e), 0);
         const qNetGST = Math.max(0, qGST - qCreds);
         const qPAYG   = qTsAll.reduce((s,t)=>s+t.payg, 0);
         const qSuper  = qTsAll.reduce((s,t)=>s+t.super, 0);
@@ -4140,7 +4157,7 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
 //  EXPENSES PAGE
 // ════════════════════════════════════════════════════════════
 function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant", dismissed = [], setDismissed }) {
-  const [f, setF] = useState({ date:todayStr, cat:"ingredients", amount:"", desc:"", gst:"yes", invoice:"yes", invoice_date:"" });
+  const [f, setF] = useState({ date:todayStr, cat:"ingredients", amount:"", desc:"", gst:"yes", gst_amount:"", invoice:"yes", invoice_date:"" });
   const [search,    setSearch]    = useState("");
   const [filterCat, setFilterCat] = useState("all");
   const [filterGst, setFilterGst] = useState("all");
@@ -4518,7 +4535,9 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
       id:Date.now(), date:f.date, cat:f.cat,
       amount:parseFloat(f.amount)||0,
       desc: fullDesc,
-      gst:f.gst==="yes", invoice:f.invoice==="yes"
+      gst: f.gst !== "no",
+      ...(f.gst === "partial" ? { gst_amount: parseFloat(f.gst_amount)||0 } : {}),
+      invoice:f.invoice==="yes"
     }]);
     trackCatUsage(f.cat);
 
@@ -4535,7 +4554,7 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
       });
     }
 
-    setF({ date:todayStr, cat: personalSortedCats[0] || "ingredients", amount:"", desc:"", gst:"yes", invoice:"yes" });
+    setF({ date:todayStr, cat: personalSortedCats[0] || "ingredients", amount:"", desc:"", gst:"yes", gst_amount:"", invoice:"yes" });
     setSelCat(null); setSupplier(""); setCatQuery("");
     setAutoSuggest(null); setSuggestDismissed(false);
     setTeachPrompt(null); setManualCat(false);
@@ -4558,9 +4577,9 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
 
   // ── Stats ────────────────────────────────────────────────
   const totalExp    = expenses.reduce((s,e) => s + e.amount, 0);
-  const gstCreds    = expenses.filter(e => e.gst && e.invoice).reduce((s,e) => s + e.amount/11, 0);
+  const gstCreds    = expenses.filter(e => e.gst && e.invoice).reduce((s,e) => s + expGST(e), 0);
   const missingInv  = expenses.filter(e => e.gst && !e.invoice);
-  const missingCred = missingInv.reduce((s,e) => s + e.amount/11, 0);
+  const missingCred = missingInv.reduce((s,e) => s + expGST(e), 0);
   const entFlag     = expenses.filter(e => ["entertainment","meals"].includes(e.cat));
   const largeNoInv  = expenses.filter(e => e.amount >= 82.50 && !e.invoice);
 
@@ -4621,7 +4640,7 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
   const exportCSV = () => {
     const rows = [
       ["Date","Category","Description","Amount","GST Credit","Invoice on File"],
-      ...filtered.map(e => [e.date, e.cat, `"${e.desc}"`, e.amount.toFixed(2), e.gst ? (e.amount/11).toFixed(2) : "0.00", e.invoice ? "Yes" : "No"])
+      ...filtered.map(e => [e.date, e.cat, `"${e.desc}"`, e.amount.toFixed(2), expGST(e).toFixed(2), e.invoice ? "Yes" : "No"])
     ];
     const csv = rows.map(r => r.join(",")).join("\n");
     const a   = document.createElement("a");
@@ -4658,7 +4677,7 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
               <td>{e.cat}</td>
               <td style={{color:"#6B7280"}}>{e.desc}</td>
               <td style={{textAlign:"right",fontFamily:"DM Mono,monospace",fontWeight:600}}>{money(e.amount)}</td>
-              <td style={{textAlign:"right",fontFamily:"DM Mono,monospace",color: e.gst && e.invoice ? "#16A34A" : "#9CA3AF"}}>{e.gst ? money(e.amount/11) : "—"}</td>
+              <td style={{textAlign:"right",fontFamily:"DM Mono,monospace",color: e.gst && e.invoice ? "#16A34A" : "#9CA3AF"}}>{e.gst ? money(expGST(e)) : "—"}</td>
               <td>{e.invoice ? "✅ Yes" : "❌ No"}</td>
             </tr>
           ))}
@@ -4841,7 +4860,9 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
                   return (
                     <button key={i} onClick={() => setF(f => ({
                       ...f, cat:e.cat, desc:e.desc, amount:String(e.amount),
-                      gst:e.gst?"yes":"no", invoice:e.invoice?"yes":"no"
+                      gst: e.gst_amount != null ? "partial" : (e.gst ? "yes" : "no"),
+                      gst_amount: e.gst_amount != null ? String(e.gst_amount) : "",
+                      invoice: e.invoice ? "yes" : "no"
                     }))}
                       style={{
                         display:"flex", alignItems:"center", gap:6, padding:"6px 11px",
@@ -5151,12 +5172,34 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
             )}
           </div>
           <div className="fg"><label className="flbl">GST Applicable?</label>
-            <select className="sel" value={f.gst} onChange={e => setF({...f,gst:e.target.value})}>
-              <option value="yes">Yes — includes GST</option>
+            <select className="sel" value={f.gst} onChange={e => {
+              const v = e.target.value;
+              setF(prev => ({
+                ...prev,
+                gst: v,
+                // Pre-fill partial GST with the /11 estimate when first switching to it
+                gst_amount: v === "partial" && !prev.gst_amount
+                  ? ((parseFloat(prev.amount) || 0) / 11).toFixed(2)
+                  : (v === "partial" ? prev.gst_amount : "")
+              }));
+            }}>
+              <option value="yes">Yes — full GST (÷11)</option>
+              <option value="partial">Yes — partial GST (enter amount)</option>
               <option value="no">No — GST-free</option>
             </select>
+            {f.gst === "partial" && (
+              <div style={{marginTop:8, display:"flex", alignItems:"center", gap:8, padding:"8px 10px", background:"rgba(61,201,160,.05)", border:`1px solid rgba(61,201,160,.2)`, borderRadius:7}}>
+                <span style={{fontSize:11.5, color:C.muted, whiteSpace:"nowrap", fontWeight:600}}>GST on invoice ($):</span>
+                <input className="inp" type="number" placeholder="e.g. 12.34" value={f.gst_amount}
+                  onChange={e => setF({...f, gst_amount:e.target.value})} inputMode="decimal"
+                  style={{flex:1, minWidth:0, margin:0}}/>
+              </div>
+            )}
+            {f.gst === "partial" && parseFloat(f.amount) > 0 && parseFloat(f.gst_amount) > parseFloat(f.amount) && (
+              <span className="fhint" style={{color:C.red}}>⚠️ GST can't exceed total amount</span>
+            )}
             {selCat === "liquor_license" && <span className="fhint" style={{color:C.yellow}}>⚠️ Liquor licence has no GST</span>}
-            {selCat === "ingredients"    && <span className="fhint" style={{color:C.yellow}}>⚠️ Fresh food may be GST-free</span>}
+            {selCat === "ingredients"    && <span className="fhint" style={{color:C.yellow}}>⚠️ Fresh food may be GST-free — use "partial GST" if mixed</span>}
           </div>
           <div className="fg"><label className="flbl">Tax Invoice on File?</label>
             <select className="sel" value={f.invoice} onChange={e => setF({...f,invoice:e.target.value})}>
@@ -5185,30 +5228,37 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
           )}
         </div>
 
-        {/* GST live preview */}
-        {parseFloat(f.amount) > 0 && f.gst === "yes" && (
-          <div style={{ background:"rgba(61,201,160,.06)", border:"1px solid rgba(61,201,160,.2)", borderRadius:10, padding:"11px 15px", margin:"12px 0", display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10 }}>
-            <div style={{ display:"flex", gap:20, flexWrap:"wrap" }}>
-              {[
-                { lbl:"Total (incl. GST)",  val:money(parseFloat(f.amount)||0) },
-                { lbl:"GST component",       val:money((parseFloat(f.amount)||0)/11) },
-                { lbl:"Net (ex-GST)",        val:money((parseFloat(f.amount)||0)/11*10) },
-              ].map((s,i) => (
-                <div key={i}>
-                  <div style={{ fontSize:10, color:C.dim, textTransform:"uppercase", letterSpacing:".5px" }}>{s.lbl}</div>
-                  <div style={{ fontFamily:"'DM Mono',monospace", fontSize:15, fontWeight:600, color:C.teal, marginTop:2 }}>{s.val}</div>
-                </div>
-              ))}
+        {/* GST live preview — works for both full and partial GST */}
+        {parseFloat(f.amount) > 0 && f.gst !== "no" && (() => {
+          const total = parseFloat(f.amount) || 0;
+          const gstVal = f.gst === "partial"
+            ? Math.min(parseFloat(f.gst_amount) || 0, total)
+            : total / 11;
+          const net = total - gstVal;
+          return (
+            <div style={{ background:"rgba(61,201,160,.06)", border:"1px solid rgba(61,201,160,.2)", borderRadius:10, padding:"11px 15px", margin:"12px 0", display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10 }}>
+              <div style={{ display:"flex", gap:20, flexWrap:"wrap" }}>
+                {[
+                  { lbl:"Total (incl. GST)",                                    val: money(total) },
+                  { lbl: f.gst === "partial" ? "GST (from invoice)" : "GST component", val: money(gstVal) },
+                  { lbl:"Net (ex-GST)",                                         val: money(net) },
+                ].map((s,i) => (
+                  <div key={i}>
+                    <div style={{ fontSize:10, color:C.dim, textTransform:"uppercase", letterSpacing:".5px" }}>{s.lbl}</div>
+                    <div style={{ fontFamily:"'DM Mono',monospace", fontSize:15, fontWeight:600, color:C.teal, marginTop:2 }}>{s.val}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontSize:11, color: f.invoice==="yes" ? C.teal : C.yellow }}>
+                {f.invoice==="yes" ? "✅ Claimable on BAS" : "⚠️ Get invoice to claim"}
+              </div>
             </div>
-            <div style={{ fontSize:11, color: f.invoice==="yes" ? C.teal : C.yellow }}>
-              {f.invoice==="yes" ? "✅ Claimable on BAS" : "⚠️ Get invoice to claim"}
-            </div>
-          </div>
-        )}
+          );
+        })()}
 
         <div className="fbtns">
           <button className="btn" onClick={add}>+ Add Expense</button>
-          <button className="btn-g" onClick={() => { setF({date:todayStr,cat:personalSortedCats[0]||"ingredients",amount:"",desc:"",gst:"yes",invoice:"yes"}); setSelCat(null); setSupplier(""); setCatQuery(""); setAutoSuggest(null); setSuggestDismissed(false); setTeachPrompt(null); setManualCat(false); setSavingTemplate(false); setTemplateName(""); }}>Clear</button>
+          <button className="btn-g" onClick={() => { setF({date:todayStr,cat:personalSortedCats[0]||"ingredients",amount:"",desc:"",gst:"yes",gst_amount:"",invoice:"yes"}); setSelCat(null); setSupplier(""); setCatQuery(""); setAutoSuggest(null); setSuggestDismissed(false); setTeachPrompt(null); setManualCat(false); setSavingTemplate(false); setTemplateName(""); }}>Clear</button>
           {/* Save as template — only offer when desc is filled */}
           {f.desc.trim() && !savingTemplate && (
             <button onClick={() => { setSavingTemplate(true); setTemplateName(f.desc.trim().slice(0,40)); }}
@@ -5469,7 +5519,7 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
                         <td style={{ color:C.muted }}>{e.desc}</td>
                         <td style={{ fontWeight:700 }}>{money(e.amount)}</td>
                         <td style={{ color: e.gst && e.invoice ? C.green : C.dim }}>
-                          {e.gst ? (e.invoice ? money(e.amount/11) : <span style={{ color:C.red }}>Need invoice</span>) : "—"}
+                          {e.gst ? (e.invoice ? money(expGST(e)) : <span style={{ color:C.red }}>Need invoice</span>) : "—"}
                         </td>
                         <td>{e.invoice ? <span className="pill pl-g">✅ Yes</span> : <span className="pill pl-r">❌ No</span>}</td>
                         <td><button className="btn-ic" onClick={() => { setExpenses(p => p.filter(x => x.id !== e.id)); showToast("Expense deleted"); }}>🗑️</button></td>
@@ -8782,7 +8832,7 @@ function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimeshe
   const suggestions= analysed.filter(e => e.suggestion).length;
   const entFlags   = analysed.filter(e => e.ent).length;
   const unpaidSup  = timesheets.filter(t => !t.super_paid).length;
-  const claimable  = analysed.filter(e => e.gstStatus === "claimable").reduce((s,e) => s + e.amount/11, 0);
+  const claimable  = analysed.filter(e => e.gstStatus === "claimable").reduce((s,e) => s + expGST(e), 0);
   const score      = Math.max(0, Math.min(100, 100 - missing*12 - suggestions*8 - entFlags*10 - unpaidSup*15));
 
   const gstCfg = {
@@ -8895,7 +8945,7 @@ function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimeshe
                 {missing>0 ? `Request ${missing} missing invoice${missing>1?"s":""}` : suggestions>0 ? `Re-categorise ${suggestions} expense${suggestions>1?"s":""}` : unpaidSup>0 ? "Pay outstanding super this week" : "You're up to date! 🎉"}
               </div>
               <div style={{ fontSize:11, color:C.muted }}>
-                {missing>0 ? `Unlocks ${money(analysed.filter(e=>e.gstStatus==="missing-invoice").reduce((s,e)=>s+e.amount/11,0))} in GST credits` : unpaidSup>0 ? "Avoid SGC penalties — from Jul 2026 super is due each payday (Payday Super)" : "Keep logging expenses and revenue regularly."}
+                {missing>0 ? `Unlocks ${money(analysed.filter(e=>e.gstStatus==="missing-invoice").reduce((s,e)=>s+expGST(e),0))} in GST credits` : unpaidSup>0 ? "Avoid SGC penalties — from Jul 2026 super is due each payday (Payday Super)" : "Keep logging expenses and revenue regularly."}
               </div>
             </div>
             <div className="card">
@@ -8929,7 +8979,7 @@ function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimeshe
                         <div style={{ fontSize:10.5, color:C.muted, marginTop:1 }}>{e.date} · {e.cat}</div>
                       </td>
                       <td className="mono" style={{ fontWeight:700 }}>{money(e.amount)}</td>
-                      <td className="mono" style={{ color:C.teal }}>{e.gstStatus==="claimable" ? money(e.amount/11) : "—"}</td>
+                      <td className="mono" style={{ color:C.teal }}>{e.gstStatus==="claimable" ? money(expGST(e)) : "—"}</td>
                       <td><span className={`pill ${cfg.cls}`}>{cfg.ico} {cfg.lbl}</span></td>
                       <td style={{ color:C.muted, fontSize:10.5 }}>{open?"▲":"▼"}</td>
                     </tr>,
@@ -8941,14 +8991,14 @@ function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimeshe
                               <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, flexWrap:"wrap" }}>
                                 <div>
                                   <div style={{ fontWeight:600, fontSize:12.5, marginBottom:3 }}>⚠️ Tax invoice required for purchases over $82.50</div>
-                                  <div style={{ fontSize:11.5, color:C.muted }}>Claim {money(e.amount/11)} GST credit once invoice is on file.</div>
+                                  <div style={{ fontSize:11.5, color:C.muted }}>Claim {money(expGST(e))} GST credit once invoice is on file.</div>
                                 </div>
                                 <button className="btn-t" onClick={() => markInvoice(e.id)}>✅ Mark Invoice Received</button>
                               </div>
                             )}
                             {e.gstStatus==="review" && <div style={{ fontSize:11.5, color:C.muted }}>Not marked as GST — check receipt. If GST is shown, update this entry.</div>}
                             {e.gstMismatch && <div style={{ fontSize:11.5, color:C.yellow, marginTop:3 }}>⚠️ GST mismatch — <strong>{CAT_CONFIG[e.cat]?.label || e.cat}</strong> expenses are usually {CAT_GST_DEFAULT[e.cat]?"GST-inclusive":"GST-free"}. Check this entry.</div>}
-                            {e.gstStatus==="claimable" && <div style={{ fontSize:11.5, color:C.green }}>✅ GST credit of {money(e.amount/11)} is claimable. All good.</div>}
+                            {e.gstStatus==="claimable" && <div style={{ fontSize:11.5, color:C.green }}>✅ GST credit of {money(expGST(e))} is claimable. All good.</div>}
                             {e.gstStatus==="not-claimable" && <div style={{ fontSize:11.5, color:C.muted }}>No GST credit — GST-free or entertainment expense.</div>}
                           </div>
                         </td>

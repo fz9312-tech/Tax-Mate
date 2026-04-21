@@ -11410,31 +11410,61 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  const bootFromSession = async (session) => {
-    // Find or create business row for this user
-    let { data: biz } = await sb().from("businesses").select("id,name,abn,industry")
-      .eq("owner_id", session.user.id).limit(1);
+const bootFromSession = async (session) => {
+    // ── Race-condition-safe business row resolution ───────────────
+    // Defends against three failure modes:
+    //   1. Concurrent bootFromSession calls (double-click, auth callback fires twice)
+    //   2. Supabase transient network errors (don't fall through to INSERT on fetch failure)
+    //   3. UNIQUE(owner_id) constraint collision (retry by re-selecting the winning row)
+    // Requires DB constraint: businesses.owner_id UNIQUE
+    let biz = null;
 
-    if (!biz || biz.length === 0) {
-      // First login — create business row
-      const { data: newBiz } = await sb().from("businesses")
+    const tryFetchExisting = async () => {
+      const { data, error } = await sb().from("businesses")
+        .select("id,name,abn,industry")
+        .eq("owner_id", session.user.id)
+        .limit(1);
+      if (error) { console.warn("bootFromSession: fetch failed", error); return null; }
+      return (data && data.length > 0) ? data[0] : null;
+    };
+
+    // Attempt 1: fetch existing
+    biz = await tryFetchExisting();
+
+    // Attempt 2: row doesn't exist — try to create it
+    if (!biz) {
+      const { data: newBiz, error: insertError } = await sb().from("businesses")
         .insert({ owner_id: session.user.id, name: "My Restaurant" })
         .select().single();
-      biz = newBiz ? [newBiz] : [];
+
+      if (newBiz) {
+        biz = newBiz;
+      } else if (insertError) {
+        // Most likely: UNIQUE(owner_id) constraint violated — a concurrent request
+        // already inserted. Re-select to pick up that winner row instead of creating another.
+        if (insertError.code === "23505" /* unique_violation */) {
+          console.info("bootFromSession: concurrent insert detected, re-fetching");
+          biz = await tryFetchExisting();
+        } else {
+          console.error("bootFromSession: insert failed", insertError);
+        }
+      }
     }
 
-    if (biz && biz.length > 0) {
-      setBizId(biz[0].id);
-      setBizNameRaw(biz[0].name || "My Restaurant");
-      setBizABNRaw(biz[0].abn  || "");
-      setIndustryRaw(biz[0].industry || "restaurant");
-      localStorage.setItem("mise_biz_name", biz[0].name || "My Restaurant");
-      localStorage.setItem("mise_biz_abn",  biz[0].abn  || "");
+    // Apply to state only if we have a valid row. Otherwise stay put (don't crash).
+    if (biz && biz.id) {
+      setBizId(biz.id);
+      setBizNameRaw(biz.name || "My Restaurant");
+      setBizABNRaw(biz.abn  || "");
+      setIndustryRaw(biz.industry || "restaurant");
+      localStorage.setItem("mise_biz_name", biz.name || "My Restaurant");
+      localStorage.setItem("mise_biz_abn",  biz.abn  || "");
+    } else {
+      console.error("bootFromSession: could not resolve business row for user", session.user.id);
     }
     setDbReady(true);
     setScreen("app");
   };
-
   // ── Show onboarding when bizName is still default ────────
   const [showOnboarding, setShowOnboarding] = useState(
     () => (localStorage.getItem("mise_biz_name") || "My Restaurant") === "My Restaurant"

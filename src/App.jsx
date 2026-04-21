@@ -4614,7 +4614,7 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
     if (filterFrom && e.date < filterFrom) return false;
     if (filterTo   && e.date > filterTo)   return false;
     return true;
-  }).slice().reverse();
+  }).slice().sort((a,b) => (b.date||"").localeCompare(a.date||""));
 
   const hasFilters = search || filterCat !== "all" || filterGst !== "all" || filterInv !== "all" || filterFrom || filterTo;
   const clearFilters = () => { setSearch(""); setFilterCat("all"); setFilterGst("all"); setFilterInv("all"); setFilterFrom(""); setFilterTo(""); };
@@ -7328,7 +7328,12 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster,
             <tbody>
               {rows.length === 0
                 ? <tr><td colSpan={12}><div className="empty-state"><div className="empty-icon">🕐</div><div className="empty-txt">No entries. Click "+ Log Hours" to start.</div></div></td></tr>
-                : rows.slice().reverse().map(t => (
+                : rows.slice().sort((a,b) => {
+                    // Primary: week desc (latest first); Secondary: employee name asc
+                    const w = (b.week||"").localeCompare(a.week||"");
+                    if (w !== 0) return w;
+                    return (a.emp?.name||"").localeCompare(b.emp?.name||"");
+                  }).map(t => (
                     <tr key={t.id}>
                       <td>
                         <div style={{ display:"flex", alignItems:"center", gap:7 }}>
@@ -8635,7 +8640,14 @@ function InsurancePage({ insurance, setInsurance, employees, timesheets, showToa
       {/* ── Policy cards ── */}
       {insurance.length > 0 && (
         <div className="g3">
-          {insurance.map(ins => {
+          {insurance.slice().sort((a,b) => {
+            // Ascending by renewal — most urgent (soonest expiring) first.
+            // Policies with no renewal date sink to the bottom.
+            if (!a.renewal && !b.renewal) return 0;
+            if (!a.renewal) return 1;
+            if (!b.renewal) return -1;
+            return a.renewal.localeCompare(b.renewal);
+          }).map(ins => {
             const col      = getCol(ins.type);
             const insInfo  = INS_INFO[ins.type] || INS_INFO["Other"];
             const days     = daysUntil(ins.renewal);
@@ -9906,7 +9918,7 @@ function DocumentsPage({ documents, setDocuments, employees, showToast }) {
           <tbody>
             {filtered.length === 0
               ? <tr><td colSpan={9}><div className="empty-state"><div className="empty-icon">📁</div><div className="empty-txt">No documents found. Upload files or adjust filters.</div></div></td></tr>
-              : filtered.map(d => {
+              : filtered.slice().sort((a,b) => (b.date||"").localeCompare(a.date||"")).map(d => {
                   const emp = d.emp_id ? employees.find(e=>e.id===d.emp_id) : null;
                   const sc  = ST_CFG[d.status] || ST_CFG.pending;
                   return (
@@ -10834,7 +10846,7 @@ function ReportsPage({ revenue, expenses, timesheets, employees, insurance, docu
         <table className="pp-tbl">
           <thead><tr><th>Document Name</th><th>Category</th><th>Supplier</th><th>Quarter</th><th>Date</th><th>GST</th><th>Status</th></tr></thead>
           <tbody>
-            {documents.map((d,i) => (
+            {documents.slice().sort((a,b) => (b.date||"").localeCompare(a.date||"")).map((d,i) => (
               <tr key={i}>
                 <td style={{ fontSize:11 }}>{d.name}</td>
                 <td>{d.cat}</td>
@@ -11060,7 +11072,7 @@ function ReportsPage({ revenue, expenses, timesheets, employees, insurance, docu
                   <table className="tbl">
                     <thead><tr><th>Quarter</th><th style={{textAlign:"right"}}>Opening</th><th style={{textAlign:"right"}}>Closing</th><th style={{textAlign:"right"}}>Movement</th><th>Notes</th></tr></thead>
                     <tbody>
-                      {inventory.map(inv => (
+                      {inventory.slice().sort((a,b) => (b.quarter||"").localeCompare(a.quarter||"")).map(inv => (
                         <tr key={inv.id}>
                           <td style={{ fontWeight:700 }}>{inv.quarter}</td>
                           <td className="mono" style={{ textAlign:"right" }}>{money(inv.opening)}</td>

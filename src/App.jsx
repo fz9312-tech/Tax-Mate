@@ -4614,7 +4614,7 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
     if (filterFrom && e.date < filterFrom) return false;
     if (filterTo   && e.date > filterTo)   return false;
     return true;
-  }).slice().sort((a,b) => (b.date||"").localeCompare(a.date||""));
+  }).slice().reverse();
 
   const hasFilters = search || filterCat !== "all" || filterGst !== "all" || filterInv !== "all" || filterFrom || filterTo;
   const clearFilters = () => { setSearch(""); setFilterCat("all"); setFilterGst("all"); setFilterInv("all"); setFilterFrom(""); setFilterTo(""); };
@@ -7328,12 +7328,7 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster,
             <tbody>
               {rows.length === 0
                 ? <tr><td colSpan={12}><div className="empty-state"><div className="empty-icon">🕐</div><div className="empty-txt">No entries. Click "+ Log Hours" to start.</div></div></td></tr>
-                : rows.slice().sort((a,b) => {
-                    // Primary: week desc (latest first); Secondary: employee name asc
-                    const w = (b.week||"").localeCompare(a.week||"");
-                    if (w !== 0) return w;
-                    return (a.emp?.name||"").localeCompare(b.emp?.name||"");
-                  }).map(t => (
+                : rows.slice().reverse().map(t => (
                     <tr key={t.id}>
                       <td>
                         <div style={{ display:"flex", alignItems:"center", gap:7 }}>
@@ -8640,14 +8635,7 @@ function InsurancePage({ insurance, setInsurance, employees, timesheets, showToa
       {/* ── Policy cards ── */}
       {insurance.length > 0 && (
         <div className="g3">
-          {insurance.slice().sort((a,b) => {
-            // Ascending by renewal — most urgent (soonest expiring) first.
-            // Policies with no renewal date sink to the bottom.
-            if (!a.renewal && !b.renewal) return 0;
-            if (!a.renewal) return 1;
-            if (!b.renewal) return -1;
-            return a.renewal.localeCompare(b.renewal);
-          }).map(ins => {
+          {insurance.map(ins => {
             const col      = getCol(ins.type);
             const insInfo  = INS_INFO[ins.type] || INS_INFO["Other"];
             const days     = daysUntil(ins.renewal);
@@ -9358,6 +9346,36 @@ function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimeshe
 function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, bizABN, setBizABN }) {
   const [saved, setSaved] = useState(false);
 
+  // ── Change Password state ──────────────────────────────────────
+  const [pwExpanded,   setPwExpanded]   = useState(false);
+  const [pwNew,        setPwNew]        = useState("");
+  const [pwConfirm,    setPwConfirm]    = useState("");
+  const [pwSaving,     setPwSaving]     = useState(false);
+  const [pwError,      setPwError]      = useState("");
+
+  const handleChangePassword = async () => {
+    setPwError("");
+    if (pwNew.length < 6) {
+      setPwError("Password must be at least 6 characters");
+      return;
+    }
+    if (pwNew !== pwConfirm) {
+      setPwError("Passwords don't match");
+      return;
+    }
+    setPwSaving(true);
+    try {
+      const { error } = await window._supabase.auth.updateUser({ password: pwNew });
+      if (error) throw error;
+      showToast("Password updated ✅");
+      setPwNew(""); setPwConfirm(""); setPwExpanded(false);
+    } catch (e) {
+      setPwError(e.message || "Failed to update password");
+    } finally {
+      setPwSaving(false);
+    }
+  };
+
   const INDUSTRIES = [
     { id:"restaurant", emoji:"🍽️", label:"Restaurant",   desc:"Full-service dining, takeaway" },
     { id:"café",       emoji:"☕", label:"Café",          desc:"Coffee shop, bakery, brunch" },
@@ -9484,6 +9502,65 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
             <div>✅ All hospitality categories still available</div>
           </>}
         </div>
+      </div>
+
+      <div className="fsec">
+        <div className="ftit">Security</div>
+        <div style={{ fontSize:12.5, color:C.muted, marginBottom:14 }}>Update your account password. Use at least 6 characters — a mix of letters, numbers and symbols is strongest.</div>
+
+        {!pwExpanded ? (
+          <button
+            className="btn-g"
+            style={{ padding:"9px 16px" }}
+            onClick={() => { setPwError(""); setPwExpanded(true); }}>
+            🔒 Change Password
+          </button>
+        ) : (
+          <div style={{ maxWidth:420 }}>
+            {pwError && (
+              <div style={{ background:"rgba(220,38,38,.1)", border:"1px solid rgba(220,38,38,.3)", borderRadius:8, padding:"9px 13px", fontSize:12, color:C.red, marginBottom:12 }}>
+                {pwError}
+              </div>
+            )}
+            <div className="fg">
+              <label className="flbl">New Password</label>
+              <input
+                className="inp"
+                type="password"
+                placeholder="••••••••"
+                value={pwNew}
+                onChange={e => setPwNew(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && handleChangePassword()}
+                autoFocus/>
+            </div>
+            <div className="fg">
+              <label className="flbl">Confirm New Password</label>
+              <input
+                className="inp"
+                type="password"
+                placeholder="••••••••"
+                value={pwConfirm}
+                onChange={e => setPwConfirm(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && handleChangePassword()}/>
+            </div>
+            <div style={{ display:"flex", gap:8, marginTop:4 }}>
+              <button
+                className="btn"
+                style={{ padding:"9px 16px", opacity: pwSaving ? 0.7 : 1 }}
+                onClick={handleChangePassword}
+                disabled={pwSaving}>
+                {pwSaving ? "Saving…" : "Save New Password"}
+              </button>
+              <button
+                className="btn-g"
+                style={{ padding:"9px 16px" }}
+                onClick={() => { setPwExpanded(false); setPwNew(""); setPwConfirm(""); setPwError(""); }}
+                disabled={pwSaving}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="fsec">
@@ -9918,7 +9995,7 @@ function DocumentsPage({ documents, setDocuments, employees, showToast }) {
           <tbody>
             {filtered.length === 0
               ? <tr><td colSpan={9}><div className="empty-state"><div className="empty-icon">📁</div><div className="empty-txt">No documents found. Upload files or adjust filters.</div></div></td></tr>
-              : filtered.slice().sort((a,b) => (b.date||"").localeCompare(a.date||"")).map(d => {
+              : filtered.map(d => {
                   const emp = d.emp_id ? employees.find(e=>e.id===d.emp_id) : null;
                   const sc  = ST_CFG[d.status] || ST_CFG.pending;
                   return (
@@ -10846,7 +10923,7 @@ function ReportsPage({ revenue, expenses, timesheets, employees, insurance, docu
         <table className="pp-tbl">
           <thead><tr><th>Document Name</th><th>Category</th><th>Supplier</th><th>Quarter</th><th>Date</th><th>GST</th><th>Status</th></tr></thead>
           <tbody>
-            {documents.slice().sort((a,b) => (b.date||"").localeCompare(a.date||"")).map((d,i) => (
+            {documents.map((d,i) => (
               <tr key={i}>
                 <td style={{ fontSize:11 }}>{d.name}</td>
                 <td>{d.cat}</td>
@@ -11072,7 +11149,7 @@ function ReportsPage({ revenue, expenses, timesheets, employees, insurance, docu
                   <table className="tbl">
                     <thead><tr><th>Quarter</th><th style={{textAlign:"right"}}>Opening</th><th style={{textAlign:"right"}}>Closing</th><th style={{textAlign:"right"}}>Movement</th><th>Notes</th></tr></thead>
                     <tbody>
-                      {inventory.slice().sort((a,b) => (b.quarter||"").localeCompare(a.quarter||"")).map(inv => (
+                      {inventory.map(inv => (
                         <tr key={inv.id}>
                           <td style={{ fontWeight:700 }}>{inv.quarter}</td>
                           <td className="mono" style={{ textAlign:"right" }}>{money(inv.opening)}</td>

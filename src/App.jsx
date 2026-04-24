@@ -1936,41 +1936,163 @@ const effRate = emp => {
   return emp.rate_includes_loading ? emp.rate : emp.rate * (1 + CASUAL_LOADING);
 };
 
-// Gross wages for a single timesheet row
-const calcGross = (emp, ts) =>
-  effRate(emp) * ts.std_hrs
-  + effRate(emp) * OT_RATE  * ts.ot_hrs
-  + effRate(emp) * WKND_RATE * ts.wknd_hrs;
+// Helper: is this employee on fixed-weekly pay mode?
+const isFixedPay = emp => emp && emp.pay_mode === "fixed" && parseFloat(emp.fixed_weekly_gross) > 0;
 
-// Annotate timesheets with computed wages
-const annotateTimesheets = (employees, timesheets) =>
-  timesheets.map(ts => {
+// Helper: does this employee have a manual PAYG override?
+const hasPaygOverride = emp =>
+  emp && emp.payg_override !== undefined && emp.payg_override !== "" && emp.payg_override !== null;
+
+// Helper: does this employee have a manual super override?
+const hasSuperOverride = emp =>
+  emp && emp.super_override !== undefined && emp.super_override !== "" && emp.super_override !== null;
+
+// Gross wages for a single timesheet row
+// Fixed-pay employees get their fixed weekly gross regardless of hours worked.
+const calcGross = (emp, ts) => {
+  if (isFixedPay(emp)) return parseFloat(emp.fixed_weekly_gross) || 0;
+  return effRate(emp) * ts.std_hrs
+       + effRate(emp) * OT_RATE  * ts.ot_hrs
+       + effRate(emp) * WKND_RATE * ts.wknd_hrs;
+};
+
+// Annotate timesheets with computed wages.
+// IMPORTANT: This first augments the timesheet list with synthetic rows for
+// fixed-pay employees so they appear paid every week even if the employer
+// never opened a timesheet. Hourly employees are unaffected.
+const annotateTimesheets = (employees, timesheets) => {
+  const augmented = injectFixedEmployeeTimesheets(employees, timesheets);
+  return augmented.map(ts => {
     const emp = employees.find(e => e.id === ts.eid);
     if (!emp) return null;
     const gross  = calcGross(emp, ts);
     const superR = getSuperRate(ts.week);
+
     // ── OTE (Ordinary Time Earnings) for SGC super ────────────
-    // Per ATO SGAA s.6: OTE excludes overtime penalty payments
-    // OT hours use ×1.5 rate — the ORDINARY component of OT is at base rate (×1.0)
-    // Super is only owed on the base-rate component, not the 0.5x OT penalty loading
-    // weekend/PH hours: these are rostered ordinary shifts for casuals, so base rate applies
-    const oteEarnings = effRate(emp) * ts.std_hrs          // ordinary hours at base rate
-                      + effRate(emp) * ts.wknd_hrs;        // weekend/PH = ordinary shift (not OT loading)
-    // OT ordinary component: effRate × ot_hrs (not the 1.5x — only the ×1 base)
-    const oteOT      = effRate(emp) * ts.ot_hrs;           // base component of OT
-    const ote        = oteEarnings + oteOT;
-    const superOTE   = ote * superR;                       // SGC on OTE only
+    // Per ATO SGAA s.6: OTE excludes overtime penalty payments.
+    // For fixed-pay employees, OTE = full gross (no OT concept — it's a salary).
+    let ote, superOTE;
+    if (isFixedPay(emp)) {
+      ote      = gross;
+      superOTE = ote * superR;
+    } else {
+      // OT hours use ×1.5 rate — the ORDINARY component of OT is at base rate (×1.0)
+      // Super is only owed on the base-rate component, not the 0.5x OT penalty loading
+      // weekend/PH hours: rostered ordinary shifts for casuals, so base rate applies
+      const oteEarnings = effRate(emp) * ts.std_hrs          // ordinary hours at base rate
+                        + effRate(emp) * ts.wknd_hrs;        // weekend/PH = ordinary shift
+      const oteOT       = effRate(emp) * ts.ot_hrs;           // base component of OT
+      ote               = oteEarnings + oteOT;
+      superOTE          = ote * superR;                       // SGC on OTE only
+    }
     // ── No $450/month OTE minimum — threshold removed 1 Jul 2022 ──
-    // From 1 July 2022 (Treasury Laws Amendment Act 2022), the previous $450/month
-    // minimum OTE threshold for SGC eligibility was ABOLISHED.
-    // All employees now accrue super regardless of earnings. Do NOT reinstate this check.
     // Ref: ATO — Changes to super for low income employees (ato.gov.au/superchanges2022)
-    const super_     = superOTE;
-    const payg       = calcWeeklyPAYG(gross, emp.tfn);
+
+    // Apply super override if set (including 0 — "no super" for family employees)
+    const super_ = hasSuperOverride(emp)
+      ? (parseFloat(emp.super_override) || 0)
+      : superOTE;
+
+    // Apply PAYG override if set (including 0 — "no tax withheld")
+    const payg = hasPaygOverride(emp)
+      ? (parseFloat(emp.payg_override) || 0)
+      : calcWeeklyPAYG(gross, emp.tfn);
+
     return { ...ts, emp, gross, super: super_, superOTE, superR, payg,
              ote, labour: gross + super_,
              total_hrs: ts.std_hrs + ts.ot_hrs + ts.wknd_hrs };
   }).filter(Boolean);
+};
+
+// ── Fixed-pay virtual timesheet injection ──────────────────────────
+// Fixed-pay employees are paid a flat weekly gross regardless of hours.
+// Their pay must appear in BAS, Wages, P&L, Cash Flow and IAS even if the
+// employer never opens a timesheet. This injects one synthetic timesheet
+// per (fixed-employee × ISO-week) covering the range of actual timesheet weeks.
+//
+// Rules:
+//   - Only fires for employees where isFixedPay(emp) === true
+//   - Start week = employee's start date; End week = latest of (today, latest real timesheet week)
+//   - Skipped if exitDate is set and week > exit week (no pay after employment ends)
+//   - Hours show as 0 so Leave accrual formulas correctly see "no ordinary hours"
+//     (Fixed employees typically have track_leave=false too, but not required)
+//   - If a real timesheet ALREADY exists for that (emp, week), we keep the real one and skip
+//
+// Date → ISO week string (YYYY-Www)
+const dateToWeek = (dateStr) => {
+  if (!dateStr) return null;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return null;
+  // ISO week: Thursday in current week decides the year.
+  const target = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = (target.getUTCDay() + 6) % 7;     // Mon=0..Sun=6
+  target.setUTCDate(target.getUTCDate() - dayNum + 3);
+  const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
+  const weekNum = 1 + Math.round(((target - firstThursday) / 86400000 - 3 + ((firstThursday.getUTCDay()+6)%7)) / 7);
+  return `${target.getUTCFullYear()}-W${String(weekNum).padStart(2,'0')}`;
+};
+
+// Generate list of ISO week strings from startWeek to endWeek (inclusive)
+const weeksBetween = (startWeek, endWeek) => {
+  if (!startWeek || !endWeek) return [];
+  if (startWeek > endWeek) return [];
+  const weeks = [];
+  let curDate = new Date(weekToDate(startWeek));
+  const endDate = new Date(weekToDate(endWeek));
+  let safety = 600; // Max ~11 years of weeks — plenty, prevents infinite loops
+  while (curDate <= endDate && safety-- > 0) {
+    const w = dateToWeek(curDate.toISOString().slice(0,10));
+    if (w) weeks.push(w);
+    curDate.setDate(curDate.getDate() + 7);
+  }
+  return weeks;
+};
+
+// Returns timesheets array augmented with synthetic rows for fixed-pay employees
+const injectFixedEmployeeTimesheets = (employees, timesheets) => {
+  const fixedEmps = employees.filter(isFixedPay);
+  if (fixedEmps.length === 0) return timesheets;
+
+  // Determine the week range we need to fill.
+  // End = max of (today, latest timesheet week present).
+  const todayWeek = dateToWeek(todayStr);
+  const latestTsWeek = timesheets.reduce((m, t) =>
+    (t.week && t.week > m) ? t.week : m, todayWeek || "2025-W01");
+  const endWeek = latestTsWeek;
+
+  const synthetic = [];
+  let syntheticIdBase = 90000000; // high enough to not collide with real timesheet ids
+
+  fixedEmps.forEach(emp => {
+    const startWeek = emp.start ? dateToWeek(emp.start) : todayWeek;
+    if (!startWeek) return;
+
+    // If employee has exited, cap at exit week
+    const capWeek = emp.exitDate ? dateToWeek(emp.exitDate) : null;
+    const effectiveEndWeek = (capWeek && capWeek < endWeek) ? capWeek : endWeek;
+
+    const allWeeks = weeksBetween(startWeek, effectiveEndWeek);
+    // Find weeks where we already have a real timesheet for this employee
+    const existingWeeks = new Set(
+      timesheets.filter(t => t.eid === emp.id).map(t => t.week)
+    );
+    allWeeks.forEach(w => {
+      if (existingWeeks.has(w)) return; // real timesheet wins
+      synthetic.push({
+        id: syntheticIdBase++,
+        eid: emp.id,
+        week: w,
+        std_hrs: 0,
+        ot_hrs: 0,
+        wknd_hrs: 0,
+        super_paid: false,
+        _synthetic: true, // marker — UI / PDFs can show "Fixed pay" label
+      });
+    });
+  });
+
+  return [...timesheets, ...synthetic];
+};
 
 // ── Leave accrual — Fair Work Act compliant ────────────────
 // Annual leave:   FT/PT — accrues at rate of 4 weeks per year of ordinary HOURS WORKED
@@ -1985,6 +2107,13 @@ const annotateTimesheets = (employees, timesheets) =>
 function calcLeaveAccruals(emp, timesheets) {
   const empTs    = timesheets.filter(t => t.eid === emp.id);
   const isCasual = emp.type === "casual";
+
+  // "Track leave" opt-out — family / owner-operator employees don't accrue leave.
+  // We still let them record manual leave days in the Leave page if needed,
+  // but automatic accrual is disabled.
+  if (emp.track_leave === false) {
+    return { annual:0, personal:0, lieu:0 };
+  }
 
   if (isCasual) {
     // Casuals accrue no annual or personal leave
@@ -4614,7 +4743,7 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
     if (filterFrom && e.date < filterFrom) return false;
     if (filterTo   && e.date > filterTo)   return false;
     return true;
-  }).slice().reverse();
+  }).slice().sort((a,b) => (b.date||"").localeCompare(a.date||""));
 
   const hasFilters = search || filterCat !== "all" || filterGst !== "all" || filterInv !== "all" || filterFrom || filterTo;
   const clearFilters = () => { setSearch(""); setFilterCat("all"); setFilterGst("all"); setFilterInv("all"); setFilterFrom(""); setFilterTo(""); };
@@ -5632,6 +5761,12 @@ const BLANK_EMP = {
   role:"", type:"full-time", rate:"", std_hrs:"38",
   start:todayStr, tfn:"yes", superfund:"", color:"",
   rate_includes_loading: false, // casual: false = auto-add 25%, true = rate already all-in
+  // ── Flexible pay model (for family / owner-operator employees) ──
+  pay_mode: "hourly",          // "hourly" | "fixed"
+  fixed_weekly_gross: "",      // gross weekly amount when pay_mode === "fixed"
+  track_leave: true,           // false = don't accrue annual/personal leave (family mode)
+  payg_override: "",           // "" = auto-calc; number = manual weekly PAYG amount
+  super_override: "",          // "" = auto-calc; number = manual weekly super (0 = no super)
   // Offboarding fields
   active: true, exitDate:"", exitReason:"", leaveSettled: false, exitNotes:"",
 };
@@ -5647,11 +5782,26 @@ function EmployeeModal({ emp, onSave, onClose }) {
   const effR    = f.type === "casual" && !f.rate_includes_loading
     ? rate * (1 + CASUAL_LOADING)
     : rate;
-  const wkGross = effR * stdHrs;
+  const fixedWeekly = parseFloat(f.fixed_weekly_gross) || 0;
+  const isFixed = f.pay_mode === "fixed";
+  // Gross shown in the Weekly Cost Preview: fixed amount for fixed mode, else rate × std hrs
+  const wkGross = isFixed ? fixedWeekly : effR * stdHrs;
 
   const save = () => {
     if (!f.name.trim()) return;
-    onSave({ ...f, id:emp?.id || Date.now(), rate, std_hrs:stdHrs, tfn:f.tfn==="yes" });
+    onSave({
+      ...f,
+      id: emp?.id || Date.now(),
+      rate,
+      std_hrs: stdHrs,
+      tfn: f.tfn === "yes",
+      // Coerce new flexible-pay fields — keep as string when empty, number otherwise
+      fixed_weekly_gross: f.pay_mode === "fixed"
+        ? (parseFloat(f.fixed_weekly_gross) || 0)
+        : "",
+      payg_override:  f.payg_override  === "" ? "" : (parseFloat(f.payg_override)  || 0),
+      super_override: f.super_override === "" ? "" : (parseFloat(f.super_override) || 0),
+    });
   };
 
   return (
@@ -5760,6 +5910,58 @@ function EmployeeModal({ emp, onSave, onClose }) {
           <div className="fg"><label className="flbl">Start Date</label><input className="inp" type="date" value={f.start} onChange={e => setF({...f,start:e.target.value})}/></div>
         </div>
 
+        <div className="m-sec">Pay Model</div>
+        <div style={{ fontSize:12, color:C.muted, marginBottom:12, marginTop:-4 }}>
+          Hourly mode pays based on timesheets. Fixed mode pays the same weekly amount no matter how many hours are worked — useful for owner-operators, family members, or salaried staff.
+        </div>
+
+        {/* Pay mode toggle */}
+        <div style={{ display:"flex", gap:0, background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:9, overflow:"hidden", marginBottom:14 }}>
+          <button type="button" onClick={() => setF(p => ({...p, pay_mode:"hourly"}))}
+            style={{ flex:1, padding:"10px 14px", fontSize:12.5, fontWeight:700, fontFamily:"inherit", cursor:"pointer", border:"none",
+              background: f.pay_mode !== "fixed" ? C.accent : "transparent",
+              color: f.pay_mode !== "fixed" ? "#0C0F0D" : C.muted }}>
+            ⏱ Hourly (by timesheet)
+          </button>
+          <button type="button" onClick={() => setF(p => ({...p, pay_mode:"fixed"}))}
+            style={{ flex:1, padding:"10px 14px", fontSize:12.5, fontWeight:700, fontFamily:"inherit", cursor:"pointer", border:"none",
+              background: f.pay_mode === "fixed" ? C.teal : "transparent",
+              color: f.pay_mode === "fixed" ? "#0C0F0D" : C.muted }}>
+            💵 Fixed weekly amount
+          </button>
+        </div>
+
+        {/* Fixed weekly gross input — only shown in fixed mode */}
+        {f.pay_mode === "fixed" && (
+          <div className="frow2" style={{ marginBottom:14 }}>
+            <div className="fg">
+              <label className="flbl">Fixed Weekly Gross ($)</label>
+              <input className="inp" type="number" placeholder="e.g. 1500.00" value={f.fixed_weekly_gross}
+                onChange={e => setF({...f, fixed_weekly_gross:e.target.value})}/>
+              {fixedWeekly > 0 && (
+                <span className="fhint">
+                  Pays <strong style={{color:C.teal}}>{money(fixedWeekly)}</strong> per week regardless of hours worked.
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Track leave toggle */}
+        <div className="fg" style={{ marginBottom:14 }}>
+          <label className="flbl" style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer" }}>
+            <input type="checkbox" checked={f.track_leave !== false}
+              onChange={e => setF({...f, track_leave:e.target.checked})}
+              style={{ cursor:"pointer", width:16, height:16 }}/>
+            Track annual & personal leave for this employee
+          </label>
+          <span className="fhint" style={{ marginTop:4 }}>
+            {f.track_leave !== false
+              ? "Leave accrues automatically based on hours worked (Fair Work Act)."
+              : "Leave accrual disabled. Manual leave entries are still allowed in the Leave page."}
+          </span>
+        </div>
+
         <div className="m-sec">Tax & Super</div>
         <div className="frow2">
           <div className="fg">
@@ -5773,19 +5975,51 @@ function EmployeeModal({ emp, onSave, onClose }) {
           <div className="fg"><label className="flbl">Super Fund (optional)</label><input className="inp" placeholder="e.g. AustralianSuper" value={f.superfund} onChange={e => setF({...f,superfund:e.target.value})}/></div>
         </div>
 
+        {/* PAYG / Super manual override */}
+        <div className="frow2" style={{ marginTop:10 }}>
+          <div className="fg">
+            <label className="flbl">
+              Weekly PAYG Withholding
+              {f.payg_override === "" ? <span style={{color:C.muted, fontWeight:400}}> — auto</span> : <span style={{color:C.yellow, fontWeight:400}}> — manual</span>}
+            </label>
+            <input className="inp" type="number" placeholder="Auto (leave blank)"
+              value={f.payg_override}
+              onChange={e => setF({...f, payg_override:e.target.value})}/>
+            <span className="fhint">
+              Blank = calculated from ATO Scale 2. Enter a number (e.g. 0) to override for family / contractor scenarios.
+            </span>
+          </div>
+          <div className="fg">
+            <label className="flbl">
+              Weekly Super Contribution
+              {f.super_override === "" ? <span style={{color:C.muted, fontWeight:400}}> — auto</span> : <span style={{color:C.blue, fontWeight:400}}> — manual</span>}
+            </label>
+            <input className="inp" type="number" placeholder="Auto (leave blank)"
+              value={f.super_override}
+              onChange={e => setF({...f, super_override:e.target.value})}/>
+            <span className="fhint">
+              Blank = calculated at current SGC rate. Enter a number (e.g. 0) for family / owner scenarios.
+            </span>
+          </div>
+        </div>
+
         {wkGross > 0 && (
           <div style={{ background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:10, padding:"13px 15px", marginTop:14 }}>
             <div style={{ fontSize:10, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".8px", marginBottom:10 }}>Weekly Cost Preview</div>
             <div className="frow4">
               {(() => {
-                const wkPayg  = calcWeeklyPAYG(wkGross, f.tfn === "yes");
-                const superR  = getSuperRate(todayWeekStr);
-                const wkSuper = wkGross * superR;
+                const hasPaygOv  = f.payg_override  !== "" && f.payg_override  != null;
+                const hasSuperOv = f.super_override !== "" && f.super_override != null;
+                const wkPayg   = hasPaygOv  ? (parseFloat(f.payg_override)  || 0) : calcWeeklyPAYG(wkGross, f.tfn === "yes");
+                const superR   = getSuperRate(todayWeekStr);
+                const wkSuper  = hasSuperOv ? (parseFloat(f.super_override) || 0) : wkGross * superR;
+                const paygLbl  = hasPaygOv  ? "PAYG (manual)"  : `PAYG (ATO Scale 2${f.tfn==="no"?" 47%":""})`;
+                const superLbl = hasSuperOv ? "Super (manual)" : `Super (SGC ${(superR*100).toFixed(1)}%)`;
                 return [
-                  { lbl:"Gross Wages",                          val:money(wkGross),          col:C.text   },
-                  { lbl:`PAYG (ATO Scale 2${f.tfn==="no"?" 47%":""})`, val:money(wkPayg), col:C.yellow },
-                  { lbl:`Super (SGC ${(superR*100).toFixed(1)}%)`,      val:money(wkSuper),  col:C.blue   },
-                  { lbl:"Total Labour Cost",                    val:money(wkGross+wkSuper),  col:C.accent },
+                  { lbl: isFixed ? "Gross Wages (fixed)" : "Gross Wages",  val:money(wkGross),          col: isFixed ? C.teal : C.text },
+                  { lbl: paygLbl,                                          val:money(wkPayg),           col: C.yellow },
+                  { lbl: superLbl,                                         val:money(wkSuper),          col: C.blue   },
+                  { lbl: "Total Labour Cost",                              val:money(wkGross+wkSuper),  col: C.accent },
                 ];
               })().map((s,i) => (
                 <div key={i}>
@@ -6535,13 +6769,32 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
     const stdHrs    = [...bd.values()].reduce((s,v) => s + v.stdHrs,  0);
     const otHrs     = [...bd.values()].reduce((s,v) => s + v.otHrs,   0);
     const wkndHrs   = [...bd.values()].reduce((s,v) => s + v.wkndHrs, 0);
-    const gross     = [...bd.values()].reduce((s,v) => s + v.gross,    0);
-    const oteRoster = (stdHrs + wkndHrs + otHrs) * effRate(emp); // OTE: base rate on all ordinary + OT base
-    const super_    = oteRoster * superR;
-    const payg      = calcWeeklyPAYG(gross, emp.tfn);
+
+    // ── Fixed-pay employees: gross is the fixed weekly amount regardless of rostered hours ──
+    // Hours are still displayed (for labour-efficiency insight), but cost = fixed.
+    const isFixed = isFixedPay(emp);
+    const gross   = isFixed
+      ? (parseFloat(emp.fixed_weekly_gross) || 0)
+      : [...bd.values()].reduce((s,v) => s + v.gross, 0);
+
+    // OTE for super: for fixed, treat full gross as ordinary; for hourly use the roster breakdown
+    const oteRoster = isFixed
+      ? gross
+      : (stdHrs + wkndHrs + otHrs) * effRate(emp); // OTE: base rate on all ordinary + OT base
+
+    // Super: respect super_override if set, else SGC on OTE
+    const super_ = hasSuperOverride(emp)
+      ? (parseFloat(emp.super_override) || 0)
+      : oteRoster * superR;
+
+    // PAYG: respect payg_override if set, else ATO Scale 2
+    const payg = hasPaygOverride(emp)
+      ? (parseFloat(emp.payg_override) || 0)
+      : calcWeeklyPAYG(gross, emp.tfn);
+
     const net       = gross - payg;
     const labour    = gross + super_;
-    return { emp, shifts, totalHrs, stdHrs, otHrs, wkndHrs, gross, super:super_, payg, net, labour };
+    return { emp, shifts, totalHrs, stdHrs, otHrs, wkndHrs, gross, super:super_, payg, net, labour, isFixed };
   });
 
   const totHrs    = empSummary.reduce((s,e) => s + e.totalHrs, 0);
@@ -6917,7 +7170,7 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
         </div>
 
         {/* Per-employee breakdown table */}
-        {totHrs > 0 ? (
+        {(totHrs > 0 || empSummary.some(e => e.isFixed)) ? (
           <div style={{overflowX:"auto"}}>
             <table className="tbl">
               <thead>
@@ -6933,7 +7186,7 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
                 </tr>
               </thead>
               <tbody>
-                {empSummary.filter(e => e.shifts.length > 0).map(({emp,shifts,totalHrs,stdHrs,otHrs,wkndHrs,gross,super:sup,payg,net,labour}) => (
+                {empSummary.filter(e => e.shifts.length > 0 || e.isFixed).map(({emp,shifts,totalHrs,stdHrs,otHrs,wkndHrs,gross,super:sup,payg,net,labour,isFixed}) => (
                   <tr key={emp.id}>
                     <td>
                       <div style={{display:"flex",alignItems:"center",gap:7}}>
@@ -6941,8 +7194,16 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
                           {initials(emp.name)}
                         </div>
                         <div>
-                          <div style={{fontWeight:600,fontSize:12}}>{emp.name}</div>
-                          <div style={{fontSize:9.5,color:C.muted}}>{emp.role} · {emp.std_hrs}h threshold</div>
+                          <div style={{fontWeight:600,fontSize:12,display:"flex",alignItems:"center",gap:6}}>
+                            {emp.name}
+                            {isFixed && <span style={{fontSize:9,fontWeight:600,color:"#0C0F0D",background:C.teal,padding:"1.5px 6px",borderRadius:4,whiteSpace:"nowrap"}}>FIXED</span>}
+                          </div>
+                          <div style={{fontSize:9.5,color:C.muted}}>
+                            {isFixed
+                              ? <>{emp.role} · {money(parseFloat(emp.fixed_weekly_gross)||0)}/wk</>
+                              : <>{emp.role} · {emp.std_hrs}h threshold</>
+                            }
+                          </div>
                         </div>
                       </div>
                     </td>
@@ -7328,7 +7589,12 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster,
             <tbody>
               {rows.length === 0
                 ? <tr><td colSpan={12}><div className="empty-state"><div className="empty-icon">🕐</div><div className="empty-txt">No entries. Click "+ Log Hours" to start.</div></div></td></tr>
-                : rows.slice().reverse().map(t => (
+                : rows.slice().sort((a,b) => {
+                    // Primary: week desc (latest first); Secondary: employee name asc
+                    const w = (b.week||"").localeCompare(a.week||"");
+                    if (w !== 0) return w;
+                    return (a.emp?.name||"").localeCompare(b.emp?.name||"");
+                  }).map(t => (
                     <tr key={t.id}>
                       <td>
                         <div style={{ display:"flex", alignItems:"center", gap:7 }}>
@@ -8635,7 +8901,14 @@ function InsurancePage({ insurance, setInsurance, employees, timesheets, showToa
       {/* ── Policy cards ── */}
       {insurance.length > 0 && (
         <div className="g3">
-          {insurance.map(ins => {
+          {insurance.slice().sort((a,b) => {
+            // Ascending by renewal — most urgent (soonest expiring) first.
+            // Policies with no renewal date sink to the bottom.
+            if (!a.renewal && !b.renewal) return 0;
+            if (!a.renewal) return 1;
+            if (!b.renewal) return -1;
+            return a.renewal.localeCompare(b.renewal);
+          }).map(ins => {
             const col      = getCol(ins.type);
             const insInfo  = INS_INFO[ins.type] || INS_INFO["Other"];
             const days     = daysUntil(ins.renewal);
@@ -9995,7 +10268,7 @@ function DocumentsPage({ documents, setDocuments, employees, showToast }) {
           <tbody>
             {filtered.length === 0
               ? <tr><td colSpan={9}><div className="empty-state"><div className="empty-icon">📁</div><div className="empty-txt">No documents found. Upload files or adjust filters.</div></div></td></tr>
-              : filtered.map(d => {
+              : filtered.slice().sort((a,b) => (b.date||"").localeCompare(a.date||"")).map(d => {
                   const emp = d.emp_id ? employees.find(e=>e.id===d.emp_id) : null;
                   const sc  = ST_CFG[d.status] || ST_CFG.pending;
                   return (
@@ -10923,7 +11196,7 @@ function ReportsPage({ revenue, expenses, timesheets, employees, insurance, docu
         <table className="pp-tbl">
           <thead><tr><th>Document Name</th><th>Category</th><th>Supplier</th><th>Quarter</th><th>Date</th><th>GST</th><th>Status</th></tr></thead>
           <tbody>
-            {documents.map((d,i) => (
+            {documents.slice().sort((a,b) => (b.date||"").localeCompare(a.date||"")).map((d,i) => (
               <tr key={i}>
                 <td style={{ fontSize:11 }}>{d.name}</td>
                 <td>{d.cat}</td>
@@ -11149,7 +11422,7 @@ function ReportsPage({ revenue, expenses, timesheets, employees, insurance, docu
                   <table className="tbl">
                     <thead><tr><th>Quarter</th><th style={{textAlign:"right"}}>Opening</th><th style={{textAlign:"right"}}>Closing</th><th style={{textAlign:"right"}}>Movement</th><th>Notes</th></tr></thead>
                     <tbody>
-                      {inventory.map(inv => (
+                      {inventory.slice().sort((a,b) => (b.quarter||"").localeCompare(a.quarter||"")).map(inv => (
                         <tr key={inv.id}>
                           <td style={{ fontWeight:700 }}>{inv.quarter}</td>
                           <td className="mono" style={{ textAlign:"right" }}>{money(inv.opening)}</td>

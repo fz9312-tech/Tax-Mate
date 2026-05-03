@@ -1486,6 +1486,89 @@ const renderExpenseReportPDF = ({filtered, totalExp, gstCreds, missingCred, hasF
   return pdf;
 };
 
+// ── Revenue Report PDF ────────────────────────────────────────────
+// Generates a PDF for a date range showing daily sales with channel breakdown.
+const renderRevenueReportPDF = ({filtered, totalAll, totalGST, fromDate, toDate, bizName, bizABN}) => {
+  const pdf = new MiniPDF();
+  const W   = pdf.W, M = pdf.M;
+  const rangeLabel = (fromDate && toDate)
+    ? `${fromDate} to ${toDate}`
+    : (fromDate ? `From ${fromDate}` : (toDate ? `Until ${toDate}` : 'All-time'));
+  let y = pdfHeader(pdf, bizName || 'Revenue Report', `Sales Summary — ${rangeLabel}`, bizABN || '');
+
+  // ── Stat cards ──────────────────────────────────────────────────
+  // Compute channel totals across the filtered range
+  const channelTotals = {};
+  filtered.forEach(r => {
+    getChannels(r).forEach(c => {
+      const amt = parseFloat(c.amount) || 0;
+      channelTotals[c.name] = (channelTotals[c.name] || 0) + amt;
+    });
+  });
+  const topChannels = Object.entries(channelTotals)
+    .sort((a,b) => b[1] - a[1])
+    .slice(0, 3);
+  const topLabel = topChannels.length === 0
+    ? '—'
+    : topChannels.map(([n, v]) => `${n}: $${v.toFixed(0)}`).join(' / ');
+
+  y = pdfStatCards(pdf, y, [
+    { lbl:'Total Sales',     val:`$${totalAll.toFixed(2)}` },
+    { lbl:'GST Collected',   val:`$${totalGST.toFixed(2)}`, color:'#D97706' },
+    { lbl:'Total Entries',   val:String(filtered.length) },
+    { lbl:'Avg per Entry',   val: filtered.length > 0 ? `$${(totalAll/filtered.length).toFixed(2)}` : '—' },
+  ]);
+
+  // ── Top channels summary ──
+  if (topChannels.length > 0) {
+    y = pdfSecTitle(pdf, y, 'TOP CHANNELS');
+    const chCols = [W * 0.5, W * 0.25, W * 0.25];
+    chCols[0] = W - M*2 - chCols[1] - chCols[2];
+    y = pdfTable(pdf, y,
+      ['Channel', 'Total ($)', '% of Sales'],
+      topChannels.map(([name, total]) => [
+        name,
+        `$${total.toFixed(2)}`,
+        totalAll > 0 ? `${((total/totalAll)*100).toFixed(1)}%` : '—',
+      ]),
+      chCols,
+      { numCols:[1,2] }
+    );
+  }
+
+  // ── Daily detail ──
+  y = pdfSecTitle(pdf, y, 'DAILY DETAIL');
+  // Sort by date ascending so PDF reads naturally top-to-bottom (oldest → newest)
+  const detailRows = filtered.slice().sort((a,b) => (a.date||'').localeCompare(b.date||''));
+  const cols = [70, 0, 70, 60];
+  cols[1] = W - M*2 - cols[0] - cols[2] - cols[3];
+  y = pdfTable(pdf, y,
+    ['Date', 'Channels', 'Total', 'GST'],
+    detailRows.map(r => {
+      const chs   = getChannels(r);
+      const total = revTotal(r);
+      const gst   = revGSTTaxable(r) / 11;
+      const summary = chs.length === 0
+        ? '—'
+        : chs.length <= 3
+          ? chs.map(c => `${c.name}: $${(parseFloat(c.amount)||0).toFixed(0)}`).join(' / ')
+          : chs.slice(0,2).map(c => `${c.name}: $${(parseFloat(c.amount)||0).toFixed(0)}`).join(' / ') + ` +${chs.length-2}`;
+      return [
+        r.date,
+        summary.length > 50 ? summary.slice(0, 50) + '…' : summary,
+        `$${total.toFixed(2)}`,
+        gst > 0 ? `$${gst.toFixed(2)}` : '—',
+      ];
+    }),
+    cols,
+    { footerRow:['TOTAL', '', `$${totalAll.toFixed(2)}`, `$${totalGST.toFixed(2)}`],
+      numCols:[2,3] }
+  );
+
+  pdfDisclaimer(pdf, y);
+  return pdf;
+};
+
 const renderAccountantPackPDF = ({d, selFY, revenue, expenses, timesheets, employees, bizName, bizABN}) => {
   const pdf=new MiniPDF();
   const W=pdf.W, M=pdf.M;
@@ -3693,6 +3776,15 @@ function DashboardPage({ revenue, expenses, employees, timesheets, insurance, se
 //  REVENUE PAGE
 // ════════════════════════════════════════════════════════════
 function RevenuePage({ revenue, setRevenue, showToast }) {
+  // ── PDF Export state ──────────────────────────────────────
+  const [showRevPrint, setShowRevPrint] = useState(false);
+  const [pdfFromDate,  setPdfFromDate]  = useState("");
+  const [pdfToDate,    setPdfToDate]    = useState("");
+
+  // ── Pagination state ──────────────────────────────────────
+  const [revPage,     setRevPage]     = useState(1);
+  const [revPageSize, setRevPageSize] = useState(25);
+
   // ── Last-used channel template (localStorage) ─────────────
   const LAST_CHANNELS_KEY = "mise_last_channels";
   const DEFAULT_CHANNELS = [
@@ -3922,6 +4014,7 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
           <div className="psub">Log daily sales by channel — or import from your POS</div>
         </div>
         <div className="hdr-right">
+          <button className="btn-g" onClick={() => setShowRevPrint(true)}>⬇️ Export PDF</button>
           <button className="btn-g" onClick={() => { setShowImport(v=>!v); setCsvPreview([]); setCsvError(""); }}>
             {showImport ? "✕ Close Import" : "📥 Import CSV"}
           </button>
@@ -4181,9 +4274,26 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
         </div>
       </div>
 
-      {/* ── Sales History (expandable rows) ── */}
+      {/* ── Sales History (expandable rows, paginated) ── */}
       <div className="bc">
-        <div className="bctit">Sales History</div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,marginBottom:6}}>
+          <div className="bctit" style={{margin:0}}>Sales History</div>
+          {revenue.length > 0 && (
+            <div style={{fontSize:11,color:C.muted}}>{revenue.length} {revenue.length===1?"entry":"entries"}</div>
+          )}
+        </div>
+        {(() => {
+          // Sort whole list by date desc (cached for both display and totals)
+          const sortedRev  = [...revenue].sort((a,b) => b.date.localeCompare(a.date));
+          const totalRows  = sortedRev.length;
+          const pageSize   = revPageSize === 0 ? Math.max(totalRows, 1) : revPageSize; // 0 = "All"
+          const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+          const safePage   = Math.min(Math.max(1, revPage), totalPages);
+          const startIdx   = (safePage - 1) * pageSize;
+          const endIdx     = startIdx + pageSize;
+          const pageRows   = revPageSize === 0 ? sortedRev : sortedRev.slice(startIdx, endIdx);
+          return (
+            <>
         <table className="tbl">
           <thead>
             <tr>
@@ -4198,7 +4308,7 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
           <tbody>
             {revenue.length === 0
               ? <tr><td colSpan={6}><div className="empty-state"><div className="empty-icon">📭</div><div className="empty-txt">No entries yet. Add manually above or import a CSV from your POS.</div></div></td></tr>
-              : [...revenue].sort((a,b) => b.date.localeCompare(a.date)).map(r => {
+              : pageRows.map(r => {
                   const chs   = getChannels(r);
                   const total = revTotal(r);
                   const gst   = revGSTTaxable(r) / 11;
@@ -4276,7 +4386,146 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
             </tfoot>
           )}
         </table>
+        {/* Pagination controls */}
+        {revenue.length > 0 && (totalPages > 1 || revenue.length > 25) && (
+          <Pagination
+            page={safePage}
+            totalPages={totalPages}
+            pageSize={revPageSize}
+            totalRows={totalRows}
+            startIdx={startIdx}
+            endIdx={Math.min(endIdx, totalRows)}
+            onPageChange={setRevPage}
+            onPageSizeChange={(n) => { setRevPageSize(n); setRevPage(1); }}/>
+        )}
+            </>
+          );
+        })()}
       </div>
+
+      {/* ── Revenue PDF Export Modal ── */}
+      {showRevPrint && (() => {
+        // Filter revenue by selected range; empty values = no bound
+        const filteredRev = revenue.filter(r => {
+          if (pdfFromDate && r.date < pdfFromDate) return false;
+          if (pdfToDate   && r.date > pdfToDate)   return false;
+          return true;
+        });
+        const fTotal = filteredRev.reduce((s,r) => s + revTotal(r), 0);
+        const fGST   = filteredRev.reduce((s,r) => s + revGSTTaxable(r)/11, 0);
+
+        // Quick presets
+        const setPreset = (preset) => {
+          const today = new Date(todayStr);
+          const Y = today.getFullYear(), M = today.getMonth();
+          const isoOf = d => d.toISOString().slice(0,10);
+          if (preset === "this-month") {
+            setPdfFromDate(isoOf(new Date(Y, M, 1)));
+            setPdfToDate(isoOf(new Date(Y, M+1, 0)));
+          } else if (preset === "last-month") {
+            setPdfFromDate(isoOf(new Date(Y, M-1, 1)));
+            setPdfToDate(isoOf(new Date(Y, M, 0)));
+          } else if (preset === "this-quarter") {
+            const qStart = Math.floor(M/3)*3;
+            setPdfFromDate(isoOf(new Date(Y, qStart, 1)));
+            setPdfToDate(isoOf(new Date(Y, qStart+3, 0)));
+          } else if (preset === "fy-to-date") {
+            // Australian FY: 1 Jul → 30 Jun
+            const fyStart = M >= 6 ? new Date(Y, 6, 1) : new Date(Y-1, 6, 1);
+            setPdfFromDate(isoOf(fyStart));
+            setPdfToDate(todayStr);
+          } else if (preset === "all") {
+            setPdfFromDate(""); setPdfToDate("");
+          }
+        };
+
+        return (
+          <div className="overlay" onClick={e => { if (e.target === e.currentTarget) setShowRevPrint(false); }}>
+            <div className="modal" style={{maxWidth:560}}>
+              <div className="m-ttl">
+                Export Revenue PDF
+                <button className="btn-ic" style={{fontSize:17}} onClick={() => setShowRevPrint(false)}>✕</button>
+              </div>
+              <div className="m-sub">Choose a date range. Leave blank for all-time.</div>
+
+              {/* Quick presets */}
+              <div className="fg" style={{marginBottom:14}}>
+                <label className="flbl">Quick Range</label>
+                <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:4}}>
+                  {[
+                    {k:"this-month",   l:"This Month"},
+                    {k:"last-month",   l:"Last Month"},
+                    {k:"this-quarter", l:"This Quarter"},
+                    {k:"fy-to-date",   l:"FY to Date"},
+                    {k:"all",          l:"All Time"},
+                  ].map(p => (
+                    <button key={p.k} className="btn-g" style={{fontSize:11,padding:"6px 11px"}} onClick={() => setPreset(p.k)}>{p.l}</button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Date range pickers */}
+              <div className="frow2">
+                <div className="fg">
+                  <label className="flbl">From Date</label>
+                  <input className="inp" type="date" value={pdfFromDate} onChange={e => setPdfFromDate(e.target.value)}/>
+                </div>
+                <div className="fg">
+                  <label className="flbl">To Date</label>
+                  <input className="inp" type="date" value={pdfToDate} onChange={e => setPdfToDate(e.target.value)}/>
+                </div>
+              </div>
+
+              {/* Preview */}
+              <div style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 14px",marginTop:6}}>
+                <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".8px",marginBottom:8}}>Preview</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
+                  <div>
+                    <div className="mono" style={{fontSize:15,fontWeight:700,color:C.text}}>{filteredRev.length}</div>
+                    <div style={{fontSize:10,color:C.muted,marginTop:2}}>Entries</div>
+                  </div>
+                  <div>
+                    <div className="mono" style={{fontSize:15,fontWeight:700,color:C.accent}}>{money(fTotal)}</div>
+                    <div style={{fontSize:10,color:C.muted,marginTop:2}}>Total Sales</div>
+                  </div>
+                  <div>
+                    <div className="mono" style={{fontSize:15,fontWeight:700,color:C.yellow}}>{money(fGST)}</div>
+                    <div style={{fontSize:10,color:C.muted,marginTop:2}}>GST Collected</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="fbtns" style={{marginTop:18}}>
+                <button
+                  className="btn"
+                  disabled={filteredRev.length === 0}
+                  style={{opacity: filteredRev.length === 0 ? 0.5 : 1}}
+                  onClick={() => {
+                    const pdf = renderRevenueReportPDF({
+                      filtered: filteredRev,
+                      totalAll: fTotal,
+                      totalGST: fGST,
+                      fromDate: pdfFromDate,
+                      toDate: pdfToDate,
+                      bizName: localStorage.getItem("mise_biz_name") || "",
+                      bizABN: localStorage.getItem("mise_biz_abn")  || "",
+                    });
+                    const fname = `Revenue_${pdfFromDate||"all"}_to_${pdfToDate||"now"}.pdf`;
+                    pdfDownload(pdf, fname);
+                    showToast("Revenue PDF downloaded!");
+                    setShowRevPrint(false);
+                  }}>
+                  ⬇️ Download PDF
+                </button>
+                <button className="btn-g" onClick={() => setShowRevPrint(false)}>Cancel</button>
+              </div>
+              {filteredRev.length === 0 && (
+                <div style={{fontSize:11,color:C.muted,marginTop:8,textAlign:"center"}}>No entries in selected range. Pick a different range or "All Time".</div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
     </>
   );
 }
@@ -4294,6 +4543,10 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
   const [filterFrom,setFilterFrom]= useState("");
   const [filterTo,  setFilterTo]  = useState("");
   const [tab,       setTab]       = useState("list");
+
+  // ── Pagination state ─────────────────────────────────────
+  const [expPage,     setExpPage]     = useState(1);
+  const [expPageSize, setExpPageSize] = useState(25);
 
   // ── Quick-entry search state ─────────────────────────────
   const [catQuery,   setCatQuery]   = useState("");
@@ -5630,12 +5883,22 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
             {filtered.length > 0 && <span> · Total: <strong style={{ color:C.text }}>{money(filtered.reduce((s,e)=>s+e.amount,0))}</strong></span>}
           </div>
 
+          {(() => {
+            const totalRows  = filtered.length;
+            const pageSize   = expPageSize === 0 ? Math.max(totalRows, 1) : expPageSize;
+            const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+            const safePage   = Math.min(Math.max(1, expPage), totalPages);
+            const startIdx   = (safePage - 1) * pageSize;
+            const endIdx     = startIdx + pageSize;
+            const pageRows   = expPageSize === 0 ? filtered : filtered.slice(startIdx, endIdx);
+            return (
+              <>
           <table className="tbl">
             <thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Amount</th><th>GST Credit</th><th>Invoice</th><th></th></tr></thead>
             <tbody>
               {filtered.length === 0
                 ? <tr><td colSpan={7}><div className="empty-state"><div className="empty-icon">🧾</div><div className="empty-txt">{hasFilters ? "No expenses match your filters." : "No expenses yet."}</div></div></td></tr>
-                : filtered.map(e => {
+                : pageRows.map(e => {
                     const isLargeNoInv = e.amount >= 82.50 && !e.invoice && e.gst;
                     const isEnt = ["entertainment","meals"].includes(e.cat);
                     return (
@@ -5658,6 +5921,20 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
               }
             </tbody>
           </table>
+          {filtered.length > 0 && (totalPages > 1 || filtered.length > 25) && (
+            <Pagination
+              page={safePage}
+              totalPages={totalPages}
+              pageSize={expPageSize}
+              totalRows={totalRows}
+              startIdx={startIdx}
+              endIdx={Math.min(endIdx, totalRows)}
+              onPageChange={setExpPage}
+              onPageSizeChange={(n) => { setExpPageSize(n); setExpPage(1); }}/>
+          )}
+              </>
+            );
+          })()}
         </div>
       )}
 
@@ -5753,6 +6030,116 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
         </PrintModal>
       )}
     </>
+  );
+}
+// ════════════════════════════════════════════════════════════
+//  Pagination — reusable component for large lists
+//  Used by RevenuePage (Sales History) and ExpensesPage.
+// ════════════════════════════════════════════════════════════
+function Pagination({ page, totalPages, pageSize, totalRows, startIdx, endIdx, onPageChange, onPageSizeChange }) {
+  const [jumpVal, setJumpVal] = useState("");
+  const handleJump = () => {
+    const n = parseInt(jumpVal, 10);
+    if (!isNaN(n) && n >= 1 && n <= totalPages) {
+      onPageChange(n);
+      setJumpVal("");
+    }
+  };
+  // Build a compact page button list: always show 1, last, current and ±1 around current; ellipses elsewhere
+  const buildPageButtons = () => {
+    if (totalPages <= 7) return Array.from({length: totalPages}, (_,i) => i+1);
+    const pages = new Set([1, totalPages, page, page-1, page+1]);
+    const sorted = [...pages].filter(p => p >= 1 && p <= totalPages).sort((a,b) => a-b);
+    const out = [];
+    let prev = 0;
+    for (const p of sorted) {
+      if (prev && p - prev > 1) out.push("…");
+      out.push(p);
+      prev = p;
+    }
+    return out;
+  };
+
+  return (
+    <div style={{
+      display:"flex", flexWrap:"wrap", alignItems:"center", justifyContent:"space-between",
+      gap:12, padding:"12px 4px 4px", borderTop:`1px solid ${C.border}`, marginTop:8
+    }}>
+      {/* Left: row range */}
+      <div style={{fontSize:11, color:C.muted}}>
+        {totalRows === 0
+          ? "No rows"
+          : pageSize === 0
+            ? `Showing all ${totalRows} ${totalRows === 1 ? "row" : "rows"}`
+            : `Showing ${startIdx+1}–${endIdx} of ${totalRows} ${totalRows === 1 ? "row" : "rows"}`
+        }
+      </div>
+
+      {/* Center: page nav buttons */}
+      <div style={{display:"flex", alignItems:"center", gap:4, flexWrap:"wrap"}}>
+        <button
+          className="btn-g"
+          style={{padding:"5px 10px", fontSize:11, opacity: page <= 1 ? 0.4 : 1}}
+          disabled={page <= 1}
+          onClick={() => onPageChange(page - 1)}>
+          ← Prev
+        </button>
+        {buildPageButtons().map((p, i) => p === "…"
+          ? <span key={`e${i}`} style={{padding:"0 4px", color:C.muted, fontSize:11}}>…</span>
+          : <button
+              key={p}
+              className={p === page ? "btn" : "btn-g"}
+              style={{padding:"5px 10px", fontSize:11, minWidth:32}}
+              onClick={() => onPageChange(p)}>
+              {p}
+            </button>
+        )}
+        <button
+          className="btn-g"
+          style={{padding:"5px 10px", fontSize:11, opacity: page >= totalPages ? 0.4 : 1}}
+          disabled={page >= totalPages}
+          onClick={() => onPageChange(page + 1)}>
+          Next →
+        </button>
+      </div>
+
+      {/* Right: jump + page size */}
+      <div style={{display:"flex", alignItems:"center", gap:8}}>
+        {totalPages > 5 && (
+          <>
+            <span style={{fontSize:11, color:C.muted}}>Go to:</span>
+            <input
+              type="number"
+              min={1}
+              max={totalPages}
+              placeholder={String(page)}
+              value={jumpVal}
+              onChange={e => setJumpVal(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleJump()}
+              style={{
+                width:55, padding:"5px 7px", fontSize:11,
+                background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:6,
+                color:C.text, fontFamily:"inherit"
+              }}/>
+            <button className="btn-g" style={{padding:"5px 9px", fontSize:11}} onClick={handleJump}>Go</button>
+          </>
+        )}
+        <span style={{fontSize:11, color:C.muted, marginLeft:6}}>Per page:</span>
+        <select
+          value={pageSize}
+          onChange={e => onPageSizeChange(parseInt(e.target.value, 10))}
+          style={{
+            padding:"5px 7px", fontSize:11,
+            background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:6,
+            color:C.text, fontFamily:"inherit", cursor:"pointer"
+          }}>
+          <option value={25}>25</option>
+          <option value={50}>50</option>
+          <option value={100}>100</option>
+          <option value={0}>All</option>
+        </select>
+      </div>
+    </div>
   );
 }
 // ════════════════════════════════════════════════════════════

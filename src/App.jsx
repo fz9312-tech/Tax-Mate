@@ -12053,6 +12053,18 @@ export default function App() {
   const [toast,           setToast]           = useState(null);
   const [dbReady,         setDbReady]         = useState(false); // true once initial load done
   const [bizId,           setBizId]           = useState(null);  // UUID of business row
+
+  // ── Master Account state (Phase 1) ────────────────────────
+  // Feature flag — set to false to revert to single-business behaviour
+  const MASTER_ACCOUNT_ENABLED = true;
+  // userBusinesses: array of { id, name, abn, industry, role } for all businesses
+  // this user has access to (as owner or accountant). One entry for single-tenant users.
+  const [userBusinesses,  setUserBusinesses]  = useState([]);
+  // currentRole: role string for the currently-active bizId ('owner' | 'accountant_view' | 'accountant_edit')
+  const [currentRole,     setCurrentRole]     = useState("owner");
+  // Derived: is the current user view-only (no write permission)?
+  const isViewOnly = currentRole === "accountant_view";
+
   const showToast = msg => { setToast(msg); setTimeout(() => setToast(null), 2800); };
 
   // ── Supabase client (injected via index.html script tag) ────
@@ -12160,56 +12172,127 @@ export default function App() {
   }, []);
 
 const bootFromSession = async (session) => {
-    // ── Race-condition-safe business row resolution ───────────────
-    // Defends against three failure modes:
-    //   1. Concurrent bootFromSession calls (double-click, auth callback fires twice)
-    //   2. Supabase transient network errors (don't fall through to INSERT on fetch failure)
-    //   3. UNIQUE(owner_id) constraint collision (retry by re-selecting the winning row)
-    // Requires DB constraint: businesses.owner_id UNIQUE
-    let biz = null;
+    // ── Phase 1 Master Account: load businesses via business_access table ──
+    // Strategy:
+    //   1. SELECT all businesses this user has access to (owner or accountant)
+    //   2. If 0 → first-time user; create their first business with owner role
+    //   3. If 1+ → load them all into userBusinesses, activate the first one
+    //   4. (Future Step 4: top-bar dropdown to switch between them)
+    //
+    // Backward compat:
+    //   - Existing owners still see their single business (Step 1 SQL migrated their access rows)
+    //   - The race-condition INSERT guard from Layer 2 is preserved for new sign-ups
+    //   - All downstream code (usePersisted, BAS, etc.) sees bizId exactly as before
 
-    const tryFetchExisting = async () => {
-      const { data, error } = await sb().from("businesses")
-        .select("id,name,abn,industry")
-        .eq("owner_id", session.user.id)
-        .limit(1);
-      if (error) { console.warn("bootFromSession: fetch failed", error); return null; }
-      return (data && data.length > 0) ? data[0] : null;
+    if (!MASTER_ACCOUNT_ENABLED) {
+      // ── Legacy single-business path (preserved as escape hatch) ──
+      let biz = null;
+      const tryFetchOwn = async () => {
+        const { data, error } = await sb().from("businesses")
+          .select("id,name,abn,industry")
+          .eq("owner_id", session.user.id)
+          .limit(1);
+        if (error) { console.warn("bootFromSession: legacy fetch failed", error); return null; }
+        return (data && data.length > 0) ? data[0] : null;
+      };
+      biz = await tryFetchOwn();
+      if (!biz) {
+        const { data: newBiz, error: ie } = await sb().from("businesses")
+          .insert({ owner_id: session.user.id, name: "My Restaurant" })
+          .select().single();
+        if (newBiz) biz = newBiz;
+        else if (ie?.code === "23505") biz = await tryFetchOwn();
+      }
+      if (biz && biz.id) {
+        setBizId(biz.id);
+        setBizNameRaw(biz.name || "My Restaurant");
+        setBizABNRaw(biz.abn  || "");
+        setIndustryRaw(biz.industry || "restaurant");
+        setUserBusinesses([{ ...biz, role: "owner" }]);
+        setCurrentRole("owner");
+        localStorage.setItem("mise_biz_name", biz.name || "My Restaurant");
+        localStorage.setItem("mise_biz_abn",  biz.abn  || "");
+      }
+      setDbReady(true);
+      setScreen("app");
+      return;
+    }
+
+    // ── Multi-tenant path via business_access ──
+    // Step A: fetch all businesses user has access to
+    const fetchAccessibleBusinesses = async () => {
+      // Inner select pulls business details via FK; outer join needed because
+      // RLS will already constrain access rows to this user
+      const { data, error } = await sb().from("business_access")
+        .select("role, business_id, businesses!inner(id, name, abn, industry)")
+        .order("granted_at", { ascending: true });
+      if (error) {
+        console.warn("bootFromSession: fetchAccessible failed", error);
+        return null;
+      }
+      // Normalise shape: [{id, name, abn, industry, role}, ...]
+      return (data || []).map(row => ({
+        id:       row.businesses.id,
+        name:     row.businesses.name,
+        abn:      row.businesses.abn,
+        industry: row.businesses.industry,
+        role:     row.role,
+      }));
     };
 
-    // Attempt 1: fetch existing
-    biz = await tryFetchExisting();
+    let businesses = await fetchAccessibleBusinesses();
 
-    // Attempt 2: row doesn't exist — try to create it
-    if (!biz) {
+    // Step B: first-time user → create their first business (owner role auto-added by trigger
+    // or by our INSERT-then-INSERT pattern below; since no DB trigger exists yet, do it manually)
+    if (businesses !== null && businesses.length === 0) {
       const { data: newBiz, error: insertError } = await sb().from("businesses")
         .insert({ owner_id: session.user.id, name: "My Restaurant" })
         .select().single();
 
       if (newBiz) {
-        biz = newBiz;
+        // Mirror into business_access so future loads see it.
+        // Idempotent INSERT — if a UNIQUE collision happens (concurrent boot), no harm done.
+        await sb().from("business_access")
+          .insert({
+            business_id: newBiz.id,
+            user_id: session.user.id,
+            role: "owner",
+            invited_by: session.user.id,
+          })
+          .then(({ error }) => {
+            // 23505 = duplicate (already inserted by a concurrent boot) → fine
+            if (error && error.code !== "23505") {
+              console.warn("bootFromSession: access row insert failed", error);
+            }
+          });
+        businesses = [{
+          id: newBiz.id, name: newBiz.name, abn: newBiz.abn,
+          industry: newBiz.industry, role: "owner"
+        }];
+      } else if (insertError?.code === "23505") {
+        // Concurrent boot already created the business — re-fetch
+        console.info("bootFromSession: concurrent insert detected, re-fetching");
+        businesses = await fetchAccessibleBusinesses();
       } else if (insertError) {
-        // Most likely: UNIQUE(owner_id) constraint violated — a concurrent request
-        // already inserted. Re-select to pick up that winner row instead of creating another.
-        if (insertError.code === "23505" /* unique_violation */) {
-          console.info("bootFromSession: concurrent insert detected, re-fetching");
-          biz = await tryFetchExisting();
-        } else {
-          console.error("bootFromSession: insert failed", insertError);
-        }
+        console.error("bootFromSession: insert business failed", insertError);
       }
     }
 
-    // Apply to state only if we have a valid row. Otherwise stay put (don't crash).
-    if (biz && biz.id) {
-      setBizId(biz.id);
-      setBizNameRaw(biz.name || "My Restaurant");
-      setBizABNRaw(biz.abn  || "");
-      setIndustryRaw(biz.industry || "restaurant");
-      localStorage.setItem("mise_biz_name", biz.name || "My Restaurant");
-      localStorage.setItem("mise_biz_abn",  biz.abn  || "");
+    // Step C: activate first business (or null if still empty after all attempts)
+    if (businesses && businesses.length > 0) {
+      const first = businesses[0];
+      setUserBusinesses(businesses);
+      setCurrentRole(first.role || "owner");
+      setBizId(first.id);
+      setBizNameRaw(first.name || "My Restaurant");
+      setBizABNRaw(first.abn  || "");
+      setIndustryRaw(first.industry || "restaurant");
+      localStorage.setItem("mise_biz_name", first.name || "My Restaurant");
+      localStorage.setItem("mise_biz_abn",  first.abn  || "");
+      // Persist the active bizId so next-load uses the same one (Step 4 will let user pick)
+      localStorage.setItem("mise_active_biz_id", first.id);
     } else {
-      console.error("bootFromSession: could not resolve business row for user", session.user.id);
+      console.error("bootFromSession: could not resolve any business for user", session.user.id);
     }
     setDbReady(true);
     setScreen("app");

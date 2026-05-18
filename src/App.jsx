@@ -10036,37 +10036,56 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
     }
   };
 
-  // ── Team Access state (Phase 1 Step 3 — invite accountants) ──
-  const isOwner = currentRole === "owner";
-  const [accessList,   setAccessList]   = useState([]);  // [{user_id, email, role, granted_at, invited_by}]
-  const [inviteEmail,  setInviteEmail]  = useState("");
-  const [inviteRole,   setInviteRole]   = useState("accountant_view");
-  const [inviteBusy,   setInviteBusy]   = useState(false);
-  const [inviteError,  setInviteError]  = useState("");
-  const [accessLoaded, setAccessLoaded] = useState(false);
+  // ── Team Access state (Phase 1 Step 3 v2 — defensive) ──
+  // Defensive design:
+  //   - All state safe-defaulted (no undefined)
+  //   - currentRole defaults to "owner" if undefined (matches App state)
+  //   - Skip load entirely if bizId or window._supabase is missing
+  //   - All RPC calls wrapped in try/catch; never bubble up to render
+  const isOwner = (currentRole || "owner") === "owner";
+  const [accessList,    setAccessList]    = useState([]);
+  const [accessLoaded,  setAccessLoaded]  = useState(false);
+  const [accessLoadErr, setAccessLoadErr] = useState("");
+  const [inviteEmail,   setInviteEmail]   = useState("");
+  const [inviteRole,    setInviteRole]    = useState("accountant_view");
+  const [inviteBusy,    setInviteBusy]    = useState(false);
+  const [inviteError,   setInviteError]   = useState("");
 
-  // Load access list on mount + whenever bizId changes
   const loadAccessList = async () => {
-    if (!bizId || !window._supabase) return;
+    setAccessLoadErr("");
+    if (!bizId) { setAccessList([]); setAccessLoaded(true); return; }
+    if (!window._supabase) { setAccessLoadErr("Database not available"); setAccessLoaded(true); return; }
     try {
       const { data, error } = await window._supabase.rpc("list_business_access", { p_business_id: bizId });
       if (error) {
-        console.warn("loadAccessList failed:", error);
+        console.warn("loadAccessList error:", error);
+        setAccessLoadErr(error.message || "Could not load access list");
         setAccessList([]);
       } else {
-        setAccessList(data || []);
+        // Defensive: filter out any malformed rows
+        const clean = (data || []).filter(r => r && r.user_id);
+        setAccessList(clean);
       }
+    } catch (e) {
+      console.warn("loadAccessList exception:", e);
+      setAccessLoadErr(e.message || "Could not load access list");
+      setAccessList([]);
     } finally {
       setAccessLoaded(true);
     }
   };
+
   useEffect(() => { loadAccessList(); }, [bizId]);
 
   const handleInvite = async () => {
     setInviteError("");
-    const email = inviteEmail.trim().toLowerCase();
+    const email = (inviteEmail || "").trim().toLowerCase();
     if (!email || !email.includes("@")) {
       setInviteError("Please enter a valid email address");
+      return;
+    }
+    if (!bizId) {
+      setInviteError("No active business");
       return;
     }
     setInviteBusy(true);
@@ -10080,29 +10099,20 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
         setInviteError(error.message || "Invitation failed");
         return;
       }
-      switch (result) {
-        case "ok":
-          showToast("Accountant invited ✅");
-          setInviteEmail("");
-          await loadAccessList();
-          break;
-        case "not_registered":
-          setInviteError(`No Mise account found for "${email}". Ask them to sign up first at tax-mate-phi.vercel.app, then come back here to invite.`);
-          break;
-        case "already_has_access":
-          setInviteError(`${email} already has access to this business.`);
-          break;
-        case "self_invite":
-          setInviteError("You can't invite yourself.");
-          break;
-        case "not_owner":
-          setInviteError("Only the business owner can invite accountants.");
-          break;
-        case "invalid_role":
-          setInviteError("Invalid role selected.");
-          break;
-        default:
-          setInviteError(`Unknown response: ${result}`);
+      const msg = {
+        "ok": null,
+        "not_registered": `No Mise account found for "${email}". Ask them to sign up first at tax-mate-phi.vercel.app, then come back here to invite.`,
+        "already_has_access": `${email} already has access to this business.`,
+        "self_invite": "You can't invite yourself.",
+        "not_owner": "Only the business owner can invite accountants.",
+        "invalid_role": "Invalid role selected.",
+      };
+      if (result === "ok") {
+        showToast("Accountant invited ✅");
+        setInviteEmail("");
+        await loadAccessList();
+      } else {
+        setInviteError(msg[result] || `Unknown response: ${result}`);
       }
     } catch (e) {
       setInviteError(e.message || "Invitation failed");
@@ -10112,7 +10122,8 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
   };
 
   const handleRevoke = async (userId, email) => {
-    if (!window.confirm(`Revoke access for ${email}? They will no longer be able to see this business's data.`)) return;
+    if (!userId) return;
+    if (!window.confirm(`Revoke access for ${email || "this user"}? They will no longer be able to see this business's data.`)) return;
     try {
       const { error } = await window._supabase
         .from("business_access")
@@ -10130,11 +10141,12 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
     }
   };
 
+  // Safe label resolver — never returns undefined
   const roleLabel = (r) => {
-    if (r === "owner")            return { lbl:"Owner",     col:C.accent, desc:"Full control"        };
-    if (r === "accountant_edit")  return { lbl:"Editor",    col:C.teal,   desc:"Can view and edit"   };
-    if (r === "accountant_view")  return { lbl:"View only", col:C.blue,   desc:"Read-only access"    };
-    return                                { lbl:r,          col:C.muted,  desc:""                    };
+    if (r === "owner")            return { lbl:"Owner",     col:C.accent, desc:"Full control"      };
+    if (r === "accountant_edit")  return { lbl:"Editor",    col:C.teal,   desc:"Can view and edit" };
+    if (r === "accountant_view")  return { lbl:"View only", col:C.blue,   desc:"Read-only access"  };
+    return                                { lbl:r || "?",   col:C.muted,  desc:""                  };
   };
 
   const INDUSTRIES = [
@@ -10324,53 +10336,49 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
         )}
       </div>
 
-      {/* ── Team Access (Phase 1 Step 3) ── */}
+      {/* ── Team Access (Phase 1 Step 3 v2 — defensive) ── */}
       <div className="fsec">
         <div className="ftit">Team Access</div>
         <div style={{ fontSize:12.5, color:C.muted, marginBottom:14 }}>
           {isOwner
-            ? "Invite your accountant to access this business's data. They will see exactly what you see — Sales, Expenses, BAS, Reports."
-            : "You have access to this business. Contact the owner to change permissions."}
+            ? "Invite your accountant to access this business's data."
+            : "Contact the owner to change permissions."}
         </div>
 
-        {/* Current access list */}
+        {/* Access list — minimal rendering, max defensiveness */}
         {!accessLoaded ? (
-          <div style={{ fontSize:12, color:C.muted }}>Loading access list…</div>
+          <div style={{ fontSize:12, color:C.muted }}>Loading…</div>
+        ) : accessLoadErr ? (
+          <div style={{ fontSize:12, color:C.red, marginBottom:10 }}>⚠️ {accessLoadErr}</div>
         ) : accessList.length === 0 ? (
-          <div style={{ fontSize:12, color:C.muted }}>No access records found.</div>
+          <div style={{ fontSize:12, color:C.muted, marginBottom:14 }}>No team members yet.</div>
         ) : (
           <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:14 }}>
             {accessList.map(a => {
-              const rl = roleLabel(a.role);
+              const safeRole  = a && a.role  ? a.role  : "?";
+              const safeEmail = a && a.email ? a.email : "(unknown)";
+              const safeId    = a && a.user_id ? a.user_id : Math.random().toString();
+              const rl = roleLabel(safeRole);
               return (
-                <div key={a.user_id} style={{
+                <div key={safeId} style={{
                   display:"flex", alignItems:"center", justifyContent:"space-between",
                   padding:"10px 13px", background:C.surfaceAlt,
                   border:`1px solid ${C.border}`, borderRadius:9
                 }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:11, flex:1, minWidth:0 }}>
-                    <div style={{
-                      width:32, height:32, borderRadius:"50%", background:rl.col,
-                      color:"#0C0F0D", fontWeight:700, fontSize:13,
-                      display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0
-                    }}>
-                      {(a.email || "?")[0].toUpperCase()}
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:13, fontWeight:600, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                      {safeEmail}
                     </div>
-                    <div style={{ flex:1, minWidth:0 }}>
-                      <div style={{ fontSize:13, fontWeight:600, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                        {a.email}
-                      </div>
-                      <div style={{ fontSize:11, color:C.muted, marginTop:1 }}>
-                        <span style={{ color:rl.col, fontWeight:600 }}>{rl.lbl}</span>
-                        <span style={{ marginLeft:6 }}>· {rl.desc}</span>
-                      </div>
+                    <div style={{ fontSize:11, marginTop:2 }}>
+                      <span style={{ color:rl.col, fontWeight:600 }}>{rl.lbl}</span>
+                      {rl.desc ? <span style={{ color:C.muted, marginLeft:6 }}>· {rl.desc}</span> : null}
                     </div>
                   </div>
-                  {isOwner && a.role !== "owner" && (
+                  {isOwner && safeRole !== "owner" && (
                     <button
                       className="btn-g"
                       style={{ fontSize:11, padding:"6px 11px" }}
-                      onClick={() => handleRevoke(a.user_id, a.email)}>
+                      onClick={() => handleRevoke(safeId, safeEmail)}>
                       Revoke
                     </button>
                   )}
@@ -10386,11 +10394,11 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
             <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".8px", marginBottom:10 }}>
               Invite Accountant
             </div>
-            {inviteError && (
+            {inviteError ? (
               <div style={{ background:"rgba(220,38,38,.1)", border:"1px solid rgba(220,38,38,.3)", borderRadius:8, padding:"9px 13px", fontSize:12, color:C.red, marginBottom:12 }}>
                 {inviteError}
               </div>
-            )}
+            ) : null}
             <div className="frow2" style={{ marginBottom:10 }}>
               <div className="fg">
                 <label className="flbl">Accountant Email</label>
@@ -10399,8 +10407,7 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
                   type="email"
                   placeholder="accountant@example.com"
                   value={inviteEmail}
-                  onChange={e => setInviteEmail(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && !inviteBusy && handleInvite()}/>
+                  onChange={e => setInviteEmail(e.target.value)}/>
               </div>
               <div className="fg">
                 <label className="flbl">Permission</label>
@@ -10408,7 +10415,7 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
                   className="inp"
                   value={inviteRole}
                   onChange={e => setInviteRole(e.target.value)}>
-                  <option value="accountant_view">View only — read & download</option>
+                  <option value="accountant_view">View only — read &amp; download</option>
                   <option value="accountant_edit">Full edit — add and modify</option>
                 </select>
               </div>
@@ -10421,7 +10428,7 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
               {inviteBusy ? "Inviting…" : "📨 Invite Accountant"}
             </button>
             <div style={{ fontSize:11, color:C.muted, marginTop:10, lineHeight:1.5 }}>
-              <strong>Note:</strong> the accountant must first register a free Mise account at <span style={{ color:C.text }}>tax-mate-phi.vercel.app</span>. After they confirm their email, come back and invite them here.
+              <strong>Note:</strong> the accountant must first register a free Mise account, then come back here to invite.
             </div>
           </div>
         )}

@@ -10003,7 +10003,7 @@ function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimeshe
 // ════════════════════════════════════════════════════════════
 //  SETTINGS
 // ════════════════════════════════════════════════════════════
-function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, bizABN, setBizABN, bizId, currentRole }) {
+function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, bizABN, setBizABN }) {
   const [saved, setSaved] = useState(false);
 
   // ── Change Password state ──────────────────────────────────────
@@ -10034,107 +10034,6 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
     } finally {
       setPwSaving(false);
     }
-  };
-
-  // ── Team Access state (Phase 1 Step 3 — invite accountants) ──
-  const isOwner = currentRole === "owner";
-  const [accessList,   setAccessList]   = useState([]);  // [{user_id, email, role, granted_at, invited_by}]
-  const [inviteEmail,  setInviteEmail]  = useState("");
-  const [inviteRole,   setInviteRole]   = useState("accountant_view");
-  const [inviteBusy,   setInviteBusy]   = useState(false);
-  const [inviteError,  setInviteError]  = useState("");
-  const [accessLoaded, setAccessLoaded] = useState(false);
-
-  // Load access list on mount + whenever bizId changes
-  const loadAccessList = async () => {
-    if (!bizId || !window._supabase) return;
-    try {
-      const { data, error } = await window._supabase.rpc("list_business_access", { p_business_id: bizId });
-      if (error) {
-        console.warn("loadAccessList failed:", error);
-        setAccessList([]);
-      } else {
-        setAccessList(data || []);
-      }
-    } finally {
-      setAccessLoaded(true);
-    }
-  };
-  useEffect(() => { loadAccessList(); }, [bizId]);
-
-  const handleInvite = async () => {
-    setInviteError("");
-    const email = inviteEmail.trim().toLowerCase();
-    if (!email || !email.includes("@")) {
-      setInviteError("Please enter a valid email address");
-      return;
-    }
-    setInviteBusy(true);
-    try {
-      const { data: result, error } = await window._supabase.rpc("invite_accountant", {
-        p_business_id: bizId,
-        p_email:       email,
-        p_role:        inviteRole,
-      });
-      if (error) {
-        setInviteError(error.message || "Invitation failed");
-        return;
-      }
-      switch (result) {
-        case "ok":
-          showToast("Accountant invited ✅");
-          setInviteEmail("");
-          await loadAccessList();
-          break;
-        case "not_registered":
-          setInviteError(`No Mise account found for "${email}". Ask them to sign up first at tax-mate-phi.vercel.app, then come back here to invite.`);
-          break;
-        case "already_has_access":
-          setInviteError(`${email} already has access to this business.`);
-          break;
-        case "self_invite":
-          setInviteError("You can't invite yourself.");
-          break;
-        case "not_owner":
-          setInviteError("Only the business owner can invite accountants.");
-          break;
-        case "invalid_role":
-          setInviteError("Invalid role selected.");
-          break;
-        default:
-          setInviteError(`Unknown response: ${result}`);
-      }
-    } catch (e) {
-      setInviteError(e.message || "Invitation failed");
-    } finally {
-      setInviteBusy(false);
-    }
-  };
-
-  const handleRevoke = async (userId, email) => {
-    if (!window.confirm(`Revoke access for ${email}? They will no longer be able to see this business's data.`)) return;
-    try {
-      const { error } = await window._supabase
-        .from("business_access")
-        .delete()
-        .eq("business_id", bizId)
-        .eq("user_id", userId);
-      if (error) {
-        showToast("Revoke failed: " + (error.message || ""));
-        return;
-      }
-      showToast("Access revoked");
-      await loadAccessList();
-    } catch (e) {
-      showToast("Revoke failed: " + (e.message || ""));
-    }
-  };
-
-  const roleLabel = (r) => {
-    if (r === "owner")            return { lbl:"Owner",     col:C.accent, desc:"Full control"        };
-    if (r === "accountant_edit")  return { lbl:"Editor",    col:C.teal,   desc:"Can view and edit"   };
-    if (r === "accountant_view")  return { lbl:"View only", col:C.blue,   desc:"Read-only access"    };
-    return                                { lbl:r,          col:C.muted,  desc:""                    };
   };
 
   const INDUSTRIES = [
@@ -10319,109 +10218,6 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
                 disabled={pwSaving}>
                 Cancel
               </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* ── Team Access (Phase 1 Step 3) ── */}
-      <div className="fsec">
-        <div className="ftit">Team Access</div>
-        <div style={{ fontSize:12.5, color:C.muted, marginBottom:14 }}>
-          {isOwner
-            ? "Invite your accountant to access this business's data. They will see exactly what you see — Sales, Expenses, BAS, Reports."
-            : "You have access to this business. Contact the owner to change permissions."}
-        </div>
-
-        {/* Current access list */}
-        {!accessLoaded ? (
-          <div style={{ fontSize:12, color:C.muted }}>Loading access list…</div>
-        ) : accessList.length === 0 ? (
-          <div style={{ fontSize:12, color:C.muted }}>No access records found.</div>
-        ) : (
-          <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:14 }}>
-            {accessList.map(a => {
-              const rl = roleLabel(a.role);
-              return (
-                <div key={a.user_id} style={{
-                  display:"flex", alignItems:"center", justifyContent:"space-between",
-                  padding:"10px 13px", background:C.surfaceAlt,
-                  border:`1px solid ${C.border}`, borderRadius:9
-                }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:11, flex:1, minWidth:0 }}>
-                    <div style={{
-                      width:32, height:32, borderRadius:"50%", background:rl.col,
-                      color:"#0C0F0D", fontWeight:700, fontSize:13,
-                      display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0
-                    }}>
-                      {(a.email || "?")[0].toUpperCase()}
-                    </div>
-                    <div style={{ flex:1, minWidth:0 }}>
-                      <div style={{ fontSize:13, fontWeight:600, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                        {a.email}
-                      </div>
-                      <div style={{ fontSize:11, color:C.muted, marginTop:1 }}>
-                        <span style={{ color:rl.col, fontWeight:600 }}>{rl.lbl}</span>
-                        <span style={{ marginLeft:6 }}>· {rl.desc}</span>
-                      </div>
-                    </div>
-                  </div>
-                  {isOwner && a.role !== "owner" && (
-                    <button
-                      className="btn-g"
-                      style={{ fontSize:11, padding:"6px 11px" }}
-                      onClick={() => handleRevoke(a.user_id, a.email)}>
-                      Revoke
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Invite form — owner only */}
-        {isOwner && (
-          <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:14, marginTop:8 }}>
-            <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".8px", marginBottom:10 }}>
-              Invite Accountant
-            </div>
-            {inviteError && (
-              <div style={{ background:"rgba(220,38,38,.1)", border:"1px solid rgba(220,38,38,.3)", borderRadius:8, padding:"9px 13px", fontSize:12, color:C.red, marginBottom:12 }}>
-                {inviteError}
-              </div>
-            )}
-            <div className="frow2" style={{ marginBottom:10 }}>
-              <div className="fg">
-                <label className="flbl">Accountant Email</label>
-                <input
-                  className="inp"
-                  type="email"
-                  placeholder="accountant@example.com"
-                  value={inviteEmail}
-                  onChange={e => setInviteEmail(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && !inviteBusy && handleInvite()}/>
-              </div>
-              <div className="fg">
-                <label className="flbl">Permission</label>
-                <select
-                  className="inp"
-                  value={inviteRole}
-                  onChange={e => setInviteRole(e.target.value)}>
-                  <option value="accountant_view">View only — read & download</option>
-                  <option value="accountant_edit">Full edit — add and modify</option>
-                </select>
-              </div>
-            </div>
-            <button
-              className="btn"
-              style={{ padding:"9px 16px", opacity: inviteBusy ? 0.7 : 1 }}
-              onClick={handleInvite}
-              disabled={inviteBusy}>
-              {inviteBusy ? "Inviting…" : "📨 Invite Accountant"}
-            </button>
-            <div style={{ fontSize:11, color:C.muted, marginTop:10, lineHeight:1.5 }}>
-              <strong>Note:</strong> the accountant must first register a free Mise account at <span style={{ color:C.text }}>tax-mate-phi.vercel.app</span>. After they confirm their email, come back and invite them here.
             </div>
           </div>
         )}
@@ -12571,7 +12367,7 @@ const bootFromSession = async (session) => {
           {page === "documents"      && <DocumentsPage documents={documents} setDocuments={setDocuments} employees={employees} showToast={showToast}/>}
           {page === "bassummary"     && <BASSummaryPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} basHistory={basHistory} setBasHistory={setBasHistory} showToast={showToast} bizName={bizName} bizABN={bizABN} ias={ias}/>}
           {page === "reports"        && <ReportsPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} inventory={inventory} setInventory={setInventory} bizName={bizName} bizABN={bizABN}/>}
-          {page === "settings"       && <SettingsPage industry={industry} setIndustry={setIndustry} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN} bizId={bizId} currentRole={currentRole}/>}
+          {page === "settings"       && <SettingsPage industry={industry} setIndustry={setIndustry} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN}/>}
         </main>
         <BottomTabBar page={page} setPage={setPage} flagCount={flagCount}/>
         {toast && <Toast msg={toast} onDone={() => setToast(null)}/>}

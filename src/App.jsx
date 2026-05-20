@@ -12298,6 +12298,12 @@ export default function App() {
     const bizIdRef = React.useRef(bizId);
     React.useEffect(() => { bizIdRef.current = bizId; }, [bizId]);
 
+    // ── View-only guard ref (Step 5 layer 3 — hard write block) ──
+    // Without this, RLS rejects the upsert but React state already updated,
+    // causing the "ghost entries that disappear on logout" UX bug.
+    const isViewOnlyRef = React.useRef(false);
+    React.useEffect(() => { isViewOnlyRef.current = currentRole === "accountant_view"; }, [currentRole]);
+
     // Load from Supabase once bizId is known
     React.useEffect(() => {
       if (!bizId) return;
@@ -12317,6 +12323,13 @@ export default function App() {
     }, [bizId]);
 
     const set = v => {
+      // ── HARD GUARD: view-only accountants cannot write ──
+      // This prevents the "ghost entries that disappear" UX problem where
+      // React state updates but Supabase RLS rejects the write.
+      if (isViewOnlyRef.current) {
+        showToast("View only — ask the owner to make changes");
+        return; // Do NOT update state; do NOT write Supabase
+      }
       setVal(prev => {
         const next = typeof v === "function" ? v(prev) : v;
         // Write localStorage immediately
@@ -12508,6 +12521,36 @@ const bootFromSession = async (session) => {
     setDbReady(true);
     setScreen("app");
   };
+
+  // ── Switch active business (Phase 1 Step 4 — Client Switcher) ──
+  // Used by accountants/multi-tenant users to switch which client's data they view.
+  // CRITICAL: This MUST clear all in-memory state and localStorage caches before
+  // setting the new bizId, otherwise old business data leaks to the new business view.
+  const switchBusiness = (targetBizId) => {
+    const target = userBusinesses.find(b => b.id === targetBizId);
+    if (!target) {
+      console.warn("switchBusiness: target not found", targetBizId);
+      return;
+    }
+    // Clear ALL mise_* localStorage keys so the new business loads fresh from Supabase
+    try {
+      Object.keys(localStorage).forEach(k => {
+        if (k.startsWith("mise_") && k !== "mise_active_biz_id" && k !== "mise_biz_name" && k !== "mise_biz_abn") {
+          localStorage.removeItem(k);
+        }
+      });
+    } catch {}
+    // Apply new business context
+    setBizId(target.id);
+    setCurrentRole(target.role || "owner");
+    setBizNameRaw(target.name || "");
+    setBizABNRaw(target.abn || "");
+    setIndustryRaw(target.industry || "restaurant");
+    localStorage.setItem("mise_active_biz_id", target.id);
+    localStorage.setItem("mise_biz_name", target.name || "");
+    localStorage.setItem("mise_biz_abn",  target.abn  || "");
+    showToast(`Switched to ${target.name || "business"}`);
+  };
   // ── Show onboarding when bizName is still default ────────
   const [showOnboarding, setShowOnboarding] = useState(
     () => (localStorage.getItem("mise_biz_name") || "My Restaurant") === "My Restaurant"
@@ -12567,6 +12610,65 @@ const bootFromSession = async (session) => {
       <div className="layout">
         <Sidebar page={page} setPage={setPage} onLogout={async () => { if(window._supabase) await sb().auth.signOut(); setScreen("landing"); setBizId(null); }} flagCount={flagCount} industry={industry}/>
         <main className="main">
+          {/* ── Phase 1 Step 4: Client Switcher (only for users with ≥2 businesses) ── */}
+          {userBusinesses.length > 1 && (
+            <div style={{
+              display:"flex", alignItems:"center", gap:10, flexWrap:"wrap",
+              background:"linear-gradient(135deg, rgba(57,211,187,.10), rgba(64,156,255,.08))",
+              border:`1px solid ${C.teal}`, borderRadius:10,
+              padding:"10px 14px", marginBottom:16
+            }}>
+              <span style={{ fontSize:11, color:C.muted, textTransform:"uppercase", letterSpacing:".8px", fontWeight:700 }}>
+                Currently viewing
+              </span>
+              <select
+                value={bizId || ""}
+                onChange={e => switchBusiness(e.target.value)}
+                style={{
+                  flex:1, minWidth:200,
+                  padding:"7px 11px", fontSize:13, fontWeight:600,
+                  background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:8,
+                  color:C.text, fontFamily:"inherit", cursor:"pointer"
+                }}>
+                {userBusinesses.map(b => (
+                  <option key={b.id} value={b.id}>
+                    {b.name || "(unnamed)"} {b.role === "owner" ? "— Owner" : b.role === "accountant_edit" ? "— Editor" : "— View only"}
+                  </option>
+                ))}
+              </select>
+              <span style={{
+                fontSize:10, fontWeight:700, padding:"3px 9px", borderRadius:5, whiteSpace:"nowrap",
+                color: "#0C0F0D",
+                background: currentRole === "owner" ? C.accent
+                          : currentRole === "accountant_edit" ? C.teal
+                          : C.blue
+              }}>
+                {currentRole === "owner" ? "OWNER"
+                  : currentRole === "accountant_edit" ? "EDITOR"
+                  : "VIEW ONLY"}
+              </span>
+            </div>
+          )}
+
+          {/* ── Phase 1 Step 5 Layer 1: View-only banner ── */}
+          {currentRole === "accountant_view" && (
+            <div style={{
+              display:"flex", alignItems:"center", gap:10,
+              background:"rgba(64,156,255,.10)",
+              border:`1px solid ${C.blue}`, borderRadius:10,
+              padding:"10px 14px", marginBottom:16,
+              fontSize:12.5, color:C.text
+            }}>
+              <span style={{ fontSize:16 }}>👁️</span>
+              <div style={{ flex:1 }}>
+                <strong style={{ color:C.blue }}>View-only access.</strong>
+                <span style={{ color:C.muted, marginLeft:6 }}>
+                  You can browse and download reports. Changes are not saved — ask the owner to make edits.
+                </span>
+              </div>
+            </div>
+          )}
+
           {page === "dashboard"      && <DashboardPage revenue={revenue} expenses={expenses} employees={employees} timesheets={timesheets} insurance={insurance} setPage={setPage} bizName={bizName} roster={roster}/>}
           {page === "revenue"        && <RevenuePage   revenue={revenue}   setRevenue={setRevenue}   showToast={showToast}/>}
           {page === "expenses"       && <ExpensesPage  expenses={expenses} setExpenses={setExpenses} showToast={showToast} industry={industry} dismissed={dismissedAlerts} setDismissed={setDismissedAlerts}/>}

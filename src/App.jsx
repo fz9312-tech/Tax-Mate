@@ -10125,19 +10125,54 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
     if (!userId) return;
     if (!window.confirm(`Revoke access for ${email || "this user"}? They will no longer be able to see this business's data.`)) return;
     try {
-      const { error } = await window._supabase
-        .from("business_access")
-        .delete()
-        .eq("business_id", bizId)
-        .eq("user_id", userId);
+      // Use SECURITY DEFINER RPC — a direct DELETE is silently blocked by RLS
+      // (the SELECT policy hides the owner's own verification row from the subquery),
+      // which causes "0 rows deleted" with no error — a false success.
+      const { data: result, error } = await window._supabase
+        .rpc("revoke_access", { p_business_id: bizId, p_user_id: userId });
       if (error) {
         showToast("Revoke failed: " + (error.message || ""));
         return;
       }
-      showToast("Access revoked");
-      await loadAccessList();
+      if (result === "ok") {
+        showToast("Access revoked");
+        await loadAccessList();
+      } else if (result === "not_owner") {
+        showToast("Only the owner can revoke access");
+      } else if (result === "cannot_revoke_owner") {
+        showToast("Cannot revoke an owner");
+      } else if (result === "not_found") {
+        showToast("Access already removed");
+        await loadAccessList();
+      } else {
+        showToast("Revoke failed: " + result);
+      }
     } catch (e) {
       showToast("Revoke failed: " + (e.message || ""));
+    }
+  };
+
+  const handleChangeRole = async (userId, newRole) => {
+    if (!userId || !newRole) return;
+    try {
+      const { data: result, error } = await window._supabase
+        .rpc("update_access_role", { p_business_id: bizId, p_user_id: userId, p_role: newRole });
+      if (error) {
+        showToast("Update failed: " + (error.message || ""));
+        return;
+      }
+      if (result === "ok") {
+        showToast("Permission updated");
+        await loadAccessList();
+      } else if (result === "not_owner") {
+        showToast("Only the owner can change permissions");
+      } else if (result === "cannot_change_owner") {
+        showToast("Cannot change the owner's role");
+      } else {
+        showToast("Update failed: " + result);
+      }
+    } catch (e) {
+      showToast("Update failed: " + (e.message || ""));
     }
   };
 
@@ -10375,12 +10410,25 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
                     </div>
                   </div>
                   {isOwner && safeRole !== "owner" && (
-                    <button
-                      className="btn-g"
-                      style={{ fontSize:11, padding:"6px 11px" }}
-                      onClick={() => handleRevoke(safeId, safeEmail)}>
-                      Revoke
-                    </button>
+                    <div style={{ display:"flex", alignItems:"center", gap:6, flexShrink:0 }}>
+                      <select
+                        value={safeRole}
+                        onChange={e => handleChangeRole(safeId, e.target.value)}
+                        style={{
+                          fontSize:11, padding:"5px 7px",
+                          background:C.bg, border:`1px solid ${C.border}`, borderRadius:6,
+                          color:C.text, fontFamily:"inherit", cursor:"pointer"
+                        }}>
+                        <option value="accountant_view">View only</option>
+                        <option value="accountant_edit">Full edit</option>
+                      </select>
+                      <button
+                        className="btn-g"
+                        style={{ fontSize:11, padding:"6px 11px" }}
+                        onClick={() => handleRevoke(safeId, safeEmail)}>
+                        Revoke
+                      </button>
+                    </div>
                   )}
                 </div>
               );

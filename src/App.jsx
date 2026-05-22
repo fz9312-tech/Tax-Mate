@@ -3126,6 +3126,7 @@ function Sidebar({ page, setPage, onLogout, flagCount }) {
 function DashboardPage({ revenue, expenses, employees, timesheets, insurance, setPage, roster = [] }) {
   const [selMonth, setSelMonth] = useState(() => todayStr.slice(0,7));
   const [dashTab,  setDashTab]  = useState("today"); // "today" | "overview" | "cashflow" | "reminders"
+  const [reserveBump, setReserveBump] = useState(0); // bumped when owner updates BAS reserve
   const [y, m] = selMonth.split("-").map(Number);
 
   const prevMonth = () => { const d = new Date(y,m-2,1); setSelMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`); };
@@ -3424,6 +3425,161 @@ function DashboardPage({ revenue, expenses, employees, timesheets, insurance, se
                 </div>
               </div>
             )}
+          </div>
+        );
+      })()}
+
+      {/* ══════════════════════════════════════════════════════
+          BAS SAFE ZONE — am I ready for my next tax bill?
+      ══════════════════════════════════════════════════════ */}
+      {(() => {
+        // ── Quarter-to-date BAS estimate (the real bill, not just this month) ──
+        const viewDate  = new Date(y, m-1, 1);
+        const qNum      = Math.floor(viewDate.getMonth()/3);
+        const qStart    = new Date(viewDate.getFullYear(), qNum*3, 1);
+        const qEndFull  = new Date(viewDate.getFullYear(), qNum*3+3, 0);
+        const isCurrentQ= today >= qStart && today <= qEndFull;
+        const qEndStr   = isCurrentQ ? todayStr : qEndFull.toISOString().slice(0,10);
+        const qStartStr = qStart.toISOString().slice(0,10);
+
+        const qRevAll = revenue.filter(r => r.date >= qStartStr && r.date <= qEndStr);
+        const qExpAll = expenses.filter(e => e.date >= qStartStr && e.date <= qEndStr);
+        const qTsAll  = annotateTimesheets(employees, timesheets.filter(t => {
+          const d = weekToDate(t.week); return d && d >= qStartStr && d <= qEndStr;
+        }));
+        const qGST    = qRevAll.reduce((s,r)=>s+revGSTTaxable(r),0)/11;
+        const qCreds  = qExpAll.filter(e=>e.gst).reduce((s,e)=>s+expGST(e),0);
+        const qNetGST = Math.max(0, qGST - qCreds);
+        const qPAYG   = qTsAll.reduce((s,t)=>s+t.payg,0);
+        const estBill = qNetGST + qPAYG; // the full estimated quarterly tax bill
+
+        // ── How much has the owner set aside? ──
+        // Stored reserve (manually tracked by owner) + this quarter's accumulated profit buffer.
+        // We use a pragmatic proxy: the owner's saved reserve target if set, else
+        // we estimate from the recommended weekly set-aside × weeks elapsed this quarter.
+        const savedReserve = parseFloat(localStorage.getItem("mise_bas_reserve") || "0") || 0;
+        void reserveBump; // re-render dependency: bumped when owner updates reserve
+        // Recommended total reserve = the full estimated bill (you should have 100% by due date)
+        const recommendedReserve = estBill;
+        // Weeks elapsed in quarter (for "on track" pacing)
+        const daysIntoQ  = Math.max(0, Math.ceil((today - qStart)/86400000));
+        const daysInQ    = Math.ceil((qEndFull - qStart)/86400000);
+        const qProgress  = Math.min(100, Math.round((daysIntoQ/daysInQ)*100));
+
+        // Coverage = how much of the estimated bill the reserve currently covers
+        const coverage = estBill > 0 ? Math.round((savedReserve / estBill) * 100) : 100;
+
+        // ── Status logic ──
+        // SAFE  = reserve comfortably exceeds bill (≥100%)
+        // WATCH = reserve is close (60–99%)
+        // RISK  = insufficient (<60%)
+        let status, statusCol, statusBg, statusBd, statusIco, statusMsg;
+        if (estBill === 0) {
+          status="SAFE"; statusCol=C.green; statusBg="rgba(5,150,105,.08)"; statusBd="rgba(5,150,105,.25)"; statusIco="✅";
+          statusMsg="No tax owing this quarter yet. Nothing to set aside right now.";
+        } else if (coverage >= 100) {
+          status="SAFE"; statusCol=C.green; statusBg="rgba(5,150,105,.08)"; statusBd="rgba(5,150,105,.25)"; statusIco="✅";
+          statusMsg=`Your tax reserve covers ${coverage}% of your estimated bill. You're well prepared.`;
+        } else if (coverage >= 60) {
+          status="WATCH"; statusCol=C.yellow; statusBg="rgba(217,119,6,.08)"; statusBd="rgba(217,119,6,.25)"; statusIco="👀";
+          statusMsg=`Your reserve covers ${coverage}% of your estimated bill. Keep setting money aside to close the gap.`;
+        } else {
+          status="RISK"; statusCol="rgba(220,100,38,1)"; statusBg="rgba(220,100,38,.08)"; statusBd="rgba(220,100,38,.25)"; statusIco="⚠️";
+          statusMsg=`Your reserve only covers ${coverage}% of your estimated bill. Start putting money aside now to avoid a shortfall.`;
+        }
+
+        // ── Next BAS due date ──
+        const upcoming = BAS_DUES
+          .map(b => ({ ...b, due: agentLodge ? b.agentDue : b.selfDue }))
+          .map(b => ({ ...b, days: Math.ceil((new Date(b.due) - new Date())/86400000) }))
+          .filter(b => b.days >= 0)
+          .sort((a,b)=>a.days-b.days)[0];
+
+        const weeksLeft = upcoming ? Math.max(1, Math.ceil(upcoming.days/7)) : 4;
+        const gap       = Math.max(0, recommendedReserve - savedReserve);
+        const perWeek   = gap / weeksLeft;
+
+        return (
+          <div style={{background:statusBg,border:`1.5px solid ${statusBd}`,borderRadius:14,padding:"20px 22px",marginBottom:16}}>
+            {/* Header row */}
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:12,marginBottom:16}}>
+              <div style={{display:"flex",alignItems:"center",gap:12}}>
+                <span style={{fontSize:22}}>{statusIco}</span>
+                <div>
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <span style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".8px"}}>BAS Safe Zone</span>
+                    <span style={{fontSize:11,fontWeight:800,color:statusCol,background:C.surface,padding:"2px 10px",borderRadius:20,border:`1px solid ${statusBd}`}}>{status}</span>
+                  </div>
+                  <div style={{fontSize:13,color:C.muted,marginTop:5,lineHeight:1.5,maxWidth:480}}>{statusMsg}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Coverage bar */}
+            {estBill > 0 && (
+              <div style={{marginBottom:16}}>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:C.muted,marginBottom:5}}>
+                  <span>Reserve covers <strong style={{color:statusCol}}>{coverage}%</strong> of your bill</span>
+                  <span>{money(savedReserve)} / {money(estBill)}</span>
+                </div>
+                <div style={{height:10,background:C.border,borderRadius:5,overflow:"hidden"}}>
+                  <div style={{height:"100%",width:`${Math.min(100,coverage)}%`,background:statusCol,borderRadius:5,transition:"width .4s"}}/>
+                </div>
+              </div>
+            )}
+
+            {/* Key numbers */}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:10,marginBottom:16}}>
+              <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 14px"}}>
+                <div style={{fontSize:10,color:C.muted,marginBottom:6}}>Estimated tax bill</div>
+                <div className="mono" style={{fontSize:18,fontWeight:700,color:C.text}}>{money(estBill)}</div>
+                <div style={{fontSize:9.5,color:C.dim,marginTop:3}}>This quarter</div>
+              </div>
+              <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 14px"}}>
+                <div style={{fontSize:10,color:C.muted,marginBottom:6}}>You've set aside</div>
+                <div className="mono" style={{fontSize:18,fontWeight:700,color:savedReserve>0?C.green:C.muted}}>{money(savedReserve)}</div>
+                <div style={{fontSize:9.5,color:C.dim,marginTop:3}}>Current reserve</div>
+              </div>
+              <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 14px"}}>
+                <div style={{fontSize:10,color:C.muted,marginBottom:6}}>Set aside per week</div>
+                <div className="mono" style={{fontSize:18,fontWeight:700,color:C.teal}}>{money(perWeek)}</div>
+                <div style={{fontSize:9.5,color:C.dim,marginTop:3}}>For {weeksLeft} weeks → covered</div>
+              </div>
+              <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 14px"}}>
+                <div style={{fontSize:10,color:C.muted,marginBottom:6}}>BAS due in</div>
+                <div className="mono" style={{fontSize:18,fontWeight:700,color:upcoming&&upcoming.days<=14?C.yellow:C.text}}>{upcoming?`${upcoming.days} days`:"—"}</div>
+                <div style={{fontSize:9.5,color:C.dim,marginTop:3}}>{upcoming?upcoming.due:"No deadline soon"}</div>
+              </div>
+            </div>
+
+            {/* Quarter progress */}
+            <div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:C.muted,marginBottom:5}}>
+                <span>Quarter progress</span>
+                <span>{qProgress}% through{isCurrentQ?` · ${daysInQ-daysIntoQ} days left`:""}</span>
+              </div>
+              <div style={{height:6,background:C.border,borderRadius:3,overflow:"hidden"}}>
+                <div style={{height:"100%",width:`${qProgress}%`,background:C.muted,borderRadius:3}}/>
+              </div>
+            </div>
+
+            {/* Update reserve button */}
+            <div style={{marginTop:16,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+              <button
+                onClick={() => {
+                  const cur = parseFloat(localStorage.getItem("mise_bas_reserve") || "0") || 0;
+                  const input = window.prompt("How much have you set aside for your BAS tax bill?\n\nEnter the total amount currently saved in your tax reserve account:", cur || "");
+                  if (input !== null) {
+                    const val = parseFloat(input) || 0;
+                    localStorage.setItem("mise_bas_reserve", String(val));
+                    setReserveBump(b => b + 1); // force re-render to reflect new reserve
+                  }
+                }}
+                style={{fontSize:12,fontWeight:700,fontFamily:"inherit",cursor:"pointer",padding:"8px 16px",borderRadius:9,border:`1px solid ${statusCol}`,background:C.surface,color:statusCol}}>
+                💰 Update my reserve amount
+              </button>
+              <span style={{fontSize:11,color:C.dim}}>Tell Mise how much you've actually saved to see your true safe zone.</span>
+            </div>
           </div>
         );
       })()}

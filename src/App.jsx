@@ -4772,8 +4772,20 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
     bar:        ["spirit_stock","beer_wine_stock","glassware","bar_equipment","liquor_license","rsa_training","cleaning","rent","utilities","equipment","repairs","staff_uniforms","music_ent","software","advertising","accounting",...FINANCE_CATS,"other"],
     other:      EXP_CATEGORIES,
   };
-  const sortedCats   = INDUSTRY_MAP[industry] || EXP_CATEGORIES;
-  const PINNED_COUNT = { restaurant:4, café:4, bar:6, other:0 }[industry] || 0;
+  // Infer a known industry bucket from free-text business type (keyword match).
+  // This lets owners type "Hot Pot Restaurant" or "火锅店" and still get the
+  // restaurant category ordering, while unmatched text falls back to "other".
+  const inferIndustryBucket = (raw) => {
+    if (raw === "restaurant" || raw === "café" || raw === "bar" || raw === "other") return raw;
+    const t = (raw || "").toLowerCase();
+    if (/caf[eé]|咖啡|coffee|bakery|烘焙|面包|dessert|甜/.test(t))                  return "café";
+    if (/bar|酒吧|pub|brewery|tavern|liquor|wine|啤酒/.test(t))                     return "bar";
+    if (/restaurant|餐厅|餐館|餐馆|diner|eatery|hot ?pot|火锅|noodle|面|grill|food/.test(t)) return "restaurant";
+    return "other";
+  };
+  const industryBucket = inferIndustryBucket(industry);
+  const sortedCats   = INDUSTRY_MAP[industryBucket] || EXP_CATEGORIES;
+  const PINNED_COUNT = { restaurant:4, café:4, bar:6, other:0 }[industryBucket] || 0;
   const pinnedCats   = sortedCats.slice(0, PINNED_COUNT);
 
   // ── Usage-based personalised sorting ─────────────────────
@@ -10263,53 +10275,58 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
       <div className="fsec">
         <div className="ftit">Business Type</div>
         <div style={{ fontSize:12.5, color:C.muted, marginBottom:14, lineHeight:1.6 }}>
-          Tell Mise what kind of business you run. Your expense categories, Audit Ready tips and deduction guides will automatically adjust to match your industry.
-        </div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
-          {INDUSTRIES.map(ind => {
-            const active = industry === ind.id;
-            return (
-              <button key={ind.id} onClick={() => { setIndustry(ind.id); showToast(`Switched to ${ind.label} mode ✅`); }}
-                style={{
-                  background: active ? "rgba(143,203,114,.12)" : C.surface,
-                  border: `2px solid ${active ? C.accent : C.border}`,
-                  borderRadius: 12, padding:"16px 12px", cursor:"pointer",
-                  fontFamily:"inherit", textAlign:"center", transition:"all .2s",
-                  transform: active ? "scale(1.02)" : "scale(1)",
-                }}>
-                <div style={{ fontSize:28, marginBottom:8 }}>{ind.emoji}</div>
-                <div style={{ fontWeight:700, fontSize:13, color: active ? C.accent : C.text, marginBottom:4 }}>{ind.label}</div>
-                <div style={{ fontSize:10.5, color:C.muted, lineHeight:1.4 }}>{ind.desc}</div>
-                {active && <div style={{ marginTop:8, fontSize:10, fontWeight:700, color:C.accent }}>✓ ACTIVE</div>}
-              </button>
-            );
-          })}
+          Describe your business in your own words (e.g. "Hot Pot Restaurant", "Bubble Tea Shop", "火锅店"). If it matches a known hospitality type, expense categories and Audit Ready tips will auto-adjust.
         </div>
 
-        {/* What changes panel */}
-        <div style={{ marginTop:14, background:C.surfaceAlt, borderRadius:10, padding:"13px 15px", fontSize:12, color:C.muted, lineHeight:1.8 }}>
-          <div style={{ fontWeight:700, color:C.text, marginBottom:6 }}>
-            {INDUSTRIES.find(i=>i.id===industry)?.emoji} Currently set to: <span style={{color:C.accent}}>{INDUSTRIES.find(i=>i.id===industry)?.label}</span>
-          </div>
-          {industry === "restaurant" && <>
-            <div>✅ Expense categories show <strong style={{color:C.text}}>Ingredients, Packaging, Cleaning</strong> first</div>
-            <div>✅ Audit Ready tips focus on <strong style={{color:C.text}}>food GST rules</strong> and cash revenue</div>
-          </>}
-          {industry === "café" && <>
-            <div>✅ Expense categories show <strong style={{color:C.text}}>Coffee Supplies, Machine Maintenance, Eco-Packaging</strong> first</div>
-            <div>✅ Bakery Supplies and takeaway packaging highlighted</div>
-            <div>✅ Audit Ready tips include <strong style={{color:C.text}}>GST-free fresh food rules</strong></div>
-          </>}
-          {industry === "bar" && <>
-            <div>✅ Expense categories show <strong style={{color:C.text}}>Spirit Stock, Beer & Wine, Glassware, Liquor License</strong> first</div>
-            <div>✅ RSA Training and bar equipment highlighted</div>
-            <div>✅ Audit Ready flags <strong style={{color:C.text}}>Liquor License (no GST)</strong> automatically</div>
-          </>}
-          {industry === "other" && <>
-            <div>✅ Standard expense categories shown</div>
-            <div>✅ All hospitality categories still available</div>
-          </>}
+        <div className="fg">
+          <label className="flbl">Business Type</label>
+          <input
+            className="inp"
+            type="text"
+            placeholder="e.g. Hot Pot Restaurant, Café, Bakery, Bar…"
+            value={industry === "restaurant" || industry === "café" || industry === "bar" || industry === "other" ? "" : industry}
+            onChange={e => setIndustry(e.target.value)}
+            onBlur={e => { if (e.target.value.trim()) showToast("Business type saved ✅"); }}/>
+          <span className="fhint">
+            Free text — type anything. Common types (restaurant, café, bar, bakery, takeaway) unlock tailored expense sorting.
+          </span>
         </div>
+
+        {/* What changes panel — infers from keywords in the free text */}
+        {(() => {
+          const t = (industry || "").toLowerCase();
+          const isRestaurant = /restaurant|餐厅|餐館|餐馆|diner|eatery|hot ?pot|火锅|noodle|面|grill/.test(t);
+          const isCafe       = /caf[eé]|咖啡|coffee|bakery|烘焙|面包|dessert|甜/.test(t);
+          const isBar        = /bar|酒吧|pub|brewery|tavern|liquor|wine|啤酒/.test(t);
+          const matched = isRestaurant || isCafe || isBar;
+          return (
+            <div style={{ marginTop:14, background:C.surfaceAlt, borderRadius:10, padding:"13px 15px", fontSize:12, color:C.muted, lineHeight:1.8 }}>
+              <div style={{ fontWeight:700, color:C.text, marginBottom:6 }}>
+                {matched ? "🎯" : "📋"} {industry && !["restaurant","café","bar","other"].includes(industry)
+                  ? <>Currently set to: <span style={{color:C.accent}}>{industry}</span></>
+                  : "Enter your business type above"}
+              </div>
+              {isRestaurant && <>
+                <div>✅ Expense categories show <strong style={{color:C.text}}>Ingredients, Packaging, Cleaning</strong> first</div>
+                <div>✅ Audit Ready tips focus on <strong style={{color:C.text}}>food GST rules</strong> and cash revenue</div>
+              </>}
+              {isCafe && <>
+                <div>✅ Coffee Supplies, Bakery Supplies and takeaway packaging highlighted</div>
+                <div>✅ Audit Ready tips include <strong style={{color:C.text}}>GST-free fresh food rules</strong></div>
+              </>}
+              {isBar && <>
+                <div>✅ Spirit Stock, Beer &amp; Wine, Glassware, Liquor License highlighted</div>
+                <div>✅ Audit Ready flags <strong style={{color:C.text}}>Liquor License (no GST)</strong> automatically</div>
+              </>}
+              {!matched && (
+                <>
+                  <div>✅ Standard hospitality expense categories shown</div>
+                  <div>✅ All categories remain available — nothing is hidden</div>
+                </>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       <div className="fsec">

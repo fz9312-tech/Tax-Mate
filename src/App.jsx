@@ -3260,15 +3260,506 @@ function DashboardPage({ revenue, expenses, employees, timesheets, insurance, se
 
   return (
     <>
+      {/* ── HEADER ── */}
       <div className="hdr">
         <div className="hdr-left">
           <div className="ptitle">Dashboard</div>
-          <div className="psub">My Business · {monthLabel}</div>
+          <div className="psub">{monthLabel}</div>
         </div>
         <div className="hdr-right">
           <div className="chip">📅 {quarter}</div>
         </div>
       </div>
+
+      {/* ── MONTH PICKER ── */}
+      <div style={{marginBottom:18}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:showMonthPicker?10:0}}>
+          <button onClick={prevMonth} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,color:C.muted,fontSize:15,padding:"5px 10px",cursor:"pointer",lineHeight:1}}>‹</button>
+          <button onClick={()=>setShowMonthPicker(v=>!v)} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"space-between",background:C.surface,border:`1px solid ${showMonthPicker?C.accent:C.border}`,borderRadius:9,padding:"8px 14px",cursor:"pointer",fontFamily:"inherit"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:16}}>📅</span>
+              <div style={{textAlign:"left"}}>
+                <div style={{fontSize:14,fontWeight:700,color:C.text}}>{monthLabel}</div>
+                <div style={{fontSize:10,color:C.muted}}>{isCurrentMonth?"Current month":"Viewing past data"}</div>
+              </div>
+            </div>
+            <span style={{color:C.muted,fontSize:11}}>{showMonthPicker?"▲ Close":"▼ Change"}</span>
+          </button>
+          <button onClick={nextMonth} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:7,color:C.muted,fontSize:15,padding:"5px 10px",cursor:"pointer",lineHeight:1}}>›</button>
+          {!isCurrentMonth&&<button onClick={()=>{setSelMonth(todayStr.slice(0,7));setShowMonthPicker(false);}} style={{background:"rgba(143,203,114,.12)",border:`1px solid ${C.accent}`,borderRadius:7,color:C.accent,fontSize:11,fontWeight:700,padding:"7px 12px",cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>Today</button>}
+        </div>
+        {showMonthPicker&&(
+          <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:11,padding:"14px 16px"}}>
+            {[...new Set(monthOptions.map(o=>o.yr))].map(yr=>(
+              <div key={yr} style={{marginBottom:12}}>
+                <div style={{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:".8px",textTransform:"uppercase",marginBottom:7}}>{yr}</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                  {monthOptions.filter(o=>o.yr===yr).map(o=>{
+                    const isSel=o.val===selMonth,isCur=o.val===todayStr.slice(0,7),hasData=revenue.some(r=>r.date.slice(0,7)===o.val);
+                    return(<button key={o.val} onClick={()=>{setSelMonth(o.val);setShowMonthPicker(false);}} style={{padding:"6px 12px",borderRadius:7,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:isSel?700:500,border:isSel?`1px solid ${C.accent}`:isCur?`1px solid ${C.border}`:"1px solid transparent",background:isSel?"rgba(143,203,114,.18)":isCur?C.surfaceAlt:"transparent",color:isSel?C.accent:C.text,position:"relative"}}>
+                      {o.lbl}{hasData&&!isSel&&<span style={{position:"absolute",top:3,right:3,width:4,height:4,borderRadius:"50%",background:C.accent}}/>}
+                    </button>);
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ══════════════════════════════════════════════════════
+          LAYER 1 — THE 5 NUMBERS EVERY OWNER NEEDS
+      ══════════════════════════════════════════════════════ */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:12,marginBottom:16}}>
+        {/* Revenue */}
+        <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:"18px 20px"}}>
+          <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".8px",marginBottom:8}}>Monthly Revenue</div>
+          <div className="mono" style={{fontSize:26,fontWeight:800,color:C.accent,lineHeight:1,marginBottom:6}}>{money(totalRev)}</div>
+          <div style={{fontSize:11,color:C.muted}}>
+            {revDelta
+              ? <span style={{color:revDelta.up?C.accent:"rgba(220,38,38,.8)"}}>{revDelta.label}</span>
+              : `${revMonth.length} entries this month`}
+          </div>
+        </div>
+
+        {/* Expenses */}
+        <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:"18px 20px"}}>
+          <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".8px",marginBottom:8}}>Monthly Expenses</div>
+          <div className="mono" style={{fontSize:26,fontWeight:800,color:C.text,lineHeight:1,marginBottom:6}}>{money(totalExp + totalWages)}</div>
+          <div style={{fontSize:11,color:C.muted}}>Bills {money(totalExp)} · Wages {money(totalWages)}</div>
+        </div>
+
+        {/* Estimated quarterly tax */}
+        <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:"18px 20px"}}>
+          <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".8px",marginBottom:8}}>Estimated Quarterly Tax</div>
+          <div className="mono" style={{fontSize:26,fontWeight:800,color:estBAS>0?C.yellow:C.muted,lineHeight:1,marginBottom:6}}>{money(estBAS)}</div>
+          <div style={{fontSize:11,color:C.muted}}>GST owed + employee tax withheld</div>
+        </div>
+
+        {/* Cash available (net of tax reserve) */}
+        {(() => {
+          const taxReserve = wklyRes * 4.33;
+          const cashAvail  = netProfit - taxReserve;
+          return (
+            <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:"18px 20px"}}>
+              <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".8px",marginBottom:8}}>Cash Available</div>
+              <div className="mono" style={{fontSize:26,fontWeight:800,color:cashAvail>=0?C.green:C.text,lineHeight:1,marginBottom:6}}>{money(Math.max(0,netProfit))}</div>
+              <div style={{fontSize:11,color:C.muted}}>Set aside {money(wklyRes)}/wk for BAS</div>
+            </div>
+          );
+        })()}
+
+        {/* Next BAS due */}
+        {(() => {
+          const upcoming = BAS_DUES
+            .map(b => ({ ...b, due: agentLodge ? b.agentDue : b.selfDue }))
+            .map(b => ({ ...b, days: Math.ceil((new Date(b.due) - new Date()) / 86400000) }))
+            .filter(b => b.days >= 0)
+            .sort((a,b) => a.days - b.days)[0];
+          const urgent = upcoming && upcoming.days <= 14;
+          const soon   = upcoming && upcoming.days <= 28;
+          return (
+            <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:"18px 20px",cursor:"pointer"}} onClick={()=>setPage("bassummary")}>
+              <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".8px",marginBottom:8}}>Next BAS Due Date</div>
+              {upcoming ? <>
+                <div className="mono" style={{fontSize:26,fontWeight:800,color:urgent?C.yellow:C.text,lineHeight:1,marginBottom:6}}>{upcoming.days}d</div>
+                <div style={{fontSize:11,color:C.muted}}>{upcoming.due} · {upcoming.label}</div>
+              </> : <>
+                <div style={{fontSize:16,fontWeight:700,color:C.muted,marginBottom:6}}>No deadline soon</div>
+                <div style={{fontSize:11,color:C.dim}}>All BAS lodgements up to date</div>
+              </>}
+            </div>
+          );
+        })()}
+      </div>
+
+      {/* ══════════════════════════════════════════════════════
+          LAYER 2 — BUSINESS HEALTH CARD
+      ══════════════════════════════════════════════════════ */}
+      {(() => {
+        // Health scoring — plain English, no jargon
+        const margin = netMargin;
+        const hasData = totalRev > 0;
+        let health, healthCol, healthBg, healthBd, advice;
+        if (!hasData) {
+          health = "Getting Started"; healthCol = C.muted;
+          healthBg = "transparent"; healthBd = C.border;
+          advice   = "Add your first sale to start seeing your business health.";
+        } else if (margin >= 15 && gstPay < gstColl * 0.6) {
+          health = "Safe"; healthCol = C.green;
+          healthBg = "rgba(5,150,105,.08)"; healthBd = "rgba(5,150,105,.25)";
+          advice   = `Your business is tracking well. Profit margin is ${margin.toFixed(1)}% — healthy for hospitality.`;
+        } else if (margin >= 5) {
+          health = "Watch"; healthCol = C.yellow;
+          healthBg = "rgba(217,119,6,.08)"; healthBd = "rgba(217,119,6,.25)";
+          advice   = `Margin is ${margin.toFixed(1)}% — workable but tight. Keep an eye on expenses this month.`;
+        } else {
+          health = "Needs Attention"; healthCol = "rgba(220,120,38,1)";
+          healthBg = "rgba(220,100,38,.08)"; healthBd = "rgba(220,100,38,.25)";
+          advice   = margin < 0
+            ? `Spending more than you're earning this month (${margin.toFixed(1)}% margin). Review your biggest costs.`
+            : `Margin is below 5% (${margin.toFixed(1)}%). Consider where costs can be reduced.`;
+        }
+        return (
+          <div style={{background:healthBg,border:`1.5px solid ${healthBd}`,borderRadius:14,padding:"18px 22px",marginBottom:16,display:"flex",alignItems:"center",gap:18,flexWrap:"wrap"}}>
+            <div style={{width:48,height:48,borderRadius:"50%",background:healthBg,border:`2px solid ${healthCol}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>
+              {health==="Safe"?"✅":health==="Watch"?"👀":health==="Needs Attention"?"⚠️":"🚀"}
+            </div>
+            <div style={{flex:1,minWidth:200}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
+                <span style={{fontSize:16,fontWeight:800,color:healthCol}}>{health}</span>
+                <span style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".6px"}}>Business Health · {monthLabel}</span>
+              </div>
+              <div style={{fontSize:13,color:C.muted,lineHeight:1.6}}>{advice}</div>
+            </div>
+            {hasData && (
+              <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                <div style={{textAlign:"center",padding:"8px 14px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:10}}>
+                  <div className="mono" style={{fontSize:15,fontWeight:700,color:netProfit>=0?C.green:"rgba(220,100,38,1)"}}>{money(netProfit)}</div>
+                  <div style={{fontSize:9.5,color:C.muted,marginTop:2}}>Net Profit</div>
+                </div>
+                <div style={{textAlign:"center",padding:"8px 14px",background:C.surface,border:`1px solid ${C.border}`,borderRadius:10}}>
+                  <div className="mono" style={{fontSize:15,fontWeight:700,color:netProfit>=0?C.green:"rgba(220,100,38,1)"}}>{margin.toFixed(1)}%</div>
+                  <div style={{fontSize:9.5,color:C.muted,marginTop:2}}>Margin</div>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* ══════════════════════════════════════════════════════
+          SETUP PROGRESS (shown until complete)
+      ══════════════════════════════════════════════════════ */}
+      {(() => {
+        const steps = [
+          { id:"revenue",   lbl:"First revenue entry",  done: revenue.length > 0,   page:"revenue",    ico:"💵" },
+          { id:"expense",   lbl:"First expense entry",  done: expenses.length > 0,  page:"expenses",   ico:"🧾" },
+          { id:"employee",  lbl:"Add an employee",      done: employees.length > 0, page:"wages",      ico:"👤" },
+          { id:"timesheet", lbl:"Log first timesheet",  done: timesheets.length > 0,page:"wages",      ico:"🕐" },
+          { id:"bas",       lbl:"Review your BAS",      done: false,                page:"bassummary", ico:"📋" },
+        ];
+        const doneCount = steps.filter(s=>s.done).length;
+        if (doneCount === steps.length) return null;
+        const pct = Math.round((doneCount/steps.length)*100);
+        return (
+          <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px",marginBottom:16}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+              <div style={{fontSize:12,fontWeight:700}}>🚀 Getting set up — {doneCount}/{steps.length} done</div>
+              <div style={{fontSize:11,color:C.muted}}>{pct}%</div>
+            </div>
+            <div style={{height:5,background:C.border,borderRadius:3,marginBottom:12,overflow:"hidden"}}>
+              <div style={{height:"100%",width:`${pct}%`,background:C.accent,borderRadius:3,transition:"width .4s"}}/>
+            </div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {steps.map(s=>(
+                <button key={s.id} onClick={()=>!s.done&&setPage(s.page)}
+                  style={{display:"flex",alignItems:"center",gap:6,padding:"7px 12px",borderRadius:8,cursor:s.done?"default":"pointer",fontFamily:"inherit",fontSize:11.5,
+                    border:`1px solid ${s.done?"rgba(5,150,105,.30)":C.border}`,
+                    background:s.done?"rgba(5,150,105,.08)":"transparent",
+                    color:s.done?C.green:C.muted}}>
+                  <span>{s.done?"✅":s.ico}</span>{s.lbl}
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ══════════════════════════════════════════════════════
+          QUICK ACTIONS
+      ══════════════════════════════════════════════════════ */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:20}}>
+        {[
+          { ico:"⚡", lbl:"Pay a Casual",    sub:"Day Worker — 30 seconds", col:C.teal,   page:"dayworkers" },
+          { ico:"🧾", lbl:"Log a Receipt",   sub:"Add expense now",          col:C.yellow, page:"expenses" },
+          { ico:"📋", lbl:"Review BAS",      sub:"Check your tax estimate",  col:C.blue,   page:"bassummary" },
+          { ico:"💵", lbl:"Record Sales",    sub:"Add today's takings",      col:C.accent, page:"revenue" },
+        ].map(a=>(
+          <button key={a.lbl} onClick={()=>setPage(a.page)}
+            style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",borderRadius:11,cursor:"pointer",fontFamily:"inherit",textAlign:"left",background:C.surfaceAlt,border:`1px solid ${C.border}`}}>
+            <span style={{fontSize:22,flexShrink:0}}>{a.ico}</span>
+            <div>
+              <div style={{fontSize:12.5,fontWeight:700,color:C.text}}>{a.lbl}</div>
+              <div style={{fontSize:10.5,color:a.col,marginTop:1}}>{a.sub}</div>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {/* ══════════════════════════════════════════════════════
+          LAYER 3 — COLLAPSIBLE ADVANCED SECTIONS
+      ══════════════════════════════════════════════════════ */}
+      {[
+        {
+          id:"gst",
+          label:"GST Breakdown",
+          emoji:"🟡",
+          summary:`GST owed to ATO this month: ${money(gstPay)}`,
+          content: (
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:10,paddingTop:14}}>
+              {[
+                {lbl:"GST collected from customers", val:money(gstColl),  col:C.yellow, note:"1/11 of taxable sales"},
+                {lbl:"GST credits on purchases",     val:"− "+money(gstCreds), col:C.green,  note:"From receipts with GST"},
+                {lbl:"GST owed to ATO",              val:money(gstPay),   col:gstPay>1500?C.yellow:C.muted, note:"Collected minus credits"},
+              ].map((s,i)=>(
+                <div key={i} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 14px"}}>
+                  <div style={{fontSize:10,color:C.muted,marginBottom:6,lineHeight:1.4}}>{s.lbl}</div>
+                  <div className="mono" style={{fontSize:16,fontWeight:700,color:s.col}}>{s.val}</div>
+                  <div style={{fontSize:9.5,color:C.dim,marginTop:4}}>{s.note}</div>
+                </div>
+              ))}
+            </div>
+          )
+        },
+        {
+          id:"payg",
+          label:"Employee Tax Withheld",
+          emoji:"👷",
+          summary:`Withheld from staff pay this month: ${money(totalPayg)}`,
+          content: (
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:10,paddingTop:14}}>
+              {[
+                {lbl:"Gross wages paid",             val:money(totalWages), col:C.text,   note:"Before tax deductions"},
+                {lbl:"Employee tax withheld (PAYG)", val:money(totalPayg),  col:C.yellow, note:"Sent to ATO in BAS"},
+                {lbl:"Super (SGC 12%)",              val:money(totalSuper), col:C.blue,   note:"Paid to super funds — not in BAS"},
+              ].map((s,i)=>(
+                <div key={i} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 14px"}}>
+                  <div style={{fontSize:10,color:C.muted,marginBottom:6,lineHeight:1.4}}>{s.lbl}</div>
+                  <div className="mono" style={{fontSize:16,fontWeight:700,color:s.col}}>{s.val}</div>
+                  <div style={{fontSize:9.5,color:C.dim,marginTop:4}}>{s.note}</div>
+                </div>
+              ))}
+            </div>
+          )
+        },
+        {
+          id:"taxliability",
+          label:"Full Tax Liabilities",
+          emoji:"🏛️",
+          summary:(()=>{
+            const viewDate=new Date(y,m-1,1);
+            const qNum=Math.floor(viewDate.getMonth()/3);
+            const qStart=new Date(viewDate.getFullYear(),qNum*3,1);
+            const qEndFull=new Date(viewDate.getFullYear(),qNum*3+3,0);
+            const isCurrentQ=today>=qStart&&today<=qEndFull;
+            const qEndStr=isCurrentQ?todayStr:qEndFull.toISOString().slice(0,10);
+            const qStartStr=qStart.toISOString().slice(0,10);
+            const qRevAll=revenue.filter(r=>r.date>=qStartStr&&r.date<=qEndStr);
+            const qExpAll=expenses.filter(e=>e.date>=qStartStr&&e.date<=qEndStr);
+            const qTsAll=annotateTimesheets(employees,timesheets.filter(t=>{const d=weekToDate(t.week);return d&&d>=qStartStr&&d<=qEndStr;}));
+            const qGST=qRevAll.reduce((s,r)=>s+revGSTTaxable(r),0)/11;
+            const qCreds=qExpAll.filter(e=>e.gst).reduce((s,e)=>s+expGST(e),0);
+            const qNetGST=Math.max(0,qGST-qCreds);
+            const qPAYG=qTsAll.reduce((s,t)=>s+t.payg,0);
+            return `Estimated quarterly tax bill: ${money(qNetGST+qPAYG)}`;
+          })(),
+          content: (()=>{
+            const viewDate=new Date(y,m-1,1);
+            const qNum=Math.floor(viewDate.getMonth()/3);
+            const qLabels=["Jul–Sep","Oct–Dec","Jan–Mar","Apr–Jun"];
+            const qFY=viewDate.getMonth()>=6?viewDate.getFullYear()+1:viewDate.getFullYear();
+            const qLabel=`Q${qNum+1} FY${qFY} (${qLabels[qNum]})`;
+            const qStart=new Date(viewDate.getFullYear(),qNum*3,1);
+            const qEndFull=new Date(viewDate.getFullYear(),qNum*3+3,0);
+            const isCurrentQ=today>=qStart&&today<=qEndFull;
+            const qEndStr=isCurrentQ?todayStr:qEndFull.toISOString().slice(0,10);
+            const qStartStr=qStart.toISOString().slice(0,10);
+            const qRevAll=revenue.filter(r=>r.date>=qStartStr&&r.date<=qEndStr);
+            const qExpAll=expenses.filter(e=>e.date>=qStartStr&&e.date<=qEndStr);
+            const qTsAll=annotateTimesheets(employees,timesheets.filter(t=>{const d=weekToDate(t.week);return d&&d>=qStartStr&&d<=qEndStr;}));
+            const qRev=qRevAll.reduce((s,r)=>s+revTotal(r),0);
+            const qGSTTaxable=qRevAll.reduce((s,r)=>s+revGSTTaxable(r),0);
+            const qGST=qGSTTaxable/11;
+            const qCreds=qExpAll.filter(e=>e.gst).reduce((s,e)=>s+expGST(e),0);
+            const qNetGST=Math.max(0,qGST-qCreds);
+            const qPAYG=qTsAll.reduce((s,t)=>s+t.payg,0);
+            const qSuper=qTsAll.reduce((s,t)=>s+t.super,0);
+            const qOwed=qNetGST+qPAYG;
+            const daysLeft=Math.ceil((qEndFull-today)/86400000);
+            const daysTotal=Math.ceil((qEndFull-qStart)/86400000);
+            const progress=Math.round((1-daysLeft/daysTotal)*100);
+            return (
+              <div style={{paddingTop:14}}>
+                <div style={{fontSize:11,color:C.muted,marginBottom:12}}>
+                  {qLabel} — {isCurrentQ?"in progress":"completed"}
+                  {isCurrentQ&&<span style={{marginLeft:8,color:C.dim}}>({daysLeft} days left in quarter)</span>}
+                </div>
+                {isCurrentQ&&(
+                  <div style={{marginBottom:14}}>
+                    <div style={{height:6,background:C.border,borderRadius:3,overflow:"hidden",marginBottom:4}}>
+                      <div style={{height:"100%",width:`${progress}%`,background:progress>80?C.yellow:C.accent,borderRadius:3}}/>
+                    </div>
+                    <div style={{fontSize:10.5,color:C.muted}}>{progress}% of quarter done</div>
+                  </div>
+                )}
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:10}}>
+                  {[
+                    {lbl:"GST owed to ATO",             val:money(qNetGST), col:C.yellow},
+                    {lbl:"Employee tax withheld",        val:money(qPAYG),   col:C.yellow},
+                    {lbl:"Total estimated tax bill",     val:money(qOwed),   col:C.accent},
+                    {lbl:"Super owed (not in BAS)",      val:money(qSuper),  col:C.blue},
+                    {lbl:"Weekly amount to set aside",   val:money(wklyRes), col:C.teal},
+                  ].map((s,i)=>(
+                    <div key={i} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 14px"}}>
+                      <div style={{fontSize:10,color:C.muted,marginBottom:6,lineHeight:1.4}}>{s.lbl}</div>
+                      <div className="mono" style={{fontSize:16,fontWeight:700,color:s.col}}>{s.val}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{marginTop:14,padding:"12px 14px",background:"rgba(57,211,187,.06)",border:`1px solid rgba(57,211,187,.20)`,borderRadius:10,fontSize:12,color:C.muted}}>
+                  💡 Set aside <strong style={{color:C.teal}}>{money(wklyRes)}</strong> every week and you'll have <strong style={{color:C.teal}}>{money(wklyRes*4.33)}</strong> ready by BAS due date.
+                </div>
+              </div>
+            );
+          })()
+        },
+        {
+          id:"cashflow",
+          label:"Daily Cash Flow",
+          emoji:"📈",
+          summary:`${monthLabel} — ${cashflowDays.filter(d=>d.dayRev>0||d.dayExp>0).length} days with activity`,
+          content: cashflowDays.every(d=>d.dayRev===0&&d.dayExp===0)
+            ? <div style={{padding:"20px 0",color:C.muted,fontSize:13}}>No transactions logged for {monthLabel}.</div>
+            : (
+              <div style={{paddingTop:14}}>
+                <div style={{display:"flex",alignItems:"flex-end",gap:3,height:72,marginBottom:14,paddingBottom:4,borderBottom:`1px solid ${C.border}`}}>
+                  {cashflowDays.map((d,i)=>(
+                    <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:1,height:"100%",justifyContent:"flex-end"}}>
+                      {d.dayRev>0&&<div style={{width:"100%",background:C.accent+"88",borderRadius:"2px 2px 0 0",height:`${(d.dayRev/maxFlow)*55}px`,minHeight:2}}/>}
+                      {(d.dayExp+d.dayWages)>0&&<div style={{width:"100%",background:C.muted+"55",borderRadius:"2px 2px 0 0",height:`${((d.dayExp+d.dayWages)/maxFlow)*55}px`,minHeight:2}}/>}
+                    </div>
+                  ))}
+                </div>
+                <table className="tbl">
+                  <thead><tr><th>Date</th><th style={{textAlign:"right"}}>Revenue</th><th style={{textAlign:"right"}}>Out</th><th style={{textAlign:"right"}}>Day Net</th><th style={{textAlign:"right"}}>Running</th></tr></thead>
+                  <tbody>
+                    {cashflowWithBalance.filter(d=>d.dayRev>0||d.dayExp>0||d.dayWages>0).map((d,i)=>(
+                      <tr key={i}>
+                        <td className="mono" style={{fontSize:11}}>{d.date}</td>
+                        <td className="mono" style={{textAlign:"right",color:C.accent}}>{d.dayRev>0?money(d.dayRev):"—"}</td>
+                        <td className="mono" style={{textAlign:"right",color:C.muted}}>{(d.dayExp+d.dayWages)>0?money(d.dayExp+d.dayWages):"—"}</td>
+                        <td className="mono" style={{textAlign:"right",fontWeight:700,color:d.net>=0?C.accent:C.muted}}>{money(d.net)}</td>
+                        <td className="mono" style={{textAlign:"right",fontWeight:700,color:d.balance>=0?C.text:C.muted}}>{money(d.balance)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td style={{fontWeight:700}}>TOTAL</td>
+                      <td className="mono" style={{textAlign:"right",fontWeight:700,color:C.accent}}>{money(totalRev)}</td>
+                      <td className="mono" style={{textAlign:"right",fontWeight:700,color:C.muted}}>{money(totalExp+totalWages+totalSuper)}</td>
+                      <td className="mono" style={{textAlign:"right",fontWeight:700,color:netProfit>=0?C.accent:C.muted}}>{money(netProfit)}</td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )
+        },
+      ].map(section => {
+        const isOpen = dashTab === section.id;
+        return (
+          <div key={section.id} style={{marginBottom:10,background:C.surface,border:`1px solid ${isOpen?C.border+"88":C.border}`,borderRadius:13,overflow:"hidden"}}>
+            <button
+              onClick={() => setDashTab(isOpen ? "closed" : section.id)}
+              style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"14px 18px",background:"transparent",border:"none",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+              <span style={{fontSize:18,flexShrink:0}}>{section.emoji}</span>
+              <div style={{flex:1}}>
+                <div style={{fontSize:13,fontWeight:700,color:C.text}}>{section.label}</div>
+                <div style={{fontSize:11,color:C.muted,marginTop:1}}>{section.summary}</div>
+              </div>
+              <span style={{fontSize:14,color:C.muted,flexShrink:0,transition:"transform .2s",transform:isOpen?"rotate(180deg)":"none"}}>▼</span>
+            </button>
+            {isOpen && (
+              <div style={{padding:"0 18px 18px"}}>
+                <div style={{height:1,background:C.border,marginBottom:14}}/>
+                {section.content}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {/* ══════════════════════════════════════════════════════
+          CONTEXTUAL REMINDERS (calm, not alarming)
+      ══════════════════════════════════════════════════════ */}
+      {reminders.length > 0 && (
+        <div style={{marginTop:10,background:C.surface,border:`1px solid ${C.border}`,borderRadius:13,overflow:"hidden"}}>
+          <button
+            onClick={()=>setDashTab(dashTab==="reminders"?"closed":"reminders")}
+            style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"14px 18px",background:"transparent",border:"none",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+            <span style={{fontSize:18}}>🔔</span>
+            <div style={{flex:1}}>
+              <div style={{fontSize:13,fontWeight:700,color:C.text}}>
+                Action Items
+                <span style={{marginLeft:8,fontSize:11,fontWeight:600,color:C.muted,background:C.surfaceAlt,padding:"2px 8px",borderRadius:10}}>{reminders.length}</span>
+              </div>
+              <div style={{fontSize:11,color:C.muted,marginTop:1}}>BAS deadlines, super, insurance</div>
+            </div>
+            <span style={{fontSize:14,color:C.muted,transform:dashTab==="reminders"?"rotate(180deg)":"none",transition:"transform .2s"}}>▼</span>
+          </button>
+          {dashTab === "reminders" && (
+            <div style={{padding:"0 18px 18px"}}>
+              <div style={{height:1,background:C.border,marginBottom:14}}/>
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {reminders.map((r,i)=>(
+                  <div key={i} onClick={r.action} style={{
+                    display:"flex",alignItems:"center",gap:12,padding:"12px 14px",
+                    background:C.surfaceAlt,border:`1px solid ${C.border}`,
+                    borderLeft:`3px solid ${remColTxt[r.col]}`,
+                    borderRadius:10,cursor:"pointer"
+                  }}>
+                    <span style={{fontSize:18,flexShrink:0}}>{r.ico}</span>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:12.5,fontWeight:600,color:C.text,marginBottom:2}}>{r.title}</div>
+                      <div style={{fontSize:11,color:C.muted}}>{r.sub}</div>
+                    </div>
+                    <span style={{fontSize:11,color:C.dim}}>→</span>
+                  </div>
+                ))}
+              </div>
+              {/* Toggle tax agent */}
+              <div style={{marginTop:14,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                <span style={{fontSize:11,color:C.muted}}>Lodging via tax agent?</span>
+                <button onClick={toggleAgentLodge} style={{fontSize:11,fontWeight:700,fontFamily:"inherit",cursor:"pointer",border:`1px solid ${agentLodge?C.teal:C.border}`,borderRadius:7,padding:"4px 12px",background:agentLodge?"rgba(57,211,187,.12)":"none",color:agentLodge?C.teal:C.muted}}>
+                  {agentLodge?"Yes — via agent":"No — self-lodged"}
+                </button>
+              </div>
+              {/* Key ATO dates */}
+              <div style={{marginTop:16,paddingTop:12,borderTop:`1px solid ${C.border}`}}>
+                <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".8px",marginBottom:8}}>📅 Key ATO Dates</div>
+                {[
+                  {lbl:"Q2 FY2026 BAS",     date:"28 Feb 2026"},
+                  {lbl:"Q3 FY2026 BAS",     date:"28 Apr 2026"},
+                  {lbl:"Q4 FY2026 BAS",     date:"28 Jul 2026"},
+                  {lbl:"Payday Super",       date:"1 Jul 2026"},
+                ].map((d,i)=>(
+                  <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:`1px solid ${C.border}`,fontSize:12}}>
+                    <span style={{color:C.muted}}>{d.lbl}</span>
+                    <span className="mono" style={{fontWeight:600,color:C.text}}>{d.date}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Insurance soft alert — calm */}
+      {expiringPolicies60.length > 0 && (
+        <div onClick={()=>setPage("insurance")} style={{cursor:"pointer",marginTop:10,display:"flex",alignItems:"center",gap:12,padding:"12px 16px",background:C.surfaceAlt,border:`1px solid ${C.border}`,borderLeft:`3px solid ${C.yellow}`,borderRadius:10}}>
+          <span style={{fontSize:18}}>🛡️</span>
+          <div style={{flex:1}}>
+            <div style={{fontSize:12.5,fontWeight:600,color:C.text}}>Insurance renewal coming up</div>
+            <div style={{fontSize:11,color:C.muted}}>{expiringPolicies60.map(i=>{const d=Math.ceil((new Date(i.renewal)-new Date())/86400000);return `${i.type} — ${d} days`;}).join(" · ")}</div>
+          </div>
+          <span style={{fontSize:11,color:C.dim}}>→</span>
+        </div>
+      )}
+    </>
+  );
+}
 
       {/* Month picker */}
       <div style={{marginBottom:14}}>
@@ -3758,18 +4249,6 @@ function DashboardPage({ revenue, expenses, employees, timesheets, insurance, se
           </div>
         </div>
       )}
-
-      {/* Quick alerts below tabs — always visible */}
-      {expiringPolicies60.length > 0 && (
-        <div className="alert al-y" style={{cursor:"pointer",marginTop:12}} onClick={()=>setPage("insurance")}>
-          <span className="al-ico">🛡️</span>
-          <div><div className="al-ttl">Insurance renewal due soon</div>
-          <div className="al-msg">{expiringPolicies60.map(i=>{const days=Math.ceil((new Date(i.renewal)-new Date())/86400000);return `${i.type} — ${days<=30?`⚠️ ${days} days`:`${days} days`}`;}).join(" · ")} · Click to review →</div></div>
-        </div>
-      )}
-    </>
-  );
-}
 
 
 // ════════════════════════════════════════════════════════════

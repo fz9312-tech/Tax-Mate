@@ -931,6 +931,108 @@ const quarter  = `Q${Math.ceil((today.getMonth()+1)/3)} ${today.getFullYear()}`;
 const money = n =>
   "$" + Math.abs(n).toLocaleString("en-AU",{ minimumFractionDigits:2, maximumFractionDigits:2 });
 
+// ════════════════════════════════════════════════════════════
+//  AUDIT TRAIL — per-record metadata (Approach A)
+//  Each audited record carries a _meta field:
+//    _meta: {
+//      createdBy, createdAt,          // who first created it + when
+//      editedBy,  editedAt,           // who last edited + when
+//      history: [{ ts, by, action, changes:[{field, from, to}] }]  // immutable log
+//    }
+//  Audit logs are append-only by convention — we never rewrite history entries,
+//  only push new ones. View-only roles are blocked upstream in usePersisted.
+// ════════════════════════════════════════════════════════════
+
+// Tables that get audit trails (full names as passed to usePersisted)
+const AUDITED_TABLES = ["mise_revenue", "mise_expenses"];
+
+// Fields we don't diff (internal/derived) — avoids noise in the timeline
+const AUDIT_IGNORE_FIELDS = ["_meta", "id"];
+
+const nowISO = () => new Date().toISOString();
+
+// Human-readable value for the timeline (numbers as money, booleans as Yes/No)
+const auditFmtValue = (field, v) => {
+  if (v === undefined || v === null || v === "") return "(empty)";
+  if (typeof v === "boolean") return v ? "Yes" : "No";
+  if (typeof v === "object") {
+    // channels array etc — summarise rather than dump JSON
+    if (Array.isArray(v)) return `${v.length} item${v.length===1?"":"s"}`;
+    return "(updated)";
+  }
+  // money-ish fields
+  if (/amount|gross|rate|total|pay|wage|gst/i.test(field) && !isNaN(parseFloat(v))) {
+    return money(parseFloat(v));
+  }
+  return String(v);
+};
+
+// Compute field-level changes between two record versions
+const auditDiff = (oldRec, newRec) => {
+  const changes = [];
+  const keys = new Set([...Object.keys(oldRec||{}), ...Object.keys(newRec||{})]);
+  keys.forEach(k => {
+    if (AUDIT_IGNORE_FIELDS.includes(k)) return;
+    const a = oldRec ? oldRec[k] : undefined;
+    const b = newRec ? newRec[k] : undefined;
+    // Compare via JSON for objects/arrays; primitives compare directly
+    const aS = typeof a === "object" ? JSON.stringify(a) : a;
+    const bS = typeof b === "object" ? JSON.stringify(b) : b;
+    if (aS !== bS) changes.push({ field: k, from: auditFmtValue(k, a), to: auditFmtValue(k, b) });
+  });
+  return changes;
+};
+
+// Stamp a brand-new record with creation metadata
+const auditStampCreate = (rec, who) => ({
+  ...rec,
+  _meta: {
+    createdBy: who || "Unknown",
+    createdAt: nowISO(),
+    editedBy:  who || "Unknown",
+    editedAt:  nowISO(),
+    history: [{ ts: nowISO(), by: who || "Unknown", action: "created", changes: [] }],
+  },
+});
+
+// Stamp an edited record — appends a history entry with field changes
+const auditStampEdit = (oldRec, newRec, who) => {
+  const changes = auditDiff(oldRec, newRec);
+  const prevMeta = oldRec?._meta || {
+    createdBy: who || "Unknown", createdAt: nowISO(),
+    editedBy: who || "Unknown", editedAt: nowISO(), history: [],
+  };
+  // No real change → keep meta as-is (don't pollute history)
+  if (changes.length === 0) return { ...newRec, _meta: prevMeta };
+  return {
+    ...newRec,
+    _meta: {
+      ...prevMeta,
+      editedBy: who || "Unknown",
+      editedAt: nowISO(),
+      history: [...(prevMeta.history || []), { ts: nowISO(), by: who || "Unknown", action: "edited", changes }],
+    },
+  };
+};
+
+// Diff two arrays of records (by id) and apply create/edit stamps.
+// Returns the new array with audit metadata applied to changed records.
+const auditReconcile = (oldArr, newArr, who) => {
+  if (!Array.isArray(newArr)) return newArr;
+  const oldById = {};
+  (oldArr || []).forEach(r => { if (r && r.id != null) oldById[r.id] = r; });
+  return newArr.map(rec => {
+    if (!rec || rec.id == null) return rec;
+    const prev = oldById[rec.id];
+    if (!prev) {
+      // New record — but only stamp if not already stamped (avoid double-stamp on reload)
+      return rec._meta ? rec : auditStampCreate(rec, who);
+    }
+    // Existing record — diff & stamp if changed
+    return auditStampEdit(prev, rec, who);
+  });
+};
+
 // ── Pure-JS PDF Generator — no external dependencies ────────
 class MiniPDF {
   constructor(landscape=false) {
@@ -4072,6 +4174,7 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
   const [f,        setF]        = useState(makeBlank);
   const [editId,   setEditId]   = useState(null);
   const [expandedId, setExpandedId] = useState(null);
+  const [historyRec, setHistoryRec] = useState(null); // record whose audit trail is being viewed
   const [showImport,  setShowImport]  = useState(false);
   const [csvRaw,      setCsvRaw]      = useState("");
   const [csvHeaders,  setCsvHeaders]  = useState([]);
@@ -4594,6 +4697,7 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
                         <td className="mono" style={{textAlign:"right",color:C.yellow}}>{gst > 0 ? money(gst) : "—"}</td>
                         <td style={{textAlign:"center",whiteSpace:"nowrap"}} onClick={e => e.stopPropagation()}>
                           <button className="btn-ic" title="Edit" onClick={() => startEdit(r)}>✏️</button>
+                          <button className="btn-ic" title="History" onClick={() => setHistoryRec(r)}>📋</button>
                           <button className="btn-ic" title="Delete" onClick={() => del_(r.id)}>🗑️</button>
                         </td>
                       </tr>
@@ -4662,6 +4766,8 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
       </div>
 
       {/* ── Revenue PDF Export Modal ── */}
+      {historyRec && <HistoryModal record={historyRec} label={`Sales — ${historyRec.date}`} onClose={() => setHistoryRec(null)}/>}
+
       {showRevPrint && (() => {
         // Filter revenue by selected range; empty values = no bound
         const filteredRev = revenue.filter(r => {
@@ -4801,6 +4907,7 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
   const [filterFrom,setFilterFrom]= useState("");
   const [filterTo,  setFilterTo]  = useState("");
   const [tab,       setTab]       = useState("list");
+  const [historyRec, setHistoryRec] = useState(null); // expense whose audit trail is viewed
 
   // ── Pagination state ─────────────────────────────────────
   const [expPage,     setExpPage]     = useState(1);
@@ -5343,6 +5450,7 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
 
   return (
     <>
+      {historyRec && <HistoryModal record={historyRec} label={`Expense — ${historyRec.desc || historyRec.date}`} onClose={() => setHistoryRec(null)}/>}
       <div className="hdr">
         <div className="hdr-left"><div className="ptitle">Expense Tracking</div><div className="psub">Track business expenses, GST credits and deductions</div></div>
         <div style={{ display:"flex", gap:8 }}>
@@ -6184,7 +6292,10 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
                           {e.gst ? (e.invoice ? money(expGST(e)) : <span style={{ color:C.red }}>Need invoice</span>) : "—"}
                         </td>
                         <td>{e.invoice ? <span className="pill pl-g">✅ Yes</span> : <span className="pill pl-r">❌ No</span>}</td>
-                        <td><button className="btn-ic" onClick={() => { setExpenses(p => p.filter(x => x.id !== e.id)); showToast("Expense deleted"); }}>🗑️</button></td>
+                        <td style={{whiteSpace:"nowrap"}}>
+                          <button className="btn-ic" title="History" onClick={() => setHistoryRec(e)}>📋</button>
+                          <button className="btn-ic" title="Delete" onClick={() => { setExpenses(p => p.filter(x => x.id !== e.id)); showToast("Expense deleted"); }}>🗑️</button>
+                        </td>
                       </tr>
                     );
                   })
@@ -6306,6 +6417,102 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
 //  Pagination — reusable component for large lists
 //  Used by RevenuePage (Sales History) and ExpensesPage.
 // ════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════
+//  HistoryModal — view a record's audit trail (change timeline)
+//  Accountant-friendly: shows who, when, and what changed.
+// ════════════════════════════════════════════════════════════
+function HistoryModal({ record, label, onClose }) {
+  if (!record) return null;
+  const meta = record._meta || null;
+  const history = meta?.history || [];
+  // Newest first
+  const timeline = [...history].reverse();
+
+  const fmtTs = (ts) => {
+    try {
+      const d = new Date(ts);
+      return d.toLocaleString("en-AU", { day:"2-digit", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit" });
+    } catch { return ts; }
+  };
+
+  return (
+    <div className="overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="modal" style={{ maxWidth: 560 }}>
+        <div className="m-ttl">
+          Change History
+          <button className="btn-ic" style={{ fontSize: 17 }} onClick={onClose}>✕</button>
+        </div>
+        <div className="m-sub">{label || "Record"} audit trail</div>
+
+        {!meta ? (
+          <div style={{ padding:"24px 0", textAlign:"center", color:C.muted, fontSize:13 }}>
+            No history recorded for this entry yet.<br/>
+            <span style={{ fontSize:11, color:C.dim }}>History is tracked from the next edit onward.</span>
+          </div>
+        ) : (
+          <>
+            {/* Summary row */}
+            <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:16 }}>
+              <div style={{ flex:1, minWidth:140, background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:10, padding:"11px 14px" }}>
+                <div style={{ fontSize:10, color:C.muted, marginBottom:4 }}>Created by</div>
+                <div style={{ fontSize:12.5, fontWeight:600, color:C.text, wordBreak:"break-all" }}>{meta.createdBy}</div>
+                <div style={{ fontSize:10, color:C.dim, marginTop:3 }}>{fmtTs(meta.createdAt)}</div>
+              </div>
+              <div style={{ flex:1, minWidth:140, background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:10, padding:"11px 14px" }}>
+                <div style={{ fontSize:10, color:C.muted, marginBottom:4 }}>Last edited by</div>
+                <div style={{ fontSize:12.5, fontWeight:600, color:C.text, wordBreak:"break-all" }}>{meta.editedBy}</div>
+                <div style={{ fontSize:10, color:C.dim, marginTop:3 }}>{fmtTs(meta.editedAt)}</div>
+              </div>
+            </div>
+
+            {/* Timeline */}
+            <div style={{ fontSize:10, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".8px", marginBottom:10 }}>
+              Timeline ({timeline.length})
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:0, maxHeight:340, overflowY:"auto" }}>
+              {timeline.map((entry, i) => (
+                <div key={i} style={{ display:"flex", gap:12, paddingBottom:14 }}>
+                  {/* Rail */}
+                  <div style={{ display:"flex", flexDirection:"column", alignItems:"center", flexShrink:0 }}>
+                    <div style={{ width:10, height:10, borderRadius:"50%", background: entry.action==="created"?C.accent:C.blue, marginTop:3 }}/>
+                    {i < timeline.length-1 && <div style={{ width:2, flex:1, background:C.border, marginTop:2 }}/>}
+                  </div>
+                  {/* Content */}
+                  <div style={{ flex:1 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                      <span style={{ fontSize:12.5, fontWeight:700, color: entry.action==="created"?C.accent:C.blue }}>
+                        {entry.action === "created" ? "Created" : "Edited"}
+                      </span>
+                      <span style={{ fontSize:11, color:C.muted }}>by {entry.by}</span>
+                    </div>
+                    <div style={{ fontSize:10.5, color:C.dim, marginTop:1, marginBottom:6 }}>{fmtTs(entry.ts)}</div>
+                    {entry.changes && entry.changes.length > 0 && (
+                      <div style={{ background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:8, padding:"8px 12px" }}>
+                        {entry.changes.map((c, j) => (
+                          <div key={j} style={{ fontSize:11.5, marginBottom: j<entry.changes.length-1?6:0, lineHeight:1.5 }}>
+                            <span style={{ color:C.muted, fontWeight:600 }}>{c.field}:</span>{" "}
+                            <span style={{ color:C.dim, textDecoration:"line-through" }}>{c.from}</span>
+                            <span style={{ color:C.muted }}> → </span>
+                            <span style={{ color:C.text, fontWeight:600 }}>{c.to}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        <div style={{ marginTop:16, paddingTop:14, borderTop:`1px solid ${C.border}`, fontSize:10.5, color:C.dim, display:"flex", alignItems:"center", gap:6 }}>
+          <span>🔒</span> Audit history is append-only and cannot be edited.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Pagination({ page, totalPages, pageSize, totalRows, startIdx, endIdx, onPageChange, onPageSizeChange }) {
   const [jumpVal, setJumpVal] = useState("");
   const handleJump = () => {
@@ -12649,6 +12856,8 @@ export default function App() {
   const [userBusinesses,  setUserBusinesses]  = useState([]);
   // currentRole: role string for the currently-active bizId ('owner' | 'accountant_view' | 'accountant_edit')
   const [currentRole,     setCurrentRole]     = useState("owner");
+  // Current logged-in user's email — used to stamp audit trail (who created/edited)
+  const [currentUserEmail, setCurrentUserEmail] = useState("");
   // Derived: is the current user view-only (no write permission)?
   const isViewOnly = currentRole === "accountant_view";
 
@@ -12673,6 +12882,10 @@ export default function App() {
     // Use a ref so the setter always has the latest bizId without stale closure
     const bizIdRef = React.useRef(bizId);
     React.useEffect(() => { bizIdRef.current = bizId; }, [bizId]);
+
+    // Ref to current user's email for audit stamping (avoids stale closure)
+    const userEmailRef = React.useRef(currentUserEmail);
+    React.useEffect(() => { userEmailRef.current = currentUserEmail; }, [currentUserEmail]);
 
     // ── View-only guard ref (Step 5 layer 3 — hard write block) ──
     // Without this, RLS rejects the upsert but React state already updated,
@@ -12707,7 +12920,11 @@ export default function App() {
         return; // Do NOT update state; do NOT write Supabase
       }
       setVal(prev => {
-        const next = typeof v === "function" ? v(prev) : v;
+        let next = typeof v === "function" ? v(prev) : v;
+        // ── Audit trail: stamp create/edit metadata on audited tables ──
+        if (AUDITED_TABLES.includes(table) && Array.isArray(next)) {
+          next = auditReconcile(prev, next, userEmailRef.current);
+        }
         // Write localStorage immediately
         try { localStorage.setItem(lsKey, JSON.stringify(next)); } catch {}
         // Write Supabase — use ref to get current bizId
@@ -12772,6 +12989,8 @@ export default function App() {
   }, []);
 
 const bootFromSession = async (session) => {
+    // Stamp the current user's email for audit trail (who created/edited records)
+    if (session?.user?.email) setCurrentUserEmail(session.user.email);
     // ── Phase 1 Master Account: load businesses via business_access table ──
     // Strategy:
     //   1. SELECT all businesses this user has access to (owner or accountant)

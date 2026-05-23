@@ -3585,6 +3585,120 @@ function DashboardPage({ revenue, expenses, employees, timesheets, insurance, se
       })()}
 
       {/* ══════════════════════════════════════════════════════
+          LABOUR COST % — are my staffing costs efficient?
+      ══════════════════════════════════════════════════════ */}
+      {(() => {
+        // ── This week (Mon–Sun containing today) ──
+        const todayD = new Date(todayStr + "T00:00:00");
+        const dow = (todayD.getDay() + 6) % 7; // Mon=0
+        const monday = new Date(todayD); monday.setDate(todayD.getDate() - dow);
+        const weekDatesArr = Array.from({length:7}, (_,i) => {
+          const d = new Date(monday); d.setDate(monday.getDate()+i);
+          return d.toISOString().slice(0,10);
+        });
+        const weekRev = revenue.filter(r => weekDatesArr.includes(r.date)).reduce((s,r)=>s+revTotal(r),0);
+        const weekTs  = annotateTimesheets(employees, timesheets.filter(t => {
+          const d = weekToDate(t.week); return d && weekDatesArr.includes(d);
+        }));
+        const weekWages = weekTs.reduce((s,t)=>s+t.gross,0) + weekTs.reduce((s,t)=>s+t.super,0);
+        const weekPct   = weekRev > 0 ? (weekWages/weekRev)*100 : null;
+
+        // ── This month (uses existing dashboard totals) ──
+        const monthLabour = totalWages + totalSuper;
+        const monthPct    = totalRev > 0 ? (monthLabour/totalRev)*100 : null;
+
+        // ── Last month (for trend) ──
+        const superPrev   = annotateTimesheets(employees, timesheets.filter(t=>weekToMonth(t.week)===prevMonthStr)).reduce((s,t)=>s+t.super,0);
+        const prevLabour  = wagesPrev + superPrev;
+        const prevPct     = revPrev > 0 ? (prevLabour/revPrev)*100 : null;
+
+        // Nothing to show yet
+        if (monthPct === null && weekPct === null) {
+          return (
+            <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:"18px 22px",marginBottom:16,display:"flex",alignItems:"center",gap:12}}>
+              <span style={{fontSize:22}}>👥</span>
+              <div>
+                <div style={{fontSize:13,fontWeight:700,color:C.text}}>Labour Cost %</div>
+                <div style={{fontSize:12,color:C.muted,marginTop:3}}>Log sales and staff hours to see how efficient your staffing is.</div>
+              </div>
+            </div>
+          );
+        }
+
+        const statusOf = (pct) => {
+          if (pct === null)    return { st:"—",             col:C.muted };
+          if (pct <= 30)       return { st:"Healthy",        col:C.green };
+          if (pct <= 38)       return { st:"Slightly High",  col:C.yellow };
+          return                      { st:"Critical",       col:"rgba(220,100,38,1)" };
+        };
+        const monthStatus = statusOf(monthPct);
+
+        // Trend: compare this month vs last month (lower is better)
+        let trend, trendCol, trendIco;
+        if (monthPct !== null && prevPct !== null) {
+          const diff = monthPct - prevPct;
+          if (diff < -1.5)      { trend="Improving"; trendCol=C.green;  trendIco="↓"; }
+          else if (diff > 1.5)  { trend="Rising";    trendCol="rgba(220,100,38,1)"; trendIco="↑"; }
+          else                  { trend="Stable";    trendCol=C.muted;  trendIco="→"; }
+        } else { trend=null; }
+
+        const explain = monthPct === null ? ""
+          : monthPct <= 30 ? "Your staffing costs are within the healthy restaurant range."
+          : monthPct <= 38 ? "Labour is a little above the healthy range — keep an eye on rostered hours."
+          : "Labour cost is above the healthy restaurant range. Look for shifts you can trim.";
+
+        return (
+          <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:"20px 22px",marginBottom:16}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10,marginBottom:16}}>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <span style={{fontSize:20}}>👥</span>
+                <div>
+                  <div style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:".8px"}}>Labour Cost %</div>
+                  <div style={{fontSize:12,color:C.muted,marginTop:3,maxWidth:420,lineHeight:1.5}}>{explain}</div>
+                </div>
+              </div>
+              {trend && (
+                <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 12px",borderRadius:20,background:C.surfaceAlt,border:`1px solid ${C.border}`}}>
+                  <span style={{fontSize:14,fontWeight:800,color:trendCol}}>{trendIco}</span>
+                  <span style={{fontSize:11,fontWeight:700,color:trendCol}}>{trend}</span>
+                </div>
+              )}
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:10}}>
+              {/* This week */}
+              <div style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px 15px"}}>
+                <div style={{fontSize:10,color:C.muted,marginBottom:6}}>This week</div>
+                <div className="mono" style={{fontSize:22,fontWeight:800,color:statusOf(weekPct).col}}>{weekPct!==null?`${weekPct.toFixed(1)}%`:"—"}</div>
+                <div style={{fontSize:10,color:statusOf(weekPct).col,marginTop:3,fontWeight:600}}>{statusOf(weekPct).st}</div>
+              </div>
+              {/* This month */}
+              <div style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px 15px"}}>
+                <div style={{fontSize:10,color:C.muted,marginBottom:6}}>This month</div>
+                <div className="mono" style={{fontSize:22,fontWeight:800,color:monthStatus.col}}>{monthPct!==null?`${monthPct.toFixed(1)}%`:"—"}</div>
+                <div style={{fontSize:10,color:monthStatus.col,marginTop:3,fontWeight:600}}>{monthStatus.st}</div>
+              </div>
+              {/* Benchmark */}
+              <div style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px 15px"}}>
+                <div style={{fontSize:10,color:C.muted,marginBottom:6}}>Healthy range</div>
+                <div className="mono" style={{fontSize:22,fontWeight:800,color:C.green}}>25–30%</div>
+                <div style={{fontSize:10,color:C.muted,marginTop:3}}>Restaurant benchmark</div>
+              </div>
+              {/* Last month */}
+              <div style={{background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px 15px"}}>
+                <div style={{fontSize:10,color:C.muted,marginBottom:6}}>Last month</div>
+                <div className="mono" style={{fontSize:22,fontWeight:800,color:C.muted}}>{prevPct!==null?`${prevPct.toFixed(1)}%`:"—"}</div>
+                <div style={{fontSize:10,color:C.dim,marginTop:3}}>For comparison</div>
+              </div>
+            </div>
+            <div style={{fontSize:10,color:C.dim,marginTop:12}}>
+              Labour cost = wages + super. Includes fixed-salary staff. {monthPct!==null && `This month: ${money(monthLabour)} labour ÷ ${money(totalRev)} sales.`}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ══════════════════════════════════════════════════════
           SETUP PROGRESS (shown until complete)
       ══════════════════════════════════════════════════════ */}
       {(() => {
@@ -7141,7 +7255,7 @@ function BudgetBar({ total, budget, onEdit }) {
   );
 }
 
-function RosterTab({ employees, roster, setRoster, showToast }) {
+function RosterTab({ employees, roster, setRoster, showToast, revenue = [] }) {
   // ── Week navigation ───────────────────────────────────────
   const [viewMonday, setViewMonday] = useState(() => {
     const d = new Date();
@@ -7420,6 +7534,58 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
           ))}
         </div>
 
+        {/* ── Labour Cost % (this rostered week) ── */}
+        {(() => {
+          // Revenue logged for the same week as the roster being viewed
+          const weekRev = revenue
+            .filter(r => weekDates.includes(r.date))
+            .reduce((s,r) => s + revTotal(r), 0);
+          if (weekRev <= 0) {
+            return (
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12,padding:"10px 14px",background:C.surfaceAlt,border:`1px solid ${C.border}`,borderRadius:9,fontSize:11.5,color:C.muted}}>
+                <span style={{fontSize:15}}>📊</span>
+                <span>Log this week's sales to see your labour cost percentage. Labour cost includes wages + super.</span>
+              </div>
+            );
+          }
+          const labourPct = (totLabour / weekRev) * 100;
+          // Healthy 25–30% per hospitality benchmark
+          let st, col, bg, msg;
+          if (labourPct <= 30)      { st="Healthy";       col=C.green;  bg="rgba(5,150,105,.08)";  msg="Within the healthy restaurant range (25–30%)."; }
+          else if (labourPct <= 38) { st="Slightly High"; col=C.yellow; bg="rgba(217,119,6,.08)";   msg="A little above the healthy range. Watch your rostered hours."; }
+          else                      { st="Critical";      col="rgba(220,100,38,1)"; bg="rgba(220,100,38,.08)"; msg="Labour cost is above the healthy restaurant range. Consider trimming shifts."; }
+          return (
+            <div style={{background:bg,border:`1px solid ${col}33`,borderRadius:11,padding:"14px 16px",marginBottom:12}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
+                <div style={{display:"flex",alignItems:"center",gap:12}}>
+                  <div style={{fontSize:24,fontWeight:800,color:col,fontFamily:"var(--mono)"}} className="mono">{labourPct.toFixed(1)}%</div>
+                  <div>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <span style={{fontSize:12,fontWeight:700,color:col}}>{st}</span>
+                      <span style={{fontSize:10,color:C.muted}}>Labour Cost % · this week</span>
+                    </div>
+                    <div style={{fontSize:11,color:C.muted,marginTop:3,maxWidth:380,lineHeight:1.5}}>{msg}</div>
+                  </div>
+                </div>
+                <div style={{textAlign:"right",fontSize:10.5,color:C.muted,lineHeight:1.6}}>
+                  <div>Labour {money(totLabour)} ÷ Sales {money(weekRev)}</div>
+                  <div style={{color:C.dim}}>Healthy range: 25–30%</div>
+                </div>
+              </div>
+              {/* Benchmark bar */}
+              <div style={{marginTop:12,position:"relative",height:8,background:C.border,borderRadius:4,overflow:"visible"}}>
+                {/* healthy zone band 25-30% (of a 0-50% scale) */}
+                <div style={{position:"absolute",left:"50%",width:"10%",height:"100%",background:"rgba(5,150,105,.35)",borderRadius:2}}/>
+                {/* current marker */}
+                <div style={{position:"absolute",left:`${Math.min(100,(labourPct/50)*100)}%`,top:-3,width:3,height:14,background:col,borderRadius:2,transform:"translateX(-50%)"}}/>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:C.dim,marginTop:4}}>
+                <span>0%</span><span>25–30% healthy</span><span>50%+</span>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* ── Weekly budget bar ── */}
         {editBudget ? (
           <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12, background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:9, padding:"10px 14px" }}>
@@ -7590,9 +7756,10 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
                               }}>
                                 {fmt12(sh.start)}–{fmt12(sh.end)}
                               </div>
-                              {/* Hours */}
-                              <div style={{ fontSize:9, color:C.muted, marginTop:2, lineHeight:1 }}>
+                              {/* Hours + cost */}
+                              <div style={{ fontSize:9, color:C.muted, marginTop:2, lineHeight:1.3 }}>
                                 {shiftHrs(sh).toFixed(1)}h
+                                {shiftCost(sh) > 0 && <span style={{color:C.dim}}> · {money(shiftCost(sh))}</span>}
                               </div>
                               {/* OT / Weekend rate badges */}
                               {hasOT && applyOT && (
@@ -7800,7 +7967,7 @@ function RosterTab({ employees, roster, setRoster, showToast }) {
 // ════════════════════════════════════════════════════════════
 //  STAFF & WAGES PAGE
 // ════════════════════════════════════════════════════════════
-function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster, setRoster, leave, setLeave, showToast, bizName, setBizName, bizABN, setBizABN, initialTab, dayWorkers = [], setDayWorkers }) {
+function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster, setRoster, leave, setLeave, showToast, bizName, setBizName, bizABN, setBizABN, initialTab, dayWorkers = [], setDayWorkers, revenue = [] }) {
   const [tab, setTab] = useState(initialTab || "roster");
   const [empModal,   setEmpModal]   = useState(null);
   const [tsModal,    setTsModal]    = useState(null);
@@ -8023,7 +8190,7 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster,
 
       {/* ── ROSTER ── */}
       {tab === "roster" && (
-        <RosterTab employees={employees} roster={roster} setRoster={setRoster} showToast={showToast}/>
+        <RosterTab employees={employees} roster={roster} setRoster={setRoster} showToast={showToast} revenue={revenue}/>
       )}
 
       {/* ── PROFILES ── */}
@@ -12881,8 +13048,8 @@ const bootFromSession = async (session) => {
           {page === "dashboard"      && <DashboardPage revenue={revenue} expenses={expenses} employees={employees} timesheets={timesheets} insurance={insurance} setPage={setPage} bizName={bizName} roster={roster}/>}
           {page === "revenue"        && <RevenuePage   revenue={revenue}   setRevenue={setRevenue}   showToast={showToast}/>}
           {page === "expenses"       && <ExpensesPage  expenses={expenses} setExpenses={setExpenses} showToast={showToast} industry={industry} dismissed={dismissedAlerts} setDismissed={setDismissedAlerts}/>}
-          {page === "wages"          && <WagesPage     employees={employees} setEmployees={setEmployees} timesheets={timesheets} setTimesheets={setTimesheets} roster={roster} setRoster={setRoster} leave={leave} setLeave={setLeave} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN} dayWorkers={dayWorkers} setDayWorkers={setDayWorkers}/>}
-          {page === "dayworkers"     && <WagesPage     employees={employees} setEmployees={setEmployees} timesheets={timesheets} setTimesheets={setTimesheets} roster={roster} setRoster={setRoster} leave={leave} setLeave={setLeave} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN} dayWorkers={dayWorkers} setDayWorkers={setDayWorkers} initialTab="dayworkers"/>}
+          {page === "wages"          && <WagesPage     employees={employees} setEmployees={setEmployees} timesheets={timesheets} setTimesheets={setTimesheets} roster={roster} setRoster={setRoster} leave={leave} setLeave={setLeave} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN} dayWorkers={dayWorkers} setDayWorkers={setDayWorkers} revenue={revenue}/>}
+          {page === "dayworkers"     && <WagesPage     employees={employees} setEmployees={setEmployees} timesheets={timesheets} setTimesheets={setTimesheets} roster={roster} setRoster={setRoster} leave={leave} setLeave={setLeave} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN} dayWorkers={dayWorkers} setDayWorkers={setDayWorkers} initialTab="dayworkers" revenue={revenue}/>}
           {page === "insurance"      && <InsurancePage insurance={insurance} setInsurance={setInsurance} employees={employees} timesheets={timesheets} showToast={showToast}/>}
           {page === "taxsaver"       && <TaxSaverPage  expenses={expenses} setExpenses={setExpenses} employees={employees} timesheets={timesheets} setTimesheets={setTimesheets} showToast={showToast}/>}
           {page === "ias"            && <IASPage        timesheets={timesheets} employees={employees} ias={ias} setIas={setIas} showToast={showToast} bizName={bizName} bizABN={bizABN}/>}

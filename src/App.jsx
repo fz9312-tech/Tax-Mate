@@ -13043,7 +13043,8 @@ export default function App() {
   const [bizABN,  setBizABNRaw]  = useState(() => localStorage.getItem("mise_biz_abn")  || "");
   // Company/brand name — shown in the sidebar top-left (replaces "Mise" branding).
   // Separate from bizName (the trading/venue name used on BAS, payslips, reports).
-  const [companyName, setCompanyNameRaw] = useState(() => localStorage.getItem("mise_company_name") || "");
+  // Scoped by bizId so each business keeps its own brand name and nothing leaks.
+  const [companyName, setCompanyNameRaw] = useState("");
   const setBizName = v => {
     setBizNameRaw(v); localStorage.setItem("mise_biz_name", v);
     if (bizId) sb().from("businesses").update({ name: v }).eq("id", bizId).then(() => {});
@@ -13053,8 +13054,15 @@ export default function App() {
     if (bizId) sb().from("businesses").update({ abn: v }).eq("id", bizId).then(() => {});
   };
   const setCompanyName = v => {
-    setCompanyNameRaw(v); localStorage.setItem("mise_company_name", v);
+    setCompanyNameRaw(v);
+    if (bizId) { try { localStorage.setItem(`mise_company_name_${bizId}`, v); } catch {} }
   };
+  // Load this business's company name whenever the active business changes
+  React.useEffect(() => {
+    if (!bizId) { setCompanyNameRaw(""); return; }
+    try { setCompanyNameRaw(localStorage.getItem(`mise_company_name_${bizId}`) || ""); }
+    catch { setCompanyNameRaw(""); }
+  }, [bizId]);
 
   // ── Auth: detect session on load, handle deep-link magic-link ──
   React.useEffect(() => {
@@ -13078,6 +13086,25 @@ export default function App() {
   }, []);
 
 const bootFromSession = async (session) => {
+    // ── Clear per-business cached settings BEFORE loading the new account ──
+    // These keys are NOT scoped by bizId and would otherwise leak between accounts
+    // (e.g. company name, ABN, GST date, BAS reserve from the previous login).
+    // Data tables (revenue/expenses/etc) are handled separately by usePersisted's
+    // bizId-scoped keys; this covers the loose Settings/identity keys.
+    try {
+      const PER_BIZ_KEYS = [
+        "mise_biz_name", "mise_biz_abn", "mise_company_name", "mise_gst_reg",
+        "mise_bas_freq", "mise_bas_reserve", "mise_payday", "mise_agent_lodge",
+        "mise_week_budget", "mise_cat_rules", "mise_fav_templates",
+        "mise_recurring", "mise_recur_dismissed", "mise_cat_usage", "mise_industry",
+      ];
+      PER_BIZ_KEYS.forEach(k => localStorage.removeItem(k));
+    } catch {}
+    // Reset in-memory identity so stale values don't flash before Supabase loads
+    setCompanyNameRaw("");
+    setBizNameRaw("My Restaurant");
+    setBizABNRaw("");
+
     // Stamp the current user's email for audit trail (who created/edited records)
     if (session?.user?.email) setCurrentUserEmail(session.user.email);
     // ── Phase 1 Master Account: load businesses via business_access table ──

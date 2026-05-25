@@ -2630,6 +2630,7 @@ body { background: ${C.bg}; color: ${C.text}; font-family: 'DM Sans', sans-serif
 .inp   { background: ${C.bg}; border: 1px solid ${C.border}; border-radius: 7px; padding: 8px 11px; color: ${C.text}; font-size: 13px; font-family: 'DM Sans', sans-serif; outline: none; width: 100%; transition: border-color .15s; }
 .inp:focus { border-color: ${C.accent}; }
 .inp::placeholder { color: ${C.dim}; }
+.inp:disabled, .sel:disabled { opacity: .55; cursor: not-allowed; background: ${C.surface}; }
 .sel   { background: ${C.bg}; border: 1px solid ${C.border}; border-radius: 7px; padding: 8px 11px; color: ${C.text}; font-size: 13px; font-family: 'DM Sans', sans-serif; outline: none; width: 100%; cursor: pointer; }
 .fbtns { display: flex; gap: 9px; margin-top: 14px; align-items: center; }
 
@@ -10585,6 +10586,9 @@ function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimeshe
 // ════════════════════════════════════════════════════════════
 function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, bizABN, setBizABN, bizId, currentRole, companyName = "", setCompanyName = () => {}, bizSettings = {}, updateSetting = () => {} }) {
   const [saved, setSaved] = useState(false);
+  // Accountant (view or edit) — business identity fields are read-only and
+  // owner-only sections (Team Access, Subscription, Danger Zone) are hidden.
+  const isAccountant = currentRole !== "owner";
 
   // ── Change Password state ──────────────────────────────────────
   const [pwExpanded,   setPwExpanded]   = useState(false);
@@ -10780,32 +10784,39 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
       {/* ── Business Identity — persisted ── */}
       <div className="fsec">
         <div className="ftit">Business Details</div>
-        <div style={{ fontSize:12.5, color:C.muted, marginBottom:14 }}>Your <strong style={{color:C.text}}>Business Name</strong> appears on all exported PDFs — payslips, BAS summaries, rosters and accountant packs. Your <strong style={{color:C.text}}>Company Name</strong> is your brand, shown in the top-left of the app.</div>
+        {isAccountant ? (
+          <div style={{ display:"flex", alignItems:"center", gap:8, background:"rgba(64,156,255,.08)", border:`1px solid rgba(64,156,255,.25)`, borderRadius:9, padding:"10px 13px", marginBottom:14, fontSize:12, color:C.muted }}>
+            <span style={{ fontSize:15 }}>🔒</span>
+            <span>These details are <strong style={{color:C.text}}>managed by the business owner</strong>. You can view them for reference, but only the owner can make changes.</span>
+          </div>
+        ) : (
+          <div style={{ fontSize:12.5, color:C.muted, marginBottom:14 }}>Your <strong style={{color:C.text}}>Business Name</strong> appears on all exported PDFs — payslips, BAS summaries, rosters and accountant packs. Your <strong style={{color:C.text}}>Company Name</strong> is your brand, shown in the top-left of the app.</div>
+        )}
         <div className="frow2">
           <div className="fg">
             <label className="flbl">Business / Restaurant Name *</label>
-            <input className="inp" value={bizName} onChange={e => setBizName(e.target.value)} placeholder="e.g. The Local Bistro"/>
+            <input className="inp" disabled={isAccountant} value={bizName} onChange={e => setBizName(e.target.value)} placeholder="e.g. The Local Bistro"/>
             <span className="fhint">Trading name — appears on all PDFs, BAS & payslips</span>
           </div>
           <div className="fg">
             <label className="flbl">Company / Brand Name</label>
-            <input className="inp" value={companyName} onChange={e => setCompanyName(e.target.value)} placeholder="e.g. Hui Wang Da PTY LTD"/>
+            <input className="inp" disabled={isAccountant} value={companyName} onChange={e => setCompanyName(e.target.value)} placeholder="e.g. Hui Wang Da PTY LTD"/>
             <span className="fhint">Shown top-left in the app. Leave blank to show "Mise".</span>
           </div>
           <div className="fg">
             <label className="flbl">ABN</label>
-            <input className="inp" value={bizABN} onChange={e => setBizABN(e.target.value)} placeholder="12 345 678 901"/>
+            <input className="inp" disabled={isAccountant} value={bizABN} onChange={e => setBizABN(e.target.value)} placeholder="12 345 678 901"/>
             <span className="fhint">11-digit Australian Business Number</span>
           </div>
           <div className="fg">
             <label className="flbl">GST Registration Date</label>
-            <input className="inp" type="date"
+            <input className="inp" type="date" disabled={isAccountant}
               value={bizSettings.gst_reg || ""}
               onChange={e => { updateSetting("gst_reg", e.target.value); showToast("Saved!"); }}/>
           </div>
           <div className="fg">
             <label className="flbl">BAS Lodgment Frequency</label>
-            <select className="sel"
+            <select className="sel" disabled={isAccountant}
               value={bizSettings.bas_freq || "quarterly"}
               onChange={e => { updateSetting("bas_freq", e.target.value); showToast("Saved!"); }}>
               <option value="quarterly">Quarterly (most common)</option>
@@ -10815,7 +10826,7 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
           </div>
           <div className="fg">
             <label className="flbl">Payday (for Cash Flow view)</label>
-            <select className="sel"
+            <select className="sel" disabled={isAccountant}
               value={bizSettings.payday || "4"}
               onChange={e => { updateSetting("payday", e.target.value); showToast("Saved!"); }}>
               <option value="1">Monday</option>
@@ -10828,13 +10839,13 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
           </div>
           <div className="fg">
             <label className="flbl">Owner / Contact Email</label>
-            <input className="inp" type="email" placeholder="owner@mybistro.com.au"
+            <input className="inp" type="email" placeholder="owner@mybistro.com.au" disabled={isAccountant}
               value={bizSettings.owner_email || ""}
               onChange={e => { updateSetting("owner_email", e.target.value); showToast("Saved!"); }}/>
           </div>
           <div className="fg">
             <label className="flbl">State</label>
-            <select className="sel"
+            <select className="sel" disabled={isAccountant}
               value={bizSettings.state || "NSW"}
               onChange={e => { updateSetting("state", e.target.value); showToast("Saved!"); }}>
               {["NSW","VIC","QLD","WA","SA","TAS","ACT","NT"].map(s => <option key={s}>{s}</option>)}
@@ -10856,12 +10867,13 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
           <input
             className="inp"
             type="text"
+            disabled={isAccountant}
             placeholder="e.g. Hot Pot Restaurant, Café, Bakery, Bar…"
             value={industry === "restaurant" || industry === "café" || industry === "bar" || industry === "other" ? "" : industry}
             onChange={e => setIndustry(e.target.value)}
             onBlur={e => { if (e.target.value.trim()) showToast("Business type saved ✅"); }}/>
           <span className="fhint">
-            Free text — type anything. Common types (restaurant, café, bar, bakery, takeaway) unlock tailored expense sorting.
+            {isAccountant ? "Managed by the business owner." : "Free text — type anything. Common types (restaurant, café, bar, bakery, takeaway) unlock tailored expense sorting."}
           </span>
         </div>
 
@@ -10961,6 +10973,8 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
         )}
       </div>
 
+      {/* ── Owner-only sections: Team Access, Subscription, Danger Zone ── */}
+      {!isAccountant && (<>
       {/* ── Team Access (Phase 1 Step 3 v2 — defensive) ── */}
       <div className="fsec">
         <div className="ftit">Team Access</div>
@@ -11115,6 +11129,7 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
           }}>Reset Data</button>
         </div>
       </div>
+      </>)}
     </>
   );
 }

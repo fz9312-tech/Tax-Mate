@@ -2763,6 +2763,44 @@ body { background: ${C.bg}; color: ${C.text}; font-family: 'DM Sans', sans-serif
 .p-list li { font-size: 11.5px; color: ${C.muted}; display: flex; gap: 6px; }
 .p-list li::before { content: '✓'; color: ${C.green}; font-weight: 700; }
 
+/* ── Landing v2: warm glow + dashboard preview + lang toggle ── */
+.hero-wrap { position: relative; overflow: hidden; }
+.hero-glow {
+  position: absolute; top: -180px; left: 50%; transform: translateX(-50%);
+  width: 900px; height: 520px; pointer-events: none; z-index: 0;
+  background: radial-gradient(ellipse at center,
+    rgba(212,168,67,.10) 0%, rgba(143,203,114,.07) 38%, transparent 70%);
+  filter: blur(8px);
+}
+.lang-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 600; font-family: inherit; cursor: pointer;
+  padding: 7px 13px; border-radius: 8px;
+  background: ${C.surfaceAlt}; border: 1px solid ${C.border}; color: ${C.text};
+  transition: border-color .15s;
+}
+.lang-btn:hover { border-color: ${C.accent}; }
+/* Fake dashboard preview */
+.dash-preview {
+  max-width: 720px; margin: 36px auto 0; position: relative; z-index: 1;
+  background: ${C.surface}; border: 1px solid ${C.border}; border-radius: 16px;
+  box-shadow: 0 24px 60px -20px rgba(0,0,0,.55), 0 0 0 1px rgba(143,203,114,.06);
+  overflow: hidden; text-align: left;
+}
+.dp-bar { display: flex; align-items: center; gap: 7px; padding: 11px 15px; border-bottom: 1px solid ${C.border}; background: ${C.surfaceAlt}; }
+.dp-dot { width: 10px; height: 10px; border-radius: 50%; }
+.dp-body { padding: 18px; }
+.dp-row { display: grid; grid-template-columns: repeat(3,1fr); gap: 11px; margin-bottom: 13px; }
+.dp-card { background: ${C.bg}; border: 1px solid ${C.border}; border-radius: 11px; padding: 13px 15px; }
+.dp-lbl { font-size: 9px; color: ${C.muted}; text-transform: uppercase; letter-spacing: .6px; margin-bottom: 6px; }
+.dp-val { font-size: 18px; font-weight: 800; font-family: 'DM Mono', monospace; letter-spacing: -.5px; }
+.dp-bars { display: flex; align-items: flex-end; gap: 5px; height: 60px; padding: 12px 15px; background: ${C.bg}; border: 1px solid ${C.border}; border-radius: 11px; }
+.dp-bars > div { flex: 1; border-radius: 3px 3px 0 0; }
+@media (max-width: 560px) {
+  .h-ttl { font-size: 34px; }
+  .dp-row { grid-template-columns: 1fr 1fr; }
+}
+
 /* ── Auth ── */
 .auth-pg  { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: ${C.bg}; }
 .auth-box { background: ${C.surface}; border: 1px solid ${C.border}; border-radius: 16px; padding: 32px; width: 100%; max-width: 390px; }
@@ -2933,6 +2971,110 @@ function ScoreRing({ score }) {
 //  LANDING
 // ════════════════════════════════════════════════════════════
 function LandingPage({ onGo }) {
+  // ── Bilingual content (EN / 中文) ──
+  const [lang, setLang] = useState(() => {
+    try { return localStorage.getItem("mise_lang") || "en"; } catch { return "en"; }
+  });
+  const toggleLang = () => {
+    const next = lang === "en" ? "zh" : "en";
+    setLang(next);
+    try { localStorage.setItem("mise_lang", next); } catch {}
+  };
+  const zh = lang === "zh";
+
+  const t = {
+    login:      zh ? "登录" : "Log In",
+    getStarted: zh ? "免费开始" : "Get Started Free",
+    badge:      zh ? "🇦🇺 为澳洲餐厅、咖啡馆和酒吧打造" : "🇦🇺 Built for Australian Restaurants, Cafés & Bars",
+    heroA:      zh ? "你管前厅，" : "Run your floor.",
+    heroB:      zh ? "记账交给我们。" : "We'll run the books.",
+    heroSub:    zh
+      ? "排班、记录营业额、看懂盈亏、放心报 BAS。Mise 是唯一按餐饮业真实运作方式设计的财务工具 —— 而不是按会计师的想象。"
+      : "Roster your staff. Track your takings. Know your P&L. Lodge your BAS with confidence. Mise is the only finance tool built around how hospitality actually works — not how accountants think it should.",
+    ctaStart:   zh ? "免费开始 →" : "Start for Free →",
+    ctaDemo:    zh ? "看演示" : "See a Demo",
+    stats: zh
+      ? [{ val:"5 分钟", lbl:"完成设置" },{ val:"$0", lbl:"开始使用" },{ val:"一键", lbl:"BAS 汇总" },{ val:"随时", lbl:"符合 ATO" }]
+      : [{ val:"5 min", lbl:"to set up" },{ val:"$0", lbl:"to start" },{ val:"1 click", lbl:"BAS summary" },{ val:"ATO-ready", lbl:"at all times" }],
+    pills: zh
+      ? ["🍽️ 餐厅","☕ 咖啡馆","🍺 酒吧","🥡 外卖店","🍕 餐车","🏪 食品零售"]
+      : ["🍽️ Restaurants","☕ Cafés","🍺 Bars & Pubs","🥡 Takeaways","🍕 Food Trucks","🏪 Food Retail"],
+    featLbl:    zh ? "Mise 能做什么" : "What Mise Does",
+    featTtl:    zh ? "餐饮老板真正需要的，全都有。" : "Everything a hospitality owner actually needs.",
+    whyLbl:     zh ? "为什么选 Mise" : "Why Mise",
+    whyTtl:     zh ? "为站在传菜口后面的人而造。" : "Built for the person behind the pass.",
+    whySub:     zh
+      ? "Xero 是给会计师的。Mise 是给那个周四营业前、半夜还在算工资的老板的。"
+      : "Xero is great for accountants. Mise is for the owner doing payroll at midnight before a Thursday service.",
+    priceLbl:   zh ? "简单定价" : "Simple Pricing",
+    priceTtl:   zh ? "没有意外。就像你的 BAS 该有的样子。" : "No surprises. Just like your BAS should be.",
+    perMonth:   zh ? "/月" : "/month",
+    chooseStart:zh ? "免费开始" : "Get Started Free",
+    choose:     (tier) => zh ? `选择 ${tier}` : `Choose ${tier}`,
+    disclaimer: zh
+      ? "⚠️ Mise 仅生成管理汇总，不能替代注册税务代理或会计师。"
+      : "⚠️ Mise generates management summaries only. Not a substitute for a registered tax agent or accountant.",
+    dpTitle:    zh ? "概览 · 本月" : "Dashboard · This Month",
+    dpRevenue:  zh ? "本月营业额" : "Monthly Revenue",
+    dpExpenses: zh ? "本月支出" : "Monthly Expenses",
+    dpTax:      zh ? "预估季度税" : "Est. Quarterly Tax",
+    dpHealth:   zh ? "✅ 经营健康：稳健" : "✅ Business Health: Safe",
+  };
+
+  const features = zh ? [
+    { ico:"📅", ttl:"排班与人力成本", dsc:"几分钟排好周班表。发布前就看到总人力成本、每位员工工资和加班提示 —— 发薪时没有意外。" },
+    { ico:"💵", ttl:"按渠道记营业额", dsc:"堂食、外卖、配送分开记录。每个渠道的 GST 自动正确计算 —— 配送平台自动排除。" },
+    { ico:"📊", ttl:"损益表", dsc:"真实的毛利、成本和息税前利润 —— 不只是收入减支出。按季度或财年看你的实际利润率。" },
+    { ico:"💸", ttl:"现金流视图", dsc:"每日进账、出账和预估工资一起显示。发薪日前就知道这周会不会紧张。" },
+    { ico:"🏛️", ttl:"实时 ATO 税负", dsc:"实时看到你现在欠 ATO 多少 GST + PAYG —— 随你录入营业额每日更新，不用等季末。" },
+    { ico:"🧾", ttl:"支出管理", dsc:"分类每一笔成本，自动标记缺失发票，BAS 时不漏任何 GST 抵扣。常用支出自动记住。" },
+    { ico:"👤", ttl:"工资单与工时", dsc:"一键生成合规工资单。临时工津贴、加班、周末费率、PAYG 和养老金全部按 ATO 标准计算。" },
+    { ico:"📥", ttl:"POS CSV 导入", dsc:"从 Square、Lightspeed、Kounta 或任何 POS 导出。Mise 自动映射列 —— 30 秒导入一个月数据。" },
+    { ico:"📋", ttl:"BAS 汇总", dsc:"季度 BAS 数字精确筛选到 ATO 日期范围。见税务代理前先审一遍 —— 不再临时手忙脚乱对账。" },
+    { ico:"🔔", ttl:"提醒", dsc:"BAS 截止、未付养老金、即将到期的保险、未结清的离职 —— 全在一处，不让任何事漏掉。" },
+    { ico:"🔍", ttl:"审计就绪", dsc:"在 ATO 之前先扫描你的记录，找出缺失发票、娱乐支出和养老金缺口。19 类抵扣清单。" },
+    { ico:"📦", ttl:"会计师资料包", dsc:"一键 PDF：损益表、月营业额明细、渠道拆分、按类别支出和成本标注 —— 直接交给会计师。" },
+  ] : [
+    { ico:"📅", ttl:"Roster & Labour Cost",  dsc:"Build your weekly roster in minutes. See total labour cost, per-employee wages and OT flags before you publish — no surprises at payrun." },
+    { ico:"💵", ttl:"Revenue by Channel",    dsc:"Log dine-in, takeaway and delivery separately. GST calculated correctly for each — delivery platforms excluded automatically." },
+    { ico:"📊", ttl:"P&L Statement",         dsc:"Real gross profit, COGS and EBIT — not just revenue minus expenses. See your actual margin by quarter or financial year." },
+    { ico:"💸", ttl:"Cash Flow View",        dsc:"Daily money-in, money-out, and estimated wages shown together. Know before payday if the week is going to be tight." },
+    { ico:"🏛️", ttl:"Live ATO Liability",    dsc:"See exactly how much GST + PAYG you owe the ATO right now — updated daily as you enter revenue, not just at quarter end." },
+    { ico:"🧾", ttl:"Expense Management",    dsc:"Categorise every cost, flag missing invoices automatically, and never lose a GST credit at BAS time. Recurring expenses remembered." },
+    { ico:"👤", ttl:"Payslips & Timesheets", dsc:"Generate compliant payslips with one click. Casual loading, OT, weekend rates, PAYG and super all calculated to ATO spec." },
+    { ico:"📥", ttl:"POS CSV Import",        dsc:"Export from Square, Lightspeed, Kounta or any POS. Mise maps your columns automatically — import a month of data in 30 seconds." },
+    { ico:"📋", ttl:"BAS Summary",           dsc:"Quarterly BAS figures filtered to the exact ATO date range. Review before you meet your tax agent — no more rushed reconciliation." },
+    { ico:"🔔", ttl:"Reminders",             dsc:"BAS deadlines, unpaid super, expiring insurance, unsettled staff exits — all in one place so nothing falls through the cracks." },
+    { ico:"🔍", ttl:"Audit Ready",           dsc:"Scans your records for missing invoices, entertainment expenses and super gaps before the ATO does. 19-category deduction checklist." },
+    { ico:"📦", ttl:"Accountant Pack",       dsc:"One-click PDF with P&L, monthly revenue breakdown, channel split, expenses by category and COGS labelled — ready to hand to your accountant." },
+  ];
+
+  const whys = zh ? [
+    { ico:"⚡", ttl:"5 分钟上手", dsc:"没有会计科目表，没有银行对账设置。打开它，录入营业额，就完成了。" },
+    { ico:"🇦🇺", ttl:"内置澳洲税法", dsc:"GST 渠道、PAYG Scale 2、养老金费率、ATO 季度日期和 BAS 结构 —— 开箱即正确。" },
+    { ico:"📅", ttl:"排班到工资单一站搞定", dsc:"排班、确认工时、生成工资单、导出养老金义务 —— 无需切换工具。" },
+    { ico:"📊", ttl:"你的损益，不只是 GST", dsc:"了解毛利率、成本和息税前利润 —— 会计师评估业务健康用的数字。" },
+    { ico:"🔔", ttl:"没有遗漏", dsc:"BAS 截止、养老金、保险续期、未结离职的提醒 —— 在它们变成问题前就提醒。" },
+    { ico:"💰", ttl:"只需记账员的零头", dsc:"Mise 免费起步。Pro 每月比一小时记账费还低 —— 而且你始终掌控。" },
+  ] : [
+    { ico:"⚡", ttl:"Up in 5 minutes",           dsc:"No chart of accounts. No bank reconciliation setup. Open it, enter your takings, and you're done." },
+    { ico:"🇦🇺", ttl:"Australian tax law built in",dsc:"GST channels, PAYG Scale 2, SGC super rates, ATO quarter dates and BAS structure — all correct out of the box." },
+    { ico:"📅", ttl:"Roster → payslip in one app", dsc:"Roster your staff, confirm hours, generate payslips and export super obligations — without switching tools." },
+    { ico:"📊", ttl:"Your P&L, not just your GST", dsc:"Know your gross margin, COGS and EBIT — the numbers your accountant uses to assess business health." },
+    { ico:"🔔", ttl:"Nothing slips through",      dsc:"Reminders for BAS deadlines, super payments, insurance renewals and unsettled staff exits — before they become problems." },
+    { ico:"💰", ttl:"A fraction of a bookkeeper", dsc:"Mise starts free. Pro is less per month than one hour of bookkeeping time — and you stay in control." },
+  ];
+
+  const plans = zh ? [
+    { tier:"Starter", price:"$0",  hi:false, feats:["营业额追踪（渠道 + CSV 导入）","支出管理 + 自动分类","基础 BAS 预估","最多 3 名员工档案","损益表","所有业务类型"] },
+    { tier:"Pro",     price:"$29", hi:true,  feats:["包含 Starter 全部","无限员工 + 工时","排班含人力成本视图","工资单 + 批量 ZIP 导出","实时 ATO 税负看板","现金流视图","提醒与警示","保险看板","审计就绪扫描","文档中心"] },
+    { tier:"Studio",  price:"$79", hi:false, feats:["包含 Pro 全部","会计师资料包 PDF","BAS 历史 + 报税流程","月度 IAS","年度损益导出","优先支持"] },
+  ] : [
+    { tier:"Starter", price:"$0",  hi:false, feats:["Revenue tracking (channels + CSV import)","Expense management + auto-categorisation","Basic BAS estimate","Up to 3 staff profiles","P&L Statement","All business types"] },
+    { tier:"Pro",     price:"$29", hi:true,  feats:["Everything in Starter","Unlimited staff + timesheets","Roster with labour cost view","Payslips + batch ZIP export","Live ATO liability dashboard","Cash Flow view","Reminders & alerts","Insurance dashboard","Audit Ready scanner","Document Hub"] },
+    { tier:"Studio",  price:"$79", hi:false, feats:["Everything in Pro","Accountant Pack PDF","BAS history + lodge workflow","Monthly IAS","Annual P&L export","Priority support"] },
+  ];
+
   return (
     <div className="land">
       <nav className="lnav">
@@ -2943,29 +3085,63 @@ function LandingPage({ onGo }) {
             <div className="logo-sub">HOSPITALITY FINANCE</div>
           </div>
         </div>
-        <div style={{ display:"flex", gap:9 }}>
-          <button className="btn-g" onClick={onGo}>Log In</button>
-          <button className="btn"   onClick={onGo}>Get Started Free</button>
+        <div style={{ display:"flex", gap:9, alignItems:"center" }}>
+          <button className="lang-btn" onClick={toggleLang}>🌐 {zh ? "EN" : "中文"}</button>
+          <button className="btn-g" onClick={onGo}>{t.login}</button>
+          <button className="btn"   onClick={onGo}>{t.getStarted}</button>
         </div>
       </nav>
 
-      {/* Hero */}
-      <div className="hero">
-        <div className="h-badge">🇦🇺 Built for Australian Restaurants, Cafés & Bars</div>
-        <h1 className="h-ttl">Run your floor.<br/><span>We'll run the books.</span></h1>
-        <p className="h-sub">Roster your staff. Track your takings. Know your P&L. Lodge your BAS with confidence. Mise is the only finance tool built around how hospitality actually works — not how accountants think it should.</p>
-        <div className="h-btns">
-          <button className="h-btn"   onClick={onGo}>Start for Free →</button>
-          <button className="h-btn-g" onClick={onGo}>See a Demo</button>
+      {/* Hero with warm glow + dashboard preview */}
+      <div className="hero-wrap">
+        <div className="hero-glow"/>
+        <div className="hero" style={{ position:"relative", zIndex:1 }}>
+          <div className="h-badge">{t.badge}</div>
+          <h1 className="h-ttl">{t.heroA}<br/><span>{t.heroB}</span></h1>
+          <p className="h-sub">{t.heroSub}</p>
+          <div className="h-btns">
+            <button className="h-btn"   onClick={onGo}>{t.ctaStart}</button>
+            <button className="h-btn-g" onClick={onGo}>{t.ctaDemo}</button>
+          </div>
         </div>
+
+        {/* Fake dashboard preview — CSS only, no image dependency */}
+        <div className="dash-preview" style={{ marginBottom:36 }}>
+          <div className="dp-bar">
+            <div className="dp-dot" style={{ background:"#E06060" }}/>
+            <div className="dp-dot" style={{ background:"#D4A843" }}/>
+            <div className="dp-dot" style={{ background:"#52C97A" }}/>
+            <div style={{ marginLeft:10, fontSize:11, color:C.muted }}>{t.dpTitle}</div>
+          </div>
+          <div className="dp-body">
+            <div className="dp-row">
+              <div className="dp-card">
+                <div className="dp-lbl">{t.dpRevenue}</div>
+                <div className="dp-val" style={{ color:C.accent }}>$48,250</div>
+              </div>
+              <div className="dp-card">
+                <div className="dp-lbl">{t.dpExpenses}</div>
+                <div className="dp-val" style={{ color:C.text }}>$31,900</div>
+              </div>
+              <div className="dp-card">
+                <div className="dp-lbl">{t.dpTax}</div>
+                <div className="dp-val" style={{ color:C.yellow }}>$5,420</div>
+              </div>
+            </div>
+            <div className="dp-bars">
+              {[42,55,38,63,71,49,80,58,66,74,52,68].map((h,i) => (
+                <div key={i} style={{ height:`${h}%`, background:i%3===0?C.accent:`${C.teal}88` }}/>
+              ))}
+            </div>
+            <div style={{ marginTop:13, display:"flex", alignItems:"center", gap:8, background:"rgba(82,201,122,.08)", border:`1px solid rgba(82,201,122,.25)`, borderRadius:10, padding:"10px 14px" }}>
+              <span style={{ fontSize:13, fontWeight:700, color:C.green }}>{t.dpHealth}</span>
+            </div>
+          </div>
+        </div>
+
         {/* Live stat bar */}
-        <div style={{ display:"flex", gap:0, marginTop:28, borderRadius:12, overflow:"hidden", border:`1px solid ${C.border}`, maxWidth:700, margin:"28px auto 0" }}>
-          {[
-            { val:"5 min",    lbl:"to set up" },
-            { val:"$0",       lbl:"to start" },
-            { val:"1 click",  lbl:"BAS summary" },
-            { val:"ATO-ready",lbl:"at all times" },
-          ].map((s,i) => (
+        <div style={{ display:"flex", gap:0, borderRadius:12, overflow:"hidden", border:`1px solid ${C.border}`, maxWidth:700, margin:"0 auto 0", position:"relative", zIndex:1 }}>
+          {t.stats.map((s,i) => (
             <div key={i} style={{ flex:1, padding:"13px 0", textAlign:"center", background:i%2===0?C.surface:C.surfaceAlt, borderRight:i<3?`1px solid ${C.border}`:"none" }}>
               <div style={{ fontSize:16, fontWeight:800, color:C.accent, fontFamily:"'DM Mono',monospace", letterSpacing:"-1px" }}>{s.val}</div>
               <div style={{ fontSize:10, color:C.muted, marginTop:2, textTransform:"uppercase", letterSpacing:".5px" }}>{s.lbl}</div>
@@ -2975,35 +3151,22 @@ function LandingPage({ onGo }) {
       </div>
 
       {/* Industry pills */}
-      <div style={{ textAlign:"center", padding:"4px 0 32px" }}>
+      <div style={{ textAlign:"center", padding:"28px 0 32px" }}>
         <div style={{ display:"flex", gap:8, justifyContent:"center", flexWrap:"wrap", marginBottom:10 }}>
-          {["🍽️ Restaurants","☕ Cafés","🍺 Bars & Pubs","🥡 Takeaways","🍕 Food Trucks","🏪 Food Retail"].map((l,i) => (
+          {t.pills.map((l,i) => (
             <span key={i} style={{ fontSize:11.5, padding:"4px 12px", borderRadius:20, background:C.surfaceAlt, border:`1px solid ${C.border}`, color:C.muted }}>{l}</span>
           ))}
         </div>
       </div>
 
-      {/* Feature grid — full actual feature set */}
+      {/* Feature grid */}
       <div style={{ padding:"8px 40px 40px", maxWidth:960, margin:"0 auto" }}>
         <div style={{ textAlign:"center", marginBottom:28 }}>
-          <div style={{ fontSize:10.5, fontWeight:700, color:C.accent, textTransform:"uppercase", letterSpacing:"1px", marginBottom:8 }}>What Mise Does</div>
-          <div style={{ fontSize:24, fontWeight:700, letterSpacing:"-1px", fontFamily:"'Fraunces', serif" }}>Everything a hospitality owner actually needs.</div>
+          <div style={{ fontSize:10.5, fontWeight:700, color:C.accent, textTransform:"uppercase", letterSpacing:"1px", marginBottom:8 }}>{t.featLbl}</div>
+          <div style={{ fontSize:24, fontWeight:700, letterSpacing:"-1px", fontFamily:"'Fraunces', serif" }}>{t.featTtl}</div>
         </div>
         <div className="feat-grid">
-          {[
-            { ico:"📅", ttl:"Roster & Labour Cost",     dsc:"Build your weekly roster in minutes. See total labour cost, per-employee wages and OT flags before you publish — no surprises at payrun." },
-            { ico:"💵", ttl:"Revenue by Channel",       dsc:"Log dine-in, takeaway and delivery separately. GST calculated correctly for each — delivery platforms excluded automatically." },
-            { ico:"📊", ttl:"P&L Statement",            dsc:"Real gross profit, COGS and EBIT — not just revenue minus expenses. See your actual margin by quarter or financial year." },
-            { ico:"💸", ttl:"Cash Flow View",           dsc:"Daily money-in, money-out, and estimated wages shown together. Know before payday if the week is going to be tight." },
-            { ico:"🏛️", ttl:"Live ATO Liability",       dsc:"See exactly how much GST + PAYG you owe the ATO right now — updated daily as you enter revenue, not just at quarter end." },
-            { ico:"🧾", ttl:"Expense Management",       dsc:"Categorise every cost, flag missing invoices automatically, and never lose a GST credit at BAS time. Recurring expenses remembered." },
-            { ico:"👤", ttl:"Payslips & Timesheets",    dsc:"Generate compliant payslips with one click. Casual loading, OT, weekend rates, PAYG and super all calculated to ATO spec." },
-            { ico:"📥", ttl:"POS CSV Import",           dsc:"Export from Square, Lightspeed, Kounta or any POS. Mise maps your columns automatically — import a month of data in 30 seconds." },
-            { ico:"📋", ttl:"BAS Summary",              dsc:"Quarterly BAS figures filtered to the exact ATO date range. Review before you meet your tax agent — no more rushed reconciliation." },
-            { ico:"🔔", ttl:"Reminders",                dsc:"BAS deadlines, unpaid super, expiring insurance, unsettled staff exits — all in one place so nothing falls through the cracks." },
-            { ico:"🔍", ttl:"Audit Ready",              dsc:"Scans your records for missing invoices, entertainment expenses and super gaps before the ATO does. 19-category deduction checklist." },
-            { ico:"📦", ttl:"Accountant Pack",          dsc:"One-click PDF with P&L, monthly revenue breakdown, channel split, expenses by category and COGS labelled — ready to hand to your accountant." },
-          ].map((f,i) => (
+          {features.map((f,i) => (
             <div key={i} className="feat-card">
               <div className="feat-ico">{f.ico}</div>
               <div className="feat-ttl">{f.ttl}</div>
@@ -3016,19 +3179,12 @@ function LandingPage({ onGo }) {
       {/* Why Mise */}
       <div style={{ padding:"40px 40px 48px", maxWidth:900, margin:"0 auto" }}>
         <div style={{ textAlign:"center", marginBottom:28 }}>
-          <div style={{ fontSize:10.5, fontWeight:700, color:C.accent, textTransform:"uppercase", letterSpacing:"1px", marginBottom:8 }}>Why Mise</div>
-          <div style={{ fontSize:24, fontWeight:700, letterSpacing:"-1px", fontFamily:"'Fraunces', serif" }}>Built for the person behind the pass.</div>
-          <div style={{ fontSize:13, color:C.muted, marginTop:10, lineHeight:1.7 }}>Xero is great for accountants. Mise is for the owner doing payroll at midnight before a Thursday service.</div>
+          <div style={{ fontSize:10.5, fontWeight:700, color:C.accent, textTransform:"uppercase", letterSpacing:"1px", marginBottom:8 }}>{t.whyLbl}</div>
+          <div style={{ fontSize:24, fontWeight:700, letterSpacing:"-1px", fontFamily:"'Fraunces', serif" }}>{t.whyTtl}</div>
+          <div style={{ fontSize:13, color:C.muted, marginTop:10, lineHeight:1.7 }}>{t.whySub}</div>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:14 }}>
-          {[
-            { ico:"⚡", ttl:"Up in 5 minutes",           dsc:"No chart of accounts. No bank reconciliation setup. Open it, enter your takings, and you're done." },
-            { ico:"🇦🇺", ttl:"Australian tax law built in",dsc:"GST channels, PAYG Scale 2, SGC super rates, ATO quarter dates and BAS structure — all correct out of the box." },
-            { ico:"📅", ttl:"Roster → payslip in one app", dsc:"Roster your staff, confirm hours, generate payslips and export super obligations — without switching tools." },
-            { ico:"📊", ttl:"Your P&L, not just your GST", dsc:"Know your gross margin, COGS and EBIT — the numbers your accountant uses to assess business health." },
-            { ico:"🔔", ttl:"Nothing slips through",      dsc:"Reminders for BAS deadlines, super payments, insurance renewals and unsettled staff exits — before they become problems." },
-            { ico:"💰", ttl:"A fraction of a bookkeeper", dsc:"Mise starts free. Pro is less per month than one hour of bookkeeping time — and you stay in control." },
-          ].map((f,i) => (
+          {whys.map((f,i) => (
             <div key={i} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"18px 18px" }}>
               <div style={{ fontSize:22, marginBottom:9 }}>{f.ico}</div>
               <div style={{ fontWeight:700, fontSize:13, marginBottom:6 }}>{f.ttl}</div>
@@ -3040,31 +3196,23 @@ function LandingPage({ onGo }) {
 
       {/* Pricing */}
       <div className="price-sec">
-        <div className="price-lbl">Simple Pricing</div>
-        <div className="price-ttl">No surprises. Just like your BAS should be.</div>
+        <div className="price-lbl">{t.priceLbl}</div>
+        <div className="price-ttl">{t.priceTtl}</div>
         <div className="price-grid">
-          {[
-            { tier:"Starter", price:"$0",  per:"/month", hi:false,
-              feats:["Revenue tracking (channels + CSV import)","Expense management + auto-categorisation","Basic BAS estimate","Up to 3 staff profiles","P&L Statement","All business types"] },
-            { tier:"Pro",     price:"$29", per:"/month", hi:true,
-              feats:["Everything in Starter","Unlimited staff + timesheets","Roster with labour cost view","Payslips + batch ZIP export","Live ATO liability dashboard","Cash Flow view","Reminders & alerts","Insurance dashboard","Audit Ready scanner","Document Hub"] },
-            { tier:"Studio",  price:"$79", per:"/month", hi:false,
-              feats:["Everything in Pro","Accountant Pack PDF","BAS history + lodge workflow","Monthly IAS","Annual P&L export","Priority support"] },
-          ].map((p,i) => (
+          {plans.map((p,i) => (
             <div key={i} className={`price-card${p.hi?" hi":""}`}>
               <div className="p-tier">{p.tier}</div>
-              <div><span className="p-amt">{p.price}</span><span className="p-per">{p.per}</span></div>
+              <div><span className="p-amt">{p.price}</span><span className="p-per">{t.perMonth}</span></div>
               <ul className="p-list">{p.feats.map((f,j) => <li key={j}>{f}</li>)}</ul>
               <button className="btn" style={{ marginTop:14, width:"100%" }} onClick={onGo}>
-                {p.tier === "Starter" ? "Get Started Free" : `Choose ${p.tier}`}
+                {p.tier === "Starter" ? t.chooseStart : t.choose(p.tier)}
               </button>
             </div>
           ))}
         </div>
-        <p style={{ fontSize:10.5, color:C.dim, marginTop:16 }}>
-          ⚠️ Mise generates management summaries only. Not a substitute for a registered tax agent or accountant.
-        </p>
+        <p style={{ fontSize:10.5, color:C.dim, marginTop:16 }}>{t.disclaimer}</p>
       </div>
+
 
       <div style={{ textAlign:"center", padding:"32px 40px 48px", borderTop:`1px solid ${C.border}` }}>
         <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:9, marginBottom:10 }}>

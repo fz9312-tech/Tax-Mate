@@ -566,6 +566,21 @@ const FY_DATES = {
   "FY2024": { from:"2023-07-01", to:"2024-06-30" },
 };
 
+// Human-friendly quarter label with month range, e.g. "Q1 FY2026 (Jul – Sep 2025)".
+// Helps owners instantly see which months a quarter covers.
+const quarterLabel = (q) => {
+  const d = QUARTER_DATES[q];
+  if (!d) return q;
+  const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const fromD = new Date(d.from + "T00:00:00");
+  const toD   = new Date(d.to   + "T00:00:00");
+  const fromMon = MON[fromD.getMonth()];
+  const toMon   = MON[toD.getMonth()];
+  // Q2 spans two calendar years (Oct–Dec) — show end year; otherwise show the from-year
+  const yr = toD.getFullYear();
+  return `${q} (${fromMon} – ${toMon} ${yr})`;
+};
+
 // Categories that represent Cost of Goods Sold (COGS)
 // These are direct costs that move with revenue — not operating expenses
 // GST default by category — most business costs in Australia are GST-inclusive
@@ -11375,7 +11390,7 @@ function DocumentsPage({ documents, setDocuments, employees, showToast }) {
               <div className="fg">
                 <label className="flbl">BAS Quarter</label>
                 <select className="sel" value={tagF.quarter||BAS_QUARTERS[0]} onChange={e => setTagF({...tagF,quarter:e.target.value})}>
-                  {BAS_QUARTERS.map(q => <option key={q}>{q}</option>)}
+                  {BAS_QUARTERS.map(q => <option key={q} value={q}>{quarterLabel(q)}</option>)}
                 </select>
               </div>
               <div className="fg">
@@ -11465,9 +11480,9 @@ function DocumentsPage({ documents, setDocuments, employees, showToast }) {
       {/* Search + filters */}
       <div className="search-bar">
         <input className="inp" style={{ flex:1 }} placeholder="🔍  Search by name, supplier, notes..." value={search} onChange={e => setSearch(e.target.value)}/>
-        <select className="sel" style={{ width:160 }} value={filterQ} onChange={e => setFilterQ(e.target.value)}>
+        <select className="sel" style={{ width:210 }} value={filterQ} onChange={e => setFilterQ(e.target.value)}>
           <option value="">All Quarters</option>
-          {BAS_QUARTERS.map(q => <option key={q}>{q}</option>)}
+          {BAS_QUARTERS.map(q => <option key={q} value={q}>{quarterLabel(q)}</option>)}
         </select>
         <select className="sel" style={{ width:160 }} value={filterCat} onChange={e => setFilterCat(e.target.value)}>
           <option value="">All Categories</option>
@@ -12044,8 +12059,8 @@ function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, d
       <div className="hdr">
         <div className="hdr-left"><div className="ptitle">📋 BAS Summary</div><div className="psub">Quarterly BAS support summary — for review before lodgment</div></div>
         <div className="hdr-right">
-          <select className="sel" value={selQ} onChange={e => setSelQ(e.target.value)} style={{ width:140 }}>
-            {BAS_QUARTERS.map(q => <option key={q}>{q}</option>)}
+          <select className="sel" value={selQ} onChange={e => setSelQ(e.target.value)} style={{ width:210 }}>
+            {BAS_QUARTERS.map(q => <option key={q} value={q}>{quarterLabel(q)}</option>)}
           </select>
           <button className="btn-b" onClick={() => setPrint(true)}>⬇️ Export PDF</button>
           <button className="btn" onClick={saveToHistory}>
@@ -12438,7 +12453,7 @@ function ReportsPage({ revenue, expenses, timesheets, employees, insurance, docu
     {
       id:"bas", ico:"📋", ttl:"BAS Support Summary",
       dsc:"Quarterly GST, PAYG and super summary with document count and warnings. Review before lodging your BAS with the ATO.",
-      ctrl: <select className="sel" value={selQ} onChange={e=>setSelQ(e.target.value)} style={{ width:140 }}>{BAS_QUARTERS.map(q=><option key={q}>{q}</option>)}</select>,
+      ctrl: <select className="sel" value={selQ} onChange={e=>setSelQ(e.target.value)} style={{ width:210 }}>{BAS_QUARTERS.map(q=><option key={q} value={q}>{quarterLabel(q)}</option>)}</select>,
     },
     {
       id:"annual", ico:"📦", ttl:"Annual Accountant Pack",
@@ -12495,7 +12510,7 @@ function ReportsPage({ revenue, expenses, timesheets, employees, insurance, docu
               ))}
             </div>
             {plPeriod === "quarter"
-              ? <select className="sel" style={{ width:150 }} value={plQ} onChange={e => setPlQ(e.target.value)}>{BAS_QUARTERS.map(q => <option key={q}>{q}</option>)}</select>
+              ? <select className="sel" style={{ width:210 }} value={plQ} onChange={e => setPlQ(e.target.value)}>{BAS_QUARTERS.map(q => <option key={q} value={q}>{quarterLabel(q)}</option>)}</select>
               : <select className="sel" style={{ width:120 }} value={plFY} onChange={e => setPlFY(e.target.value)}>{FIN_YEARS.map(y => <option key={y}>{y}</option>)}</select>
             }
             {/* Expense date mode — cash vs accrual */}
@@ -12621,7 +12636,7 @@ function ReportsPage({ revenue, expenses, timesheets, employees, insurance, docu
                   <div className="fg">
                     <label className="flbl">Quarter</label>
                     <select className="sel" value={stockForm.quarter} onChange={e => setStockForm({...stockForm, quarter:e.target.value})}>
-                      {BAS_QUARTERS.map(q => <option key={q}>{q}</option>)}
+                      {BAS_QUARTERS.map(q => <option key={q} value={q}>{quarterLabel(q)}</option>)}
                     </select>
                   </div>
                   <div className="fg">

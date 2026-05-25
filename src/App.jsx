@@ -3223,7 +3223,7 @@ function AuthPage({ onLogin }) {
 // ════════════════════════════════════════════════════════════
 //  SIDEBAR
 // ════════════════════════════════════════════════════════════
-function Sidebar({ page, setPage, onLogout, flagCount }) {
+function Sidebar({ page, setPage, onLogout, flagCount, companyName }) {
   const nav = [
     { sec:"Overview" },
     { id:"dashboard", ico:"📊", lbl:"Dashboard" },
@@ -3247,8 +3247,11 @@ function Sidebar({ page, setPage, onLogout, flagCount }) {
   return (
     <div className="sidebar">
       <div className="logo">
-        <div className="logo-box">M</div>
-        <div><div className="logo-name">Mise</div><div className="logo-sub">HOSPITALITY FINANCE</div></div>
+        <div className="logo-box">{(companyName || "Mise").trim().charAt(0).toUpperCase() || "M"}</div>
+        <div>
+          <div className="logo-name">{companyName || "Mise"}</div>
+          <div className="logo-sub">{companyName ? "POWERED BY MISE" : "HOSPITALITY FINANCE"}</div>
+        </div>
       </div>
       {nav.map((n,i) => n.sec
         ? <div key={i} className="nav-sec">{n.sec}</div>
@@ -10587,7 +10590,7 @@ function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimeshe
 // ════════════════════════════════════════════════════════════
 //  SETTINGS
 // ════════════════════════════════════════════════════════════
-function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, bizABN, setBizABN, bizId, currentRole }) {
+function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, bizABN, setBizABN, bizId, currentRole, companyName = "", setCompanyName = () => {} }) {
   const [saved, setSaved] = useState(false);
 
   // ── Change Password state ──────────────────────────────────────
@@ -10784,12 +10787,17 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
       {/* ── Business Identity — persisted ── */}
       <div className="fsec">
         <div className="ftit">Business Details</div>
-        <div style={{ fontSize:12.5, color:C.muted, marginBottom:14 }}>These appear on all exported PDFs — payslips, BAS summaries, rosters and accountant packs.</div>
+        <div style={{ fontSize:12.5, color:C.muted, marginBottom:14 }}>Your <strong style={{color:C.text}}>Business Name</strong> appears on all exported PDFs — payslips, BAS summaries, rosters and accountant packs. Your <strong style={{color:C.text}}>Company Name</strong> is your brand, shown in the top-left of the app.</div>
         <div className="frow2">
           <div className="fg">
             <label className="flbl">Business / Restaurant Name *</label>
             <input className="inp" value={bizName} onChange={e => setBizName(e.target.value)} placeholder="e.g. The Local Bistro"/>
-            <span className="fhint">Saved automatically — appears on all PDFs</span>
+            <span className="fhint">Trading name — appears on all PDFs, BAS & payslips</span>
+          </div>
+          <div className="fg">
+            <label className="flbl">Company / Brand Name</label>
+            <input className="inp" value={companyName} onChange={e => setCompanyName(e.target.value)} placeholder="e.g. Hui Wang Da PTY LTD"/>
+            <span className="fhint">Shown top-left in the app. Leave blank to show "Mise".</span>
           </div>
           <div className="fg">
             <label className="flbl">ABN</label>
@@ -13033,6 +13041,9 @@ export default function App() {
   // ── Business identity ─────────────────────────────────────
   const [bizName, setBizNameRaw] = useState(() => localStorage.getItem("mise_biz_name") || "My Restaurant");
   const [bizABN,  setBizABNRaw]  = useState(() => localStorage.getItem("mise_biz_abn")  || "");
+  // Company/brand name — shown in the sidebar top-left (replaces "Mise" branding).
+  // Separate from bizName (the trading/venue name used on BAS, payslips, reports).
+  const [companyName, setCompanyNameRaw] = useState(() => localStorage.getItem("mise_company_name") || "");
   const setBizName = v => {
     setBizNameRaw(v); localStorage.setItem("mise_biz_name", v);
     if (bizId) sb().from("businesses").update({ name: v }).eq("id", bizId).then(() => {});
@@ -13040,6 +13051,9 @@ export default function App() {
   const setBizABN = v => {
     setBizABNRaw(v); localStorage.setItem("mise_biz_abn", v);
     if (bizId) sb().from("businesses").update({ abn: v }).eq("id", bizId).then(() => {});
+  };
+  const setCompanyName = v => {
+    setCompanyNameRaw(v); localStorage.setItem("mise_company_name", v);
   };
 
   // ── Auth: detect session on load, handle deep-link magic-link ──
@@ -13303,7 +13317,7 @@ const bootFromSession = async (session) => {
         </div>
       )}
       <div className="layout">
-        <Sidebar page={page} setPage={setPage} onLogout={async () => { if(window._supabase) await sb().auth.signOut(); try { Object.keys(localStorage).forEach(k => { if (k.startsWith("mise_")) localStorage.removeItem(k); }); } catch {} setScreen("landing"); setBizId(null); setCurrentUserEmail(""); setUserBusinesses([]); }} flagCount={flagCount} industry={industry}/>
+        <Sidebar page={page} setPage={setPage} onLogout={async () => { if(window._supabase) await sb().auth.signOut(); try { Object.keys(localStorage).forEach(k => { if (k.startsWith("mise_")) localStorage.removeItem(k); }); } catch {} setScreen("landing"); setBizId(null); setCurrentUserEmail(""); setUserBusinesses([]); }} flagCount={flagCount} industry={industry} companyName={companyName}/>
         <main className="main">
           {/* ── Phase 1 Step 4: Client Switcher (only for users with ≥2 businesses) ── */}
           {userBusinesses.length > 1 && (
@@ -13375,7 +13389,7 @@ const bootFromSession = async (session) => {
           {page === "documents"      && <DocumentsPage documents={documents} setDocuments={setDocuments} employees={employees} showToast={showToast}/>}
           {page === "bassummary"     && <BASSummaryPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} basHistory={basHistory} setBasHistory={setBasHistory} showToast={showToast} bizName={bizName} bizABN={bizABN} ias={ias}/>}
           {page === "reports"        && <ReportsPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} inventory={inventory} setInventory={setInventory} bizName={bizName} bizABN={bizABN}/>}
-          {page === "settings"       && <SettingsPage industry={industry} setIndustry={setIndustry} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN} bizId={bizId} currentRole={currentRole}/>}
+          {page === "settings"       && <SettingsPage industry={industry} setIndustry={setIndustry} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN} bizId={bizId} currentRole={currentRole} companyName={companyName} setCompanyName={setCompanyName}/>}
         </main>
         <BottomTabBar page={page} setPage={setPage} flagCount={flagCount}/>
         {toast && <Toast msg={toast} onDone={() => setToast(null)}/>}

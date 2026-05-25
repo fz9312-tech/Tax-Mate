@@ -13128,36 +13128,17 @@ const bootFromSession = async (session) => {
     // Accountants intentionally start with no business; they gain access via invitations only.
     if (accountType !== "accountant" && businesses !== null && businesses.length === 0) {
       const signupBizName = session?.user?.user_metadata?.biz_name || "My Restaurant";
-      const { data: newBiz, error: insertError } = await sb().from("businesses")
-        .insert({ owner_id: session.user.id, name: signupBizName })
-        .select().single();
-
-      if (newBiz) {
-        // Mirror into business_access so future loads see it.
-        // Idempotent INSERT — if a UNIQUE collision happens (concurrent boot), no harm done.
-        await sb().from("business_access")
-          .insert({
-            business_id: newBiz.id,
-            user_id: session.user.id,
-            role: "owner",
-            invited_by: session.user.id,
-          })
-          .then(({ error }) => {
-            // 23505 = duplicate (already inserted by a concurrent boot) → fine
-            if (error && error.code !== "23505") {
-              console.warn("bootFromSession: access row insert failed", error);
-            }
-          });
-        businesses = [{
-          id: newBiz.id, name: newBiz.name, abn: newBiz.abn,
-          industry: newBiz.industry, role: "owner"
-        }];
-      } else if (insertError?.code === "23505") {
-        // Concurrent boot already created the business — re-fetch
-        console.info("bootFromSession: concurrent insert detected, re-fetching");
+      // Use a SECURITY DEFINER RPC that creates the business AND the owner
+      // business_access row atomically (bypasses RLS). The old approach used two
+      // separate front-end inserts; the business_access insert could be silently
+      // rejected by RLS, leaving an owner with a business but no owner access row —
+      // which made invite_accountant return "not_owner". This RPC is idempotent and
+      // also self-heals accounts that are already in that broken state.
+      const { data: newBizId, error: rpcErr } = await sb().rpc("create_owner_business", { p_name: signupBizName });
+      if (rpcErr) {
+        console.error("bootFromSession: create_owner_business failed", rpcErr);
+      } else if (newBizId) {
         businesses = await fetchAccessibleBusinesses();
-      } else if (insertError) {
-        console.error("bootFromSession: insert business failed", insertError);
       }
     }
 

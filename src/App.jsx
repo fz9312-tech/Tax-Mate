@@ -3282,10 +3282,9 @@ function Sidebar({ page, setPage, onLogout, flagCount, companyName }) {
 // ════════════════════════════════════════════════════════════
 //  DASHBOARD
 // ════════════════════════════════════════════════════════════
-function DashboardPage({ revenue, expenses, employees, timesheets, insurance, setPage, roster = [] }) {
+function DashboardPage({ revenue, expenses, employees, timesheets, insurance, setPage, roster = [], bizSettings = {}, updateSetting = () => {} }) {
   const [selMonth, setSelMonth] = useState(() => todayStr.slice(0,7));
   const [dashTab,  setDashTab]  = useState("today"); // "today" | "overview" | "cashflow" | "reminders"
-  const [reserveBump, setReserveBump] = useState(0); // bumped when owner updates BAS reserve
   const [y, m] = selMonth.split("-").map(Number);
 
   const prevMonth = () => { const d = new Date(y,m-2,1); setSelMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`); };
@@ -3330,7 +3329,7 @@ function DashboardPage({ revenue, expenses, employees, timesheets, insurance, se
   // ── Cash flow — daily view (includes wages) ──────────────
   const daysInMonth = new Date(y,m,0).getDate();
   // Wages shown on payday — default Thursday (day 4, Mon=1), stored in localStorage
-  const payDayOfWeek = parseInt(localStorage.getItem("mise_payday") || "4"); // 1=Mon…7=Sun
+  const payDayOfWeek = parseInt(bizSettings.payday || "4"); // 1=Mon…7=Sun
   const wagesByDate = {};
   tsMonth.forEach(t => {
     const wd = weekToDate(t.week); // Monday of the week
@@ -3359,13 +3358,9 @@ function DashboardPage({ revenue, expenses, employees, timesheets, insurance, se
 
   // ── Reminders ────────────────────────────────────────────
   const reminders = [];
-  // BAS due dates (28th after quarter end)
-  const [agentLodge, setAgentLodge] = useState(() => localStorage.getItem("mise_agent_lodge") === "yes");
-  const toggleAgentLodge = () => {
-    const next = !agentLodge;
-    setAgentLodge(next);
-    localStorage.setItem("mise_agent_lodge", next ? "yes" : "no");
-  };
+  // BAS due dates (28th after quarter end). agent_lodge persists in business settings.
+  const agentLodge = bizSettings.agent_lodge === true || bizSettings.agent_lodge === "yes";
+  const toggleAgentLodge = () => { updateSetting("agent_lodge", !agentLodge); };
 
   // BAS due dates — self: 28th after quarter end; agent: 28th of month after that
   const BAS_DUES = [
@@ -3616,8 +3611,7 @@ function DashboardPage({ revenue, expenses, employees, timesheets, insurance, se
         // Stored reserve (manually tracked by owner) + this quarter's accumulated profit buffer.
         // We use a pragmatic proxy: the owner's saved reserve target if set, else
         // we estimate from the recommended weekly set-aside × weeks elapsed this quarter.
-        const savedReserve = parseFloat(localStorage.getItem("mise_bas_reserve") || "0") || 0;
-        void reserveBump; // re-render dependency: bumped when owner updates reserve
+        const savedReserve = parseFloat(bizSettings.bas_reserve || "0") || 0;
         // Recommended total reserve = the full estimated bill (you should have 100% by due date)
         const recommendedReserve = estBill;
         // Weeks elapsed in quarter (for "on track" pacing)
@@ -3726,12 +3720,11 @@ function DashboardPage({ revenue, expenses, employees, timesheets, insurance, se
             <div style={{marginTop:16,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
               <button
                 onClick={() => {
-                  const cur = parseFloat(localStorage.getItem("mise_bas_reserve") || "0") || 0;
+                  const cur = parseFloat(bizSettings.bas_reserve || "0") || 0;
                   const input = window.prompt("How much have you set aside for your BAS tax bill?\n\nEnter the total amount currently saved in your tax reserve account:", cur || "");
                   if (input !== null) {
                     const val = parseFloat(input) || 0;
-                    localStorage.setItem("mise_bas_reserve", String(val));
-                    setReserveBump(b => b + 1); // force re-render to reflect new reserve
+                    updateSetting("bas_reserve", val); // persists to Supabase + re-renders
                   }
                 }}
                 style={{fontSize:12,fontWeight:700,fontFamily:"inherit",cursor:"pointer",padding:"8px 16px",borderRadius:9,border:`1px solid ${statusCol}`,background:C.surface,color:statusCol}}>
@@ -10590,7 +10583,7 @@ function TaxSaverPage({ expenses, setExpenses, employees, timesheets, setTimeshe
 // ════════════════════════════════════════════════════════════
 //  SETTINGS
 // ════════════════════════════════════════════════════════════
-function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, bizABN, setBizABN, bizId, currentRole, companyName = "", setCompanyName = () => {} }) {
+function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, bizABN, setBizABN, bizId, currentRole, companyName = "", setCompanyName = () => {}, bizSettings = {}, updateSetting = () => {} }) {
   const [saved, setSaved] = useState(false);
 
   // ── Change Password state ──────────────────────────────────────
@@ -10807,14 +10800,14 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
           <div className="fg">
             <label className="flbl">GST Registration Date</label>
             <input className="inp" type="date"
-              value={localStorage.getItem("mise_gst_reg")||""}
-              onChange={e => { localStorage.setItem("mise_gst_reg", e.target.value); showToast("Saved!"); }}/>
+              value={bizSettings.gst_reg || ""}
+              onChange={e => { updateSetting("gst_reg", e.target.value); showToast("Saved!"); }}/>
           </div>
           <div className="fg">
             <label className="flbl">BAS Lodgment Frequency</label>
             <select className="sel"
-              value={localStorage.getItem("mise_bas_freq")||"quarterly"}
-              onChange={e => { localStorage.setItem("mise_bas_freq", e.target.value); showToast("Saved!"); }}>
+              value={bizSettings.bas_freq || "quarterly"}
+              onChange={e => { updateSetting("bas_freq", e.target.value); showToast("Saved!"); }}>
               <option value="quarterly">Quarterly (most common)</option>
               <option value="monthly">Monthly</option>
               <option value="annual">Annually</option>
@@ -10823,8 +10816,8 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
           <div className="fg">
             <label className="flbl">Payday (for Cash Flow view)</label>
             <select className="sel"
-              value={localStorage.getItem("mise_payday")||"4"}
-              onChange={e => { localStorage.setItem("mise_payday", e.target.value); showToast("Saved!"); }}>
+              value={bizSettings.payday || "4"}
+              onChange={e => { updateSetting("payday", e.target.value); showToast("Saved!"); }}>
               <option value="1">Monday</option>
               <option value="2">Tuesday</option>
               <option value="3">Wednesday</option>
@@ -10836,14 +10829,14 @@ function SettingsPage({ industry, setIndustry, showToast, bizName, setBizName, b
           <div className="fg">
             <label className="flbl">Owner / Contact Email</label>
             <input className="inp" type="email" placeholder="owner@mybistro.com.au"
-              value={localStorage.getItem("mise_owner_email")||""}
-              onChange={e => { localStorage.setItem("mise_owner_email", e.target.value); showToast("Saved!"); }}/>
+              value={bizSettings.owner_email || ""}
+              onChange={e => { updateSetting("owner_email", e.target.value); showToast("Saved!"); }}/>
           </div>
           <div className="fg">
             <label className="flbl">State</label>
             <select className="sel"
-              value={localStorage.getItem("mise_state")||"NSW"}
-              onChange={e => { localStorage.setItem("mise_state", e.target.value); showToast("Saved!"); }}>
+              value={bizSettings.state || "NSW"}
+              onChange={e => { updateSetting("state", e.target.value); showToast("Saved!"); }}>
               {["NSW","VIC","QLD","WA","SA","TAS","ACT","NT"].map(s => <option key={s}>{s}</option>)}
             </select>
           </div>
@@ -13041,10 +13034,28 @@ export default function App() {
   // ── Business identity ─────────────────────────────────────
   const [bizName, setBizNameRaw] = useState(() => localStorage.getItem("mise_biz_name") || "My Restaurant");
   const [bizABN,  setBizABNRaw]  = useState(() => localStorage.getItem("mise_biz_abn")  || "");
-  // Company/brand name — shown in the sidebar top-left (replaces "Mise" branding).
-  // Separate from bizName (the trading/venue name used on BAS, payslips, reports).
-  // Scoped by bizId so each business keeps its own brand name and nothing leaks.
-  const [companyName, setCompanyNameRaw] = useState("");
+  // ── Business settings (stored in businesses.settings JSONB, scoped per-business) ──
+  // All loose Settings fields live here so they follow the ACCOUNT (via Supabase),
+  // not the browser (localStorage). This is what makes settings persist for the
+  // same account and stay isolated between accounts — no cache-clearing tricks.
+  // Fields: company_name, gst_reg, bas_freq, payday, agent_lodge, owner_email, state,
+  //         bas_reserve, week_budget
+  const [bizSettings, setBizSettings] = useState({});
+  // companyName is derived from settings for convenience (used by Sidebar)
+  const companyName = bizSettings.company_name || "";
+
+  // Update a single setting → optimistic state + persist whole JSONB to Supabase
+  const updateSetting = (key, value) => {
+    setBizSettings(prev => {
+      const next = { ...prev, [key]: value };
+      if (bizId && window._supabase) {
+        sb().from("businesses").update({ settings: next }).eq("id", bizId)
+          .then(({ error }) => { if (error) console.warn("settings save error:", error.message); });
+      }
+      return next;
+    });
+  };
+
   const setBizName = v => {
     setBizNameRaw(v); localStorage.setItem("mise_biz_name", v);
     if (bizId) sb().from("businesses").update({ name: v }).eq("id", bizId).then(() => {});
@@ -13053,16 +13064,7 @@ export default function App() {
     setBizABNRaw(v); localStorage.setItem("mise_biz_abn", v);
     if (bizId) sb().from("businesses").update({ abn: v }).eq("id", bizId).then(() => {});
   };
-  const setCompanyName = v => {
-    setCompanyNameRaw(v);
-    if (bizId) { try { localStorage.setItem(`mise_company_name_${bizId}`, v); } catch {} }
-  };
-  // Load this business's company name whenever the active business changes
-  React.useEffect(() => {
-    if (!bizId) { setCompanyNameRaw(""); return; }
-    try { setCompanyNameRaw(localStorage.getItem(`mise_company_name_${bizId}`) || ""); }
-    catch { setCompanyNameRaw(""); }
-  }, [bizId]);
+  const setCompanyName = v => updateSetting("company_name", v);
 
   // ── Auth: detect session on load, handle deep-link magic-link ──
   React.useEffect(() => {
@@ -13086,22 +13088,9 @@ export default function App() {
   }, []);
 
 const bootFromSession = async (session) => {
-    // ── Clear per-business cached settings BEFORE loading the new account ──
-    // These keys are NOT scoped by bizId and would otherwise leak between accounts
-    // (e.g. company name, ABN, GST date, BAS reserve from the previous login).
-    // Data tables (revenue/expenses/etc) are handled separately by usePersisted's
-    // bizId-scoped keys; this covers the loose Settings/identity keys.
-    try {
-      const PER_BIZ_KEYS = [
-        "mise_biz_name", "mise_biz_abn", "mise_company_name", "mise_gst_reg",
-        "mise_bas_freq", "mise_bas_reserve", "mise_payday", "mise_agent_lodge",
-        "mise_week_budget", "mise_cat_rules", "mise_fav_templates",
-        "mise_recurring", "mise_recur_dismissed", "mise_cat_usage", "mise_industry",
-      ];
-      PER_BIZ_KEYS.forEach(k => localStorage.removeItem(k));
-    } catch {}
-    // Reset in-memory identity so stale values don't flash before Supabase loads
-    setCompanyNameRaw("");
+    // Reset in-memory settings so the previous account's values never flash.
+    // Real values load from businesses.settings (Supabase) in Step C below.
+    setBizSettings({});
     setBizNameRaw("My Restaurant");
     setBizABNRaw("");
 
@@ -13159,18 +13148,19 @@ const bootFromSession = async (session) => {
       // Inner select pulls business details via FK; outer join needed because
       // RLS will already constrain access rows to this user
       const { data, error } = await sb().from("business_access")
-        .select("role, business_id, businesses!inner(id, name, abn, industry)")
+        .select("role, business_id, businesses!inner(id, name, abn, industry, settings)")
         .order("granted_at", { ascending: true });
       if (error) {
         console.warn("bootFromSession: fetchAccessible failed", error);
         return null;
       }
-      // Normalise shape: [{id, name, abn, industry, role}, ...]
+      // Normalise shape: [{id, name, abn, industry, role, settings}, ...]
       return (data || []).map(row => ({
         id:       row.businesses.id,
         name:     row.businesses.name,
         abn:      row.businesses.abn,
         industry: row.businesses.industry,
+        settings: row.businesses.settings || {},
         role:     row.role,
       }));
     };
@@ -13207,6 +13197,7 @@ const bootFromSession = async (session) => {
       setBizNameRaw(first.name || "My Restaurant");
       setBizABNRaw(first.abn  || "");
       setIndustryRaw(first.industry || "restaurant");
+      setBizSettings(first.settings || {});  // load this business's settings from Supabase
       localStorage.setItem("mise_biz_name", first.name || "My Restaurant");
       localStorage.setItem("mise_biz_abn",  first.abn  || "");
       // Persist the active bizId so next-load uses the same one (Step 4 will let user pick)
@@ -13252,6 +13243,7 @@ const bootFromSession = async (session) => {
     setBizNameRaw(target.name || "");
     setBizABNRaw(target.abn || "");
     setIndustryRaw(target.industry || "restaurant");
+    setBizSettings(target.settings || {});  // load target business's settings
     localStorage.setItem("mise_active_biz_id", target.id);
     localStorage.setItem("mise_biz_name", target.name || "");
     localStorage.setItem("mise_biz_abn",  target.abn  || "");
@@ -13405,7 +13397,7 @@ const bootFromSession = async (session) => {
             </div>
           )}
 
-          {page === "dashboard"      && <DashboardPage revenue={revenue} expenses={expenses} employees={employees} timesheets={timesheets} insurance={insurance} setPage={setPage} bizName={bizName} roster={roster}/>}
+          {page === "dashboard"      && <DashboardPage revenue={revenue} expenses={expenses} employees={employees} timesheets={timesheets} insurance={insurance} setPage={setPage} bizName={bizName} roster={roster} bizSettings={bizSettings} updateSetting={updateSetting}/>}
           {page === "revenue"        && <RevenuePage   revenue={revenue}   setRevenue={setRevenue}   showToast={showToast}/>}
           {page === "expenses"       && <ExpensesPage  expenses={expenses} setExpenses={setExpenses} showToast={showToast} industry={industry} dismissed={dismissedAlerts} setDismissed={setDismissedAlerts}/>}
           {page === "wages"          && <WagesPage     employees={employees} setEmployees={setEmployees} timesheets={timesheets} setTimesheets={setTimesheets} roster={roster} setRoster={setRoster} leave={leave} setLeave={setLeave} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN} dayWorkers={dayWorkers} setDayWorkers={setDayWorkers} revenue={revenue}/>}
@@ -13416,7 +13408,7 @@ const bootFromSession = async (session) => {
           {page === "documents"      && <DocumentsPage documents={documents} setDocuments={setDocuments} employees={employees} showToast={showToast}/>}
           {page === "bassummary"     && <BASSummaryPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} basHistory={basHistory} setBasHistory={setBasHistory} showToast={showToast} bizName={bizName} bizABN={bizABN} ias={ias}/>}
           {page === "reports"        && <ReportsPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} inventory={inventory} setInventory={setInventory} bizName={bizName} bizABN={bizABN}/>}
-          {page === "settings"       && <SettingsPage industry={industry} setIndustry={setIndustry} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN} bizId={bizId} currentRole={currentRole} companyName={companyName} setCompanyName={setCompanyName}/>}
+          {page === "settings"       && <SettingsPage industry={industry} setIndustry={setIndustry} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN} bizId={bizId} currentRole={currentRole} companyName={companyName} setCompanyName={setCompanyName} bizSettings={bizSettings} updateSetting={updateSetting}/>}
         </main>
         <BottomTabBar page={page} setPage={setPage} flagCount={flagCount}/>
         {toast && <Toast msg={toast} onDone={() => setToast(null)}/>}

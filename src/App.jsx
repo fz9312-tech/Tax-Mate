@@ -3087,17 +3087,19 @@ function AuthPage({ onLogin }) {
       } else if (mode === "signup") {
         const { data, error } = await window._supabase.auth.signUp({
           email, password,
-          options: { data: { account_type: accountType } },
+          options: { data: {
+            account_type: accountType,
+            // Owner's chosen business name — bootFromSession Step B uses this when
+            // it creates BOTH the businesses row AND the business_access row together.
+            // (Creating only the businesses row here caused "No active business":
+            //  fetchAccessibleBusinesses reads business_access, which stayed empty.)
+            biz_name: accountType === "owner" ? (bizName || "My Restaurant") : "",
+          } },
         });
         if (error) throw error;
-        // Only business owners get an auto-created business.
-        // Accountants start empty and gain access only via invitations.
-        if (data.user && accountType === "owner") {
-          await window._supabase.from("businesses").insert({
-            owner_id: data.user.id,
-            name: bizName || "My Restaurant",
-          });
-        }
+        // NOTE: we intentionally do NOT insert into `businesses` here.
+        // bootFromSession creates business + business_access atomically so the
+        // two tables never get out of sync.
         onLogin();
       } else {
         const { error } = await window._supabase.auth.signInWithPassword({ email, password });
@@ -13125,8 +13127,9 @@ const bootFromSession = async (session) => {
     // Step B: first-time OWNER → create their first business.
     // Accountants intentionally start with no business; they gain access via invitations only.
     if (accountType !== "accountant" && businesses !== null && businesses.length === 0) {
+      const signupBizName = session?.user?.user_metadata?.biz_name || "My Restaurant";
       const { data: newBiz, error: insertError } = await sb().from("businesses")
-        .insert({ owner_id: session.user.id, name: "My Restaurant" })
+        .insert({ owner_id: session.user.id, name: signupBizName })
         .select().single();
 
       if (newBiz) {

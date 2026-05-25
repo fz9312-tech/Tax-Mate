@@ -3071,6 +3071,7 @@ function AuthPage({ onLogin }) {
   const [email,   setEmail]   = useState("");
   const [password,setPassword]= useState("");
   const [bizName, setBizName] = useState("");
+  const [accountType, setAccountType] = useState("owner"); // "owner" | "accountant"
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState("");
 
@@ -3084,10 +3085,14 @@ function AuthPage({ onLogin }) {
         if (error) throw error;
         setMode("sent");
       } else if (mode === "signup") {
-        const { data, error } = await window._supabase.auth.signUp({ email, password });
+        const { data, error } = await window._supabase.auth.signUp({
+          email, password,
+          options: { data: { account_type: accountType } },
+        });
         if (error) throw error;
-        // Create business row for new user
-        if (data.user) {
+        // Only business owners get an auto-created business.
+        // Accountants start empty and gain access only via invitations.
+        if (data.user && accountType === "owner") {
           await window._supabase.from("businesses").insert({
             owner_id: data.user.id,
             name: bizName || "My Restaurant",
@@ -3127,10 +3132,42 @@ function AuthPage({ onLogin }) {
 
         <div className="a-form">
           {mode === "signup" && (
-            <div className="fg">
-              <label className="flbl">Business Name</label>
-              <input className="inp" placeholder="e.g. The Local Café" value={bizName} onChange={e => setBizName(e.target.value)}/>
-            </div>
+            <>
+              {/* Account type selector */}
+              <div className="fg">
+                <label className="flbl">I am a…</label>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                  <button type="button" onClick={() => setAccountType("owner")} style={{
+                    padding:"12px 10px", borderRadius:10, cursor:"pointer", fontFamily:"inherit", textAlign:"center",
+                    border:`2px solid ${accountType==="owner"?C.accent:C.border}`,
+                    background: accountType==="owner" ? "rgba(143,203,114,.10)" : C.surface, transition:"all .15s",
+                  }}>
+                    <div style={{ fontSize:22, marginBottom:4 }}>🏪</div>
+                    <div style={{ fontWeight:700, fontSize:12.5, color: accountType==="owner"?C.accent:C.text }}>Business Owner</div>
+                    <div style={{ fontSize:10, color:C.muted, marginTop:2 }}>I run a venue</div>
+                  </button>
+                  <button type="button" onClick={() => setAccountType("accountant")} style={{
+                    padding:"12px 10px", borderRadius:10, cursor:"pointer", fontFamily:"inherit", textAlign:"center",
+                    border:`2px solid ${accountType==="accountant"?C.blue:C.border}`,
+                    background: accountType==="accountant" ? "rgba(64,156,255,.10)" : C.surface, transition:"all .15s",
+                  }}>
+                    <div style={{ fontSize:22, marginBottom:4 }}>📊</div>
+                    <div style={{ fontWeight:700, fontSize:12.5, color: accountType==="accountant"?C.blue:C.text }}>Accountant</div>
+                    <div style={{ fontSize:10, color:C.muted, marginTop:2 }}>I manage clients</div>
+                  </button>
+                </div>
+              </div>
+              {accountType === "owner" ? (
+                <div className="fg">
+                  <label className="flbl">Business Name</label>
+                  <input className="inp" placeholder="e.g. The Local Café" value={bizName} onChange={e => setBizName(e.target.value)}/>
+                </div>
+              ) : (
+                <div style={{ background:"rgba(64,156,255,.08)", border:`1px solid rgba(64,156,255,.25)`, borderRadius:9, padding:"11px 13px", fontSize:11.5, color:C.muted, lineHeight:1.6 }}>
+                  📋 As an accountant, you don't create a business. Your restaurant clients will invite you to view their data. Once invited, their venues appear here automatically.
+                </div>
+              )}
+            </>
           )}
           <div className="fg">
             <label className="flbl">Email</label>
@@ -12874,10 +12911,20 @@ export default function App() {
   //   The entire array is stored as a single JSONB value.
   //   Fallback: if Supabase unavailable, silently falls back to localStorage.
   const usePersisted = (table, seed) => {
-    const lsKey = `mise_${table}`;
+    // ── localStorage key MUST be scoped by business ──
+    // Without bizId in the key, logging out of account A and into account B
+    // makes B read A's cached data on first render (cross-account leak).
+    // We compute the key from the CURRENT bizId at access time, not once.
+    const lsKeyFor = (id) => id ? `mise_${table}_${id}` : `mise_${table}__none`;
     const [val, setVal] = useState(() => {
-      try { const r = localStorage.getItem(lsKey); return r ? JSON.parse(r) : seed; }
-      catch { return seed; }
+      // On first render bizId may not be known yet — start from seed empty,
+      // never from a stale global cache. Supabase load (below) fills real data.
+      const emptySeed = Array.isArray(seed) ? [] : (typeof seed === "string" ? seed : {});
+      try {
+        const k = lsKeyFor(bizId);
+        const r = bizId ? localStorage.getItem(k) : null;
+        return r ? JSON.parse(r) : emptySeed;
+      } catch { return emptySeed; }
     });
     // Use a ref so the setter always has the latest bizId without stale closure
     const bizIdRef = React.useRef(bizId);
@@ -12893,31 +12940,38 @@ export default function App() {
     const isViewOnlyRef = React.useRef(false);
     React.useEffect(() => { isViewOnlyRef.current = currentRole === "accountant_view"; }, [currentRole]);
 
-    // Load from Supabase once bizId is known
+    // Load from Supabase whenever bizId changes (login, account switch).
+    // CRITICAL: clear stale state immediately when bizId changes, then load fresh,
+    // so a new account never momentarily shows the previous account's data.
     React.useEffect(() => {
-      if (!bizId) return;
+      const emptySeed = Array.isArray(seed) ? [] : (typeof seed === "string" ? seed : {});
+      if (!bizId) { setVal(emptySeed); return; }
+      // Reset to empty before the async load resolves (prevents flash of old data)
+      const cachedKey = lsKeyFor(bizId);
+      try {
+        const cached = localStorage.getItem(cachedKey);
+        setVal(cached ? JSON.parse(cached) : emptySeed);
+      } catch { setVal(emptySeed); }
+
       sb().from(table).select("data").eq("business_id", bizId).limit(1)
         .then(({ data, error }) => {
           if (error) { console.warn("Supabase read error:", table, error.message); return; }
           if (data && data.length > 0) {
             setVal(data[0].data);
-            try { localStorage.setItem(lsKey, JSON.stringify(data[0].data)); } catch {}
+            try { localStorage.setItem(cachedKey, JSON.stringify(data[0].data)); } catch {}
           } else {
-            // No data for this user — start fresh
-            const empty = Array.isArray(seed) ? [] : (typeof seed === "string" ? seed : {});
-            setVal(empty);
-            try { localStorage.setItem(lsKey, JSON.stringify(empty)); } catch {}
+            // No data for this business — start fresh
+            setVal(emptySeed);
+            try { localStorage.setItem(cachedKey, JSON.stringify(emptySeed)); } catch {}
           }
         });
     }, [bizId]);
 
     const set = v => {
       // ── HARD GUARD: view-only accountants cannot write ──
-      // This prevents the "ghost entries that disappear" UX problem where
-      // React state updates but Supabase RLS rejects the write.
       if (isViewOnlyRef.current) {
         showToast("View only — ask the owner to make changes");
-        return; // Do NOT update state; do NOT write Supabase
+        return;
       }
       setVal(prev => {
         let next = typeof v === "function" ? v(prev) : v;
@@ -12925,10 +12979,10 @@ export default function App() {
         if (AUDITED_TABLES.includes(table) && Array.isArray(next)) {
           next = auditReconcile(prev, next, userEmailRef.current);
         }
-        // Write localStorage immediately
-        try { localStorage.setItem(lsKey, JSON.stringify(next)); } catch {}
-        // Write Supabase — use ref to get current bizId
+        // Write localStorage immediately (scoped by current bizId)
         const currentBizId = bizIdRef.current;
+        try { localStorage.setItem(lsKeyFor(currentBizId), JSON.stringify(next)); } catch {}
+        // Write Supabase
         if (currentBizId && window._supabase) {
           sb().from(table)
             .upsert({ business_id: currentBizId, data: next }, { onConflict: "business_id" })
@@ -12982,7 +13036,11 @@ export default function App() {
 
     const { data: { subscription } } = sb().auth.onAuthStateChange((_event, session) => {
       if (session) bootFromSession(session);
-      else { setScreen("landing"); setBizId(null); }
+      else {
+        // Clear all cached business data on logout so the next account starts clean
+        try { Object.keys(localStorage).forEach(k => { if (k.startsWith("mise_")) localStorage.removeItem(k); }); } catch {}
+        setScreen("landing"); setBizId(null); setCurrentUserEmail(""); setUserBusinesses([]);
+      }
     });
 
     return () => subscription.unsubscribe();
@@ -13061,9 +13119,12 @@ const bootFromSession = async (session) => {
 
     let businesses = await fetchAccessibleBusinesses();
 
-    // Step B: first-time user → create their first business (owner role auto-added by trigger
-    // or by our INSERT-then-INSERT pattern below; since no DB trigger exists yet, do it manually)
-    if (businesses !== null && businesses.length === 0) {
+    // Account type from signup metadata — accountants never auto-create a business.
+    const accountType = session?.user?.user_metadata?.account_type || "owner";
+
+    // Step B: first-time OWNER → create their first business.
+    // Accountants intentionally start with no business; they gain access via invitations only.
+    if (accountType !== "accountant" && businesses !== null && businesses.length === 0) {
       const { data: newBiz, error: insertError } = await sb().from("businesses")
         .insert({ owner_id: session.user.id, name: "My Restaurant" })
         .select().single();
@@ -13111,6 +13172,16 @@ const bootFromSession = async (session) => {
       // Persist the active bizId so next-load uses the same one (Step 4 will let user pick)
       localStorage.setItem("mise_active_biz_id", first.id);
     } else {
+      // No business available. For accountants this is the normal "awaiting invitation"
+      // state; for owners it's an error (their auto-create failed).
+      if (accountType === "accountant") {
+        setUserBusinesses([]);
+        setBizId(null);
+        setCurrentRole("accountant_view");
+        setDbReady(true);
+        setScreen("accountant-empty");
+        return;
+      }
       console.error("bootFromSession: could not resolve any business for user", session.user.id);
     }
     setDbReady(true);
@@ -13165,6 +13236,36 @@ const bootFromSession = async (session) => {
 
   if (screen === "landing") return (<><style>{CSS}</style><LandingPage onGo={() => setScreen("auth")}/></>);
   if (screen === "auth")    return (<><style>{CSS}</style><AuthPage onLogin={() => {}}/></>);
+  // Accountant with no client invitations yet — friendly waiting state
+  if (screen === "accountant-empty") return (
+    <><style>{CSS}</style>
+    <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:C.bg, padding:20 }}>
+      <div style={{ maxWidth:440, width:"100%", textAlign:"center", background:C.surface, border:`1px solid ${C.border}`, borderRadius:18, padding:"40px 32px" }}>
+        <div style={{ fontSize:48, marginBottom:16 }}>📊</div>
+        <div style={{ fontSize:22, fontWeight:700, marginBottom:10, fontFamily:"'Fraunces',serif", color:C.text }}>Welcome to Mise</div>
+        <div style={{ fontSize:13.5, color:C.muted, lineHeight:1.7, marginBottom:24 }}>
+          Your accountant account is ready. You don't have any clients yet — when a restaurant owner invites you to view their books, their business will appear here automatically.
+        </div>
+        <div style={{ background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:11, padding:"16px 18px", textAlign:"left", marginBottom:24 }}>
+          <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".8px", marginBottom:10 }}>How to get access</div>
+          <div style={{ fontSize:12.5, color:C.text, lineHeight:1.9 }}>
+            1. Ask your client to log in to Mise<br/>
+            2. They go to <strong>Settings → Team Access</strong><br/>
+            3. They enter <strong style={{ color:C.blue }}>{currentUserEmail || "your email"}</strong><br/>
+            4. Refresh this page — their venue appears
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:10 }}>
+          <button className="btn-g" style={{ flex:1 }} onClick={() => window.location.reload()}>↻ Refresh</button>
+          <button className="btn-g" style={{ flex:1 }} onClick={async () => {
+            if (window._supabase) await sb().auth.signOut();
+            try { Object.keys(localStorage).forEach(k => { if (k.startsWith("mise_")) localStorage.removeItem(k); }); } catch {}
+            setScreen("landing"); setBizId(null); setCurrentUserEmail(""); setUserBusinesses([]);
+          }}>Log out</button>
+        </div>
+      </div>
+    </div></>
+  );
   // Loading screen while Supabase fetches data
   if (!dbReady && bizId) return (
     <><style>{CSS}</style>
@@ -13203,7 +13304,7 @@ const bootFromSession = async (session) => {
         </div>
       )}
       <div className="layout">
-        <Sidebar page={page} setPage={setPage} onLogout={async () => { if(window._supabase) await sb().auth.signOut(); setScreen("landing"); setBizId(null); }} flagCount={flagCount} industry={industry}/>
+        <Sidebar page={page} setPage={setPage} onLogout={async () => { if(window._supabase) await sb().auth.signOut(); try { Object.keys(localStorage).forEach(k => { if (k.startsWith("mise_")) localStorage.removeItem(k); }); } catch {} setScreen("landing"); setBizId(null); setCurrentUserEmail(""); setUserBusinesses([]); }} flagCount={flagCount} industry={industry}/>
         <main className="main">
           {/* ── Phase 1 Step 4: Client Switcher (only for users with ≥2 businesses) ── */}
           {userBusinesses.length > 1 && (

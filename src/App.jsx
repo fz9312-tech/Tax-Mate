@@ -12273,7 +12273,7 @@ function IASPage({ timesheets, employees, ias, setIas, showToast, bizName, bizAB
 // ════════════════════════════════════════════════════════════
 //  BAS SUMMARY GENERATOR PAGE
 // ════════════════════════════════════════════════════════════
-function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, documents, basHistory, setBasHistory, showToast, bizName, bizABN, ias = [] }) {
+function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, documents, basHistory, setBasHistory, showToast, bizName, bizABN, ias = [], currentRole = "owner", currentUserEmail = "" }) {
   const [selQ,    setSelQ]    = useState(BAS_QUARTERS[0]);
   const [print,   setPrint]   = useState(false);
   const [tab,     setTab]     = useState("summary"); // "summary" | "history"
@@ -12330,6 +12330,79 @@ function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, d
       : h
     ));
     showToast(`Status updated to ${STATUS_CFG[status].lbl}`);
+  };
+
+  // ── Read-only flag — view-only accountants cannot change BAS status ──
+  const isViewOnly = currentRole === "accountant_view";
+
+  // ── Quick status actions (used by the prominent status card at top of Summary) ──
+  // These auto-stamp the current user's email + timestamp; no manual entry needed.
+  // If no history entry yet for this quarter, create one and apply the status.
+  const upsertHistoryWithStatus = (status, extra = {}) => {
+    const now = new Date().toISOString();
+    if (existingEntry) {
+      setBasHistory(p => p.map(h => h.id === existingEntry.id
+        ? { ...h, status, ...extra,
+            reviewedBy: status === "reviewed" || status === "finalised" ? (currentUserEmail || h.reviewedBy) : h.reviewedBy,
+            reviewedAt: status === "reviewed" || status === "finalised" ? now : h.reviewedAt,
+            lodgedBy:   status === "lodged"  ? (currentUserEmail || h.lodgedBy) : h.lodgedBy,
+            lodgedDate: status === "lodged"  ? todayStr : h.lodgedDate,
+          }
+        : h
+      ));
+    } else {
+      const newEntry = {
+        id:          Date.now(),
+        quarter:     selQ,
+        status,
+        savedDate:   todayStr,
+        reviewedBy:  status === "reviewed" || status === "finalised" ? currentUserEmail : "",
+        reviewedAt:  status === "reviewed" || status === "finalised" ? now : null,
+        lodgedDate:  status === "lodged" ? todayStr : null,
+        lodgedBy:    status === "lodged" ? currentUserEmail : "",
+        notes:       "",
+        totalRev:    d.totalRev, gstColl: d.gstColl, gstCreds: d.gstCreds,
+        netGST:      d.netGST,  totalPayg: d.totalPayg, totalSuper: d.totalSuper,
+        totalWages:  d.totalWages, estBAS: d.estBAS,
+        ...extra,
+      };
+      setBasHistory(p => [newEntry, ...p]);
+    }
+  };
+
+  const markReviewed = () => {
+    if (isViewOnly) return;
+    upsertHistoryWithStatus("finalised");
+    showToast(`${selQ} marked as reviewed`);
+  };
+
+  const markLodged = () => {
+    if (isViewOnly) return;
+    const receipt = window.prompt(
+      `Mark ${selQ} as lodged with the ATO?\n\nEnter the ATO receipt number (optional but recommended):`,
+      existingEntry?.atoReceipt || ""
+    );
+    if (receipt === null) return; // user cancelled
+    upsertHistoryWithStatus("lodged", { atoReceipt: receipt.trim() });
+    showToast(`${selQ} marked as lodged`);
+  };
+
+  const undoStatus = () => {
+    if (isViewOnly || !existingEntry) return;
+    // Step down: lodged → finalised, finalised → draft, draft → (just clear timestamps)
+    let nextStatus;
+    if (existingEntry.status === "lodged")    nextStatus = "finalised";
+    else if (existingEntry.status === "finalised") nextStatus = "draft";
+    else nextStatus = "draft";
+    setBasHistory(p => p.map(h => h.id === existingEntry.id
+      ? {
+          ...h, status: nextStatus,
+          lodgedDate: nextStatus === "lodged" ? h.lodgedDate : null,
+          lodgedBy:   nextStatus === "lodged" ? h.lodgedBy   : "",
+          atoReceipt: nextStatus === "lodged" ? h.atoReceipt : "",
+        }
+      : h));
+    showToast(`Status reverted to ${STATUS_CFG[nextStatus].lbl}`);
   };
 
   const deleteEntry = id => {
@@ -12414,13 +12487,83 @@ function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, d
           ))}
 
           {/* Status badge if already in history */}
-          {existingEntry && (() => {
-            const sc = STATUS_CFG[existingEntry.status];
+          {/* ── BAS Lodgment Status Card (P0 #2 — accountant workflow) ── */}
+          {(() => {
+            const status = existingEntry?.status || "draft";
+            const sc = STATUS_CFG[status];
+            const fmtTs = (ts) => {
+              if (!ts) return "";
+              try { return new Date(ts).toLocaleString("en-AU", { day:"2-digit", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit" }); }
+              catch { return ts; }
+            };
             return (
-              <div style={{ background:sc.bg, border:`1px solid ${sc.border}`, borderRadius:9, padding:"9px 14px", marginBottom:14, display:"flex", alignItems:"center", gap:10 }}>
-                <span style={{ fontSize:11, fontWeight:700, color:sc.col }}>{sc.lbl}</span>
-                <span style={{ fontSize:11, color:C.muted }}>Saved {existingEntry.savedDate}{existingEntry.lodgedDate ? ` · Lodged ${existingEntry.lodgedDate}` : ""}</span>
-                {existingEntry.notes && <span style={{ fontSize:11, color:C.muted, fontStyle:"italic" }}>· {existingEntry.notes}</span>}
+              <div style={{
+                background: sc.bg, border:`1.5px solid ${sc.border}`, borderRadius:14,
+                padding:"16px 20px", marginBottom:16,
+                display:"flex", alignItems:"center", gap:16, flexWrap:"wrap"
+              }}>
+                {/* Status icon + label */}
+                <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+                  <div style={{ width:42, height:42, borderRadius:"50%", background:C.bg, border:`2px solid ${sc.col}`,
+                    display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, flexShrink:0 }}>
+                    {status === "lodged" ? "✅" : status === "finalised" ? "🔵" : "🟡"}
+                  </div>
+                  <div>
+                    <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                      <span style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".8px" }}>BAS Lodgment Status</span>
+                      <span style={{ fontSize:11, fontWeight:800, color:sc.col, background:C.bg, padding:"2px 10px", borderRadius:20, border:`1px solid ${sc.border}` }}>
+                        {status === "finalised" ? "REVIEWED" : status === "lodged" ? "LODGED WITH ATO" : "DRAFT"}
+                      </span>
+                    </div>
+                    <div style={{ fontSize:11.5, color:C.muted, marginTop:5, lineHeight:1.5 }}>
+                      {status === "draft" && "Not yet reviewed. Numbers above are live estimates."}
+                      {status === "finalised" && existingEntry?.reviewedBy && (
+                        <>Reviewed by <strong style={{color:C.text}}>{existingEntry.reviewedBy}</strong>{existingEntry.reviewedAt && <> · {fmtTs(existingEntry.reviewedAt)}</>}</>
+                      )}
+                      {status === "finalised" && !existingEntry?.reviewedBy && "Reviewed and ready to lodge."}
+                      {status === "lodged" && (
+                        <>
+                          Lodged with ATO{existingEntry?.lodgedDate && ` on ${existingEntry.lodgedDate}`}
+                          {existingEntry?.lodgedBy && <> by <strong style={{color:C.text}}>{existingEntry.lodgedBy}</strong></>}
+                          {existingEntry?.atoReceipt && (
+                            <><br/>ATO receipt: <span className="mono" style={{ color:C.text, fontWeight:600 }}>{existingEntry.atoReceipt}</span></>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Action buttons */}
+                <div style={{ display:"flex", gap:8, marginLeft:"auto", flexWrap:"wrap" }}>
+                  {status === "draft" && (
+                    <button className="btn" disabled={isViewOnly} onClick={markReviewed}
+                      style={{ fontSize:12, padding:"8px 14px", opacity: isViewOnly ? .55 : 1, cursor: isViewOnly ? "not-allowed" : "pointer" }}>
+                      ✓ Mark as Reviewed
+                    </button>
+                  )}
+                  {status === "finalised" && (
+                    <>
+                      <button className="btn-g" disabled={isViewOnly} onClick={undoStatus}
+                        style={{ fontSize:12, padding:"8px 14px", opacity: isViewOnly ? .55 : 1, cursor: isViewOnly ? "not-allowed" : "pointer" }}>
+                        ↶ Undo Review
+                      </button>
+                      <button className="btn" disabled={isViewOnly} onClick={markLodged}
+                        style={{ fontSize:12, padding:"8px 14px", opacity: isViewOnly ? .55 : 1, cursor: isViewOnly ? "not-allowed" : "pointer" }}>
+                        ✓ Mark as Lodged
+                      </button>
+                    </>
+                  )}
+                  {status === "lodged" && (
+                    <button className="btn-g" disabled={isViewOnly} onClick={undoStatus}
+                      style={{ fontSize:12, padding:"8px 14px", opacity: isViewOnly ? .55 : 1, cursor: isViewOnly ? "not-allowed" : "pointer" }}>
+                      ↶ Undo Lodgment
+                    </button>
+                  )}
+                  {isViewOnly && (
+                    <span style={{ fontSize:10.5, color:C.muted, alignSelf:"center", fontStyle:"italic" }}>View only — ask editor or owner to change status</span>
+                  )}
+                </div>
               </div>
             );
           })()}
@@ -13752,7 +13895,7 @@ const bootFromSession = async (session) => {
           {page === "taxsaver"       && <TaxSaverPage  expenses={expenses} setExpenses={setExpenses} employees={employees} timesheets={timesheets} setTimesheets={setTimesheets} showToast={showToast}/>}
           {page === "ias"            && <IASPage        timesheets={timesheets} employees={employees} ias={ias} setIas={setIas} showToast={showToast} bizName={bizName} bizABN={bizABN}/>}
           {page === "documents"      && <DocumentsPage documents={documents} setDocuments={setDocuments} employees={employees} showToast={showToast}/>}
-          {page === "bassummary"     && <BASSummaryPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} basHistory={basHistory} setBasHistory={setBasHistory} showToast={showToast} bizName={bizName} bizABN={bizABN} ias={ias}/>}
+          {page === "bassummary"     && <BASSummaryPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} basHistory={basHistory} setBasHistory={setBasHistory} showToast={showToast} bizName={bizName} bizABN={bizABN} ias={ias} currentRole={currentRole} currentUserEmail={currentUserEmail}/>}
           {page === "reports"        && <ReportsPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} inventory={inventory} setInventory={setInventory} bizName={bizName} bizABN={bizABN}/>}
           {page === "settings"       && <SettingsPage industry={industry} setIndustry={setIndustry} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN} bizId={bizId} currentRole={currentRole} companyName={companyName} setCompanyName={setCompanyName} bizSettings={bizSettings} updateSetting={updateSetting}/>}
         </main>

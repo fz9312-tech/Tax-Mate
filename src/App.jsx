@@ -3228,6 +3228,158 @@ function LandingPage({ onGo }) {
 }
 
 // ════════════════════════════════════════════════════════════
+//  ACCOUNTANT HUB — Client list home for accountant users
+//  Shows all clients the accountant has been invited to, with
+//  upcoming BAS deadlines and quick access to each client's data.
+// ════════════════════════════════════════════════════════════
+function AccountantHubPage({ userBusinesses, currentUserEmail, switchBusiness, onLogout }) {
+  // ── Compute upcoming BAS deadlines across all clients ──
+  // Standard ATO quarterly BAS dates (self-lodge):
+  //   Q1 (Jul–Sep) → 28 Oct,  Q2 (Oct–Dec) → 28 Feb,
+  //   Q3 (Jan–Mar) → 28 Apr,  Q4 (Apr–Jun) → 28 Jul
+  const today = new Date();
+  const todayISO = today.toISOString().slice(0,10);
+  const upcomingDeadlines = [];
+  const year = today.getFullYear();
+  const ranges = [
+    { lbl: "Q1 FY"+(year+1), due: `${year}-10-28` },
+    { lbl: "Q2 FY"+(year+1), due: `${year+1}-02-28` },
+    { lbl: "Q3 FY"+(year+1), due: `${year+1}-04-28` },
+    { lbl: "Q4 FY"+(year+1), due: `${year+1}-07-28` },
+    { lbl: "Q1 FY"+year,     due: `${year-1}-10-28` },
+    { lbl: "Q2 FY"+year,     due: `${year}-02-28` },
+    { lbl: "Q3 FY"+year,     due: `${year}-04-28` },
+    { lbl: "Q4 FY"+year,     due: `${year}-07-28` },
+  ];
+  userBusinesses.forEach(biz => {
+    ranges.forEach(r => {
+      const due = new Date(r.due);
+      const days = Math.ceil((due - today) / 86400000);
+      if (days >= 0 && days <= 60) {
+        upcomingDeadlines.push({ ...r, days, biz });
+      }
+    });
+  });
+  upcomingDeadlines.sort((a,b) => a.days - b.days);
+
+  // ── Days-until-due colour helper ──
+  const dueColour = (days) => {
+    if (days <= 7)  return "rgba(220,100,38,1)";  // urgent — orange-red
+    if (days <= 21) return C.yellow;
+    return C.muted;
+  };
+
+  return (
+    <div style={{ minHeight:"100vh", background:C.bg }}>
+      {/* Top bar */}
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"17px 32px", borderBottom:`1px solid ${C.border}` }}>
+        <div className="logo" style={{ margin:0 }}>
+          <div className="logo-box">M</div>
+          <div>
+            <div className="logo-name">Mise</div>
+            <div className="logo-sub">ACCOUNTANT WORKSPACE</div>
+          </div>
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+          <span style={{ fontSize:11.5, color:C.muted }}>Signed in as <strong style={{color:C.text}}>{currentUserEmail || "accountant"}</strong></span>
+          <button className="btn-g" onClick={onLogout}>Log out</button>
+        </div>
+      </div>
+
+      <div style={{ maxWidth:1080, margin:"0 auto", padding:"36px 32px 60px" }}>
+        {/* Greeting */}
+        <div style={{ marginBottom:32 }}>
+          <h1 style={{ fontSize:28, fontWeight:700, letterSpacing:"-1px", fontFamily:"'Fraunces', serif", margin:"0 0 6px" }}>My Clients</h1>
+          <p style={{ fontSize:13, color:C.muted, margin:0 }}>
+            {userBusinesses.length} {userBusinesses.length === 1 ? "client business" : "client businesses"} you have access to.
+          </p>
+        </div>
+
+        {/* Upcoming Deadlines */}
+        {upcomingDeadlines.length > 0 && (
+          <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"20px 22px", marginBottom:28 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:14 }}>
+              <span style={{ fontSize:18 }}>📅</span>
+              <div style={{ fontSize:14, fontWeight:700, color:C.text }}>Upcoming BAS Deadlines</div>
+              <span style={{ fontSize:11, color:C.muted, marginLeft:"auto" }}>Next 60 days</span>
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              {upcomingDeadlines.slice(0,8).map((d,i) => (
+                <div key={i}
+                  onClick={() => switchBusiness(d.biz.id)}
+                  style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 14px", background:C.surfaceAlt, border:`1px solid ${C.border}`, borderLeft:`3px solid ${dueColour(d.days)}`, borderRadius:9, cursor:"pointer" }}>
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontSize:12.5, fontWeight:600, color:C.text }}>{d.biz.name || "(unnamed business)"} — {d.lbl}</div>
+                    <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>Due {d.due}</div>
+                  </div>
+                  <div style={{ textAlign:"right" }}>
+                    <div className="mono" style={{ fontSize:14, fontWeight:700, color:dueColour(d.days) }}>{d.days} days</div>
+                    <div style={{ fontSize:10, color:C.dim }}>Open client →</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Client grid */}
+        <div style={{ fontSize:11, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".8px", marginBottom:14 }}>All Clients</div>
+        {userBusinesses.length === 0 ? (
+          <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:"40px 28px", textAlign:"center", color:C.muted }}>
+            <div style={{ fontSize:36, marginBottom:12 }}>📋</div>
+            <div style={{ fontSize:13, lineHeight:1.7 }}>
+              You don't have any clients yet. Ask your restaurant clients to invite you<br/>
+              via <strong style={{ color:C.text }}>Settings → Team Access</strong> using <strong style={{ color:C.blue }}>{currentUserEmail}</strong>
+            </div>
+          </div>
+        ) : (
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(280px, 1fr))", gap:14 }}>
+            {userBusinesses.map(biz => {
+              const roleLabel = biz.role === "owner" ? "Owner" : biz.role === "accountant_edit" ? "Editor" : "View only";
+              const roleColour = biz.role === "owner" ? C.accent : biz.role === "accountant_edit" ? C.teal : C.blue;
+              return (
+                <div key={biz.id}
+                  onClick={() => switchBusiness(biz.id)}
+                  style={{
+                    background:C.surface, border:`1px solid ${C.border}`, borderRadius:14,
+                    padding:"18px 20px", cursor:"pointer", transition:"transform .12s, border-color .12s",
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-1px)"; e.currentTarget.style.borderColor = C.accent; }}
+                  onMouseLeave={e => { e.currentTarget.style.transform = ""; e.currentTarget.style.borderColor = C.border; }}>
+                  <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:12 }}>
+                    <div style={{ width:38, height:38, borderRadius:9, background:C.surfaceAlt, border:`1px solid ${C.border}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, fontWeight:700, color:C.accent }}>
+                      {(biz.name || "?").trim().charAt(0).toUpperCase()}
+                    </div>
+                    <span style={{ fontSize:9.5, fontWeight:700, padding:"3px 8px", borderRadius:5, background:C.surfaceAlt, color:roleColour, border:`1px solid ${roleColour}33`, textTransform:"uppercase", letterSpacing:".5px" }}>
+                      {roleLabel}
+                    </span>
+                  </div>
+                  <div style={{ fontSize:15, fontWeight:700, color:C.text, marginBottom:4, lineHeight:1.3 }}>{biz.name || "(unnamed business)"}</div>
+                  <div style={{ fontSize:11, color:C.muted, marginBottom:14 }}>
+                    {biz.abn ? `ABN ${biz.abn}` : <span style={{color:C.dim}}>No ABN set</span>}
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", paddingTop:12, borderTop:`1px solid ${C.border}` }}>
+                    <span style={{ fontSize:11, color:C.muted, textTransform:"capitalize" }}>{biz.industry || "hospitality"}</span>
+                    <span style={{ fontSize:11.5, fontWeight:600, color:C.accent }}>Open →</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Footer hint */}
+        <div style={{ marginTop:36, padding:"14px 18px", background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, fontSize:11.5, color:C.muted, lineHeight:1.7 }}>
+          💡 <strong style={{ color:C.text }}>Tip:</strong> Click any client to open their dashboard, BAS Summary, and full financial data.
+          Use the "← All Clients" link in the sidebar to return here at any time.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ════════════════════════════════════════════════════════════
 //  AUTH
 // ════════════════════════════════════════════════════════════
 function AuthPage({ onLogin }) {
@@ -3372,7 +3524,7 @@ function AuthPage({ onLogin }) {
 // ════════════════════════════════════════════════════════════
 //  SIDEBAR
 // ════════════════════════════════════════════════════════════
-function Sidebar({ page, setPage, onLogout, flagCount, companyName }) {
+function Sidebar({ page, setPage, onLogout, flagCount, companyName, accountUserType = "owner", onBackToHub = () => {} }) {
   const nav = [
     { sec:"Overview" },
     { id:"dashboard", ico:"📊", lbl:"Dashboard" },
@@ -3402,6 +3554,14 @@ function Sidebar({ page, setPage, onLogout, flagCount, companyName }) {
           <div className="logo-sub">{companyName ? "POWERED BY MISE" : "HOSPITALITY FINANCE"}</div>
         </div>
       </div>
+      {accountUserType === "accountant" && (
+        <div onClick={onBackToHub}
+          style={{ display:"flex", alignItems:"center", gap:8, margin:"4px 12px 14px", padding:"9px 11px",
+            borderRadius:8, background:"rgba(64,156,255,.08)", border:`1px solid rgba(64,156,255,.25)`,
+            cursor:"pointer", fontSize:12, color:C.blue, fontWeight:600 }}>
+          <span>←</span><span>All Clients</span>
+        </div>
+      )}
       {nav.map((n,i) => n.sec
         ? <div key={i} className="nav-sec">{n.sec}</div>
         : (
@@ -13076,6 +13236,11 @@ export default function App() {
   const [currentRole,     setCurrentRole]     = useState("owner");
   // Current logged-in user's email — used to stamp audit trail (who created/edited)
   const [currentUserEmail, setCurrentUserEmail] = useState("");
+  // Account type from signup metadata: "owner" or "accountant" — controls which
+  // top-level views and pages are shown (e.g. accountant hub vs owner dashboard).
+  const [accountUserType, setAccountUserType] = useState("owner");
+  // Accountant view mode: "hub" (clients list) or "client" (inside a specific client's data)
+  const [accountantMode, setAccountantMode] = useState("hub");
   // Derived: is the current user view-only (no write permission)?
   const isViewOnly = currentRole === "accountant_view";
 
@@ -13332,6 +13497,9 @@ const bootFromSession = async (session) => {
 
     // Account type from signup metadata — accountants never auto-create a business.
     const accountType = session?.user?.user_metadata?.account_type || "owner";
+    setAccountUserType(accountType);
+    // Accountants land on the client hub by default; owners go straight to their dashboard.
+    setAccountantMode(accountType === "accountant" ? "hub" : "client");
 
     // Step B: first-time OWNER → create their first business.
     // Accountants intentionally start with no business; they gain access via invitations only.
@@ -13407,6 +13575,8 @@ const bootFromSession = async (session) => {
     setBizABNRaw(target.abn || "");
     setIndustryRaw(target.industry || "restaurant");
     setBizSettings(target.settings || {});  // load target business's settings
+    setAccountantMode("client");  // entering a specific client's view
+    setPage("dashboard");          // start in dashboard when switching client
     localStorage.setItem("mise_active_biz_id", target.id);
     localStorage.setItem("mise_biz_name", target.name || "");
     localStorage.setItem("mise_biz_abn",  target.abn  || "");
@@ -13498,8 +13668,21 @@ const bootFromSession = async (session) => {
           </button>
         </div>
       )}
+      {/* ── Accountant Hub: show client list instead of layout when in "hub" mode ── */}
+      {accountUserType === "accountant" && accountantMode === "hub" ? (
+        <AccountantHubPage
+          userBusinesses={userBusinesses}
+          currentUserEmail={currentUserEmail}
+          switchBusiness={switchBusiness}
+          onLogout={async () => {
+            if (window._supabase) await sb().auth.signOut();
+            try { Object.keys(localStorage).forEach(k => { if (k.startsWith("mise_")) localStorage.removeItem(k); }); } catch {}
+            setScreen("landing"); setBizId(null); setCurrentUserEmail(""); setUserBusinesses([]);
+          }}
+        />
+      ) : (
       <div className="layout">
-        <Sidebar page={page} setPage={setPage} onLogout={async () => { if(window._supabase) await sb().auth.signOut(); try { Object.keys(localStorage).forEach(k => { if (k.startsWith("mise_")) localStorage.removeItem(k); }); } catch {} setScreen("landing"); setBizId(null); setCurrentUserEmail(""); setUserBusinesses([]); }} flagCount={flagCount} industry={industry} companyName={companyName}/>
+        <Sidebar page={page} setPage={setPage} onLogout={async () => { if(window._supabase) await sb().auth.signOut(); try { Object.keys(localStorage).forEach(k => { if (k.startsWith("mise_")) localStorage.removeItem(k); }); } catch {} setScreen("landing"); setBizId(null); setCurrentUserEmail(""); setUserBusinesses([]); }} flagCount={flagCount} industry={industry} companyName={companyName} accountUserType={accountUserType} onBackToHub={() => setAccountantMode("hub")}/>
         <main className="main">
           {/* ── Phase 1 Step 4: Client Switcher (only for users with ≥2 businesses) ── */}
           {userBusinesses.length > 1 && (
@@ -13576,6 +13759,7 @@ const bootFromSession = async (session) => {
         <BottomTabBar page={page} setPage={setPage} flagCount={flagCount}/>
         {toast && <Toast msg={toast} onDone={() => setToast(null)}/>}
       </div>
+      )}
     </>
   );
 }

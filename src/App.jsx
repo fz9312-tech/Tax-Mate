@@ -3539,6 +3539,7 @@ function Sidebar({ page, setPage, onLogout, flagCount, companyName, accountUserT
     { id:"taxsaver",  ico:"🔍", lbl:"Audit Ready", badge: flagCount > 0 ? `${flagCount} flags` : null },
     { id:"ias",       ico:"🧾", lbl:"Monthly IAS" },
     { id:"bassummary",ico:"📋", lbl:"BAS Summary" },
+    { id:"bankrecon", ico:"🏦", lbl:"Bank Reconcile" },
     { sec:"Reports" },
     { id:"documents", ico:"📁", lbl:"Document Hub" },
     { id:"reports",   ico:"🖨️", lbl:"Reports & P&L" },
@@ -12723,6 +12724,299 @@ function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, d
 // ════════════════════════════════════════════════════════════
 //  ANNUAL ACCOUNTANT PACK PAGE
 // ════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════
+//  BANK RECONCILIATION  (Phase 1)
+//  Income → monthly summary reconciliation (card / delivery)
+//  Expenses → line-by-line reconciliation
+//  Upload bank CSV; Mise records read from existing state.
+//  Philosophy: completeness & peace of mind, not a banking dashboard.
+// ════════════════════════════════════════════════════════════
+
+// ---- Westpac CSV parser (normalises to canonical txns) ----
+function parseWestpacCSV(text) {
+  const splitLine = (line) => {
+    const out = []; let cur = "", inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') { if (inQ && line[i+1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
+      else if (c === "," && !inQ) { out.push(cur); cur = ""; }
+      else cur += c;
+    }
+    out.push(cur); return out;
+  };
+  const normDate = (s) => { const m = (s||"").trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/); return m ? `${m[3]}-${m[2]}-${m[1]}` : null; };
+  const normAmt  = (s) => { const neg = (s||"").includes("-"); const n = parseFloat((s||"").replace(/[-$,\s]/g,"")); return isNaN(n) ? null : (neg ? -n : n); };
+  const classify = (desc, amt) => {
+    const d = (desc||"").toUpperCase(); const incoming = amt > 0;
+    if (d.startsWith("MERCHANT SETTLEMENT")) return "income_card";
+    if (d.startsWith("MERCHANT FEES"))       return "fee";
+    if (d.includes("UBER"))                  return "income_uber";
+    if (d.includes("DOORDASH"))              return "income_doordash";
+    if (d.includes("MENULOG"))               return "income_menulog";
+    if ((d.includes("WAGE")||d.includes("PAYROLL")) && !incoming) return "payroll";
+    if (d.startsWith("DIRECT CREDIT"))       return incoming ? "income_other" : "other";
+    if (d.startsWith("OSKO PAYMENT"))        return incoming ? "income_transfer" : "expense_transfer";
+    if (d.startsWith("EFTPOS WDL")||d.startsWith("VISA PURCHASE")) return "expense_card";
+    if (d.startsWith("BPAY")||d.startsWith("DIRECT DEBIT"))        return "expense_bill";
+    if (d.startsWith("INTERNET TRANSFER"))   return "internal";
+    if (d.startsWith("INTERNET EXTERNAL"))   return incoming ? "income_transfer" : "expense_transfer";
+    if (d.startsWith("RETURNED"))            return "reversal";
+    return incoming ? "income_other" : "expense_other";
+  };
+  const lines = (text||"").split(/\r?\n/).filter(l => l.trim().length > 0);
+  const txns = []; let errors = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const cols = splitLine(lines[i]);
+    const date = normDate(cols[0]);
+    if (!date) continue;
+    const amount = normAmt(cols[2]);
+    if (amount === null) { errors++; continue; }
+    txns.push({
+      id: `wp_${i}`, date,
+      description: (cols[1]||"").trim().replace(/\s+/g," "),
+      amount, direction: amount >= 0 ? "credit" : "debit",
+      bucket: classify(cols[1], amount),
+    });
+  }
+  return { txns, errors };
+}
+
+// ---- Expense line-by-line matcher (direction 3) ----
+function matchExpenses(bankDebits, expenses) {
+  const used = new Set();
+  const dgap = (a,b) => Math.abs(Math.floor(new Date(a+"T00:00:00")/864e5) - Math.floor(new Date(b+"T00:00:00")/864e5));
+  const tokenize = (s) => {
+    const noise = new Set(["osko","payment","eftpos","wdl","visa","purchase","bpay","debit","direct","au","aus","pty","ltd","the","payment"]);
+    const lower = (s||"").toLowerCase();
+    const en = (lower.match(/[a-z][a-z']+/g)||[]).filter(t=>t.length>=3&&!noise.has(t));
+    const cjk = lower.match(/[\u4e00-\u9fff]/g)||[];
+    return new Set([...en,...cjk]);
+  };
+  const overlap = (a,b) => { const A=tokenize(a),B=tokenize(b); if(!A.size||!B.size)return 0; let n=0; for(const t of A)if(B.has(t))n++; return n/Math.min(A.size,B.size); };
+
+  const results = bankDebits.map(txn => {
+    const cands = expenses
+      .filter(e => !used.has(e.id) && dgap(txn.date, e.date) <= 7)
+      .map(e => ({ e, diff: Math.abs(Math.abs(txn.amount) - e.amount), gap: dgap(txn.date,e.date), desc: overlap(txn.description, (e.desc||"")+" "+(e.cat||"")) }));
+    const exact = cands.filter(c => c.diff < 0.01);
+    if (exact.length === 1 && exact[0].gap <= 1) { used.add(exact[0].e.id); return { txn, tier:"exact", matched:exact[0].e, candidates:exact }; }
+    if (exact.length === 1)                      { used.add(exact[0].e.id); return { txn, tier:"likely", matched:exact[0].e, candidates:exact }; }
+    if (exact.length > 1) {
+      const ranked = exact.sort((x,y)=>(y.desc-x.desc)||(x.gap-y.gap));
+      if (ranked[0].desc > 0 && ranked[0].desc > (ranked[1]?ranked[1].desc:0)) { used.add(ranked[0].e.id); return { txn, tier:"likely", matched:ranked[0].e, candidates:ranked }; }
+      return { txn, tier:"manual", matched:null, candidates:ranked };
+    }
+    const close = cands.filter(c => c.diff <= Math.max(2, Math.abs(txn.amount)*0.01) && c.gap <= 3).sort((x,y)=>x.diff-y.diff);
+    if (close.length) return { txn, tier:"manual", matched:null, candidates:close };
+    return { txn, tier:"unmatched", matched:null, candidates:[] };
+  });
+  const matchedIds = new Set(results.filter(r=>r.matched).map(r=>r.matched.id));
+  const miseOnly = expenses.filter(e => !matchedIds.has(e.id));
+  return { results, miseOnly };
+}
+
+// ---- Income monthly summary (direction 1) ----
+function monthKey(d){ return d.slice(0,7); }
+function summariseIncome(bankTxns, revenue) {
+  // Bank side, by month
+  const bank = {};  // month -> { card, delivery }
+  for (const t of bankTxns) {
+    if (!t.bucket.startsWith("income")) continue;
+    const mk = monthKey(t.date);
+    bank[mk] = bank[mk] || { card:0, delivery:0 };
+    if (t.bucket === "income_card") bank[mk].card += t.amount;
+    else if (["income_uber","income_doordash","income_menulog"].includes(t.bucket)) bank[mk].delivery += t.amount;
+  }
+  // Mise side, by month. Dine-in+Takeaway → "card-ish" (incl cash); Delivery Platform → delivery.
+  const mise = {};
+  for (const r of revenue) {
+    const mk = monthKey(r.date);
+    mise[mk] = mise[mk] || { dinein:0, delivery:0 };
+    for (const ch of (r.channels||[])) {
+      const nm = (ch.name||"").toLowerCase();
+      if (nm.includes("delivery") || nm.includes("platform")) mise[mk].delivery += ch.amount;
+      else mise[mk].dinein += ch.amount; // dine-in + takeaway (includes cash)
+    }
+  }
+  const months = [...new Set([...Object.keys(bank), ...Object.keys(mise)])].sort().reverse();
+  return months.map(mk => {
+    const b = bank[mk] || { card:0, delivery:0 };
+    const m = mise[mk] || { dinein:0, delivery:0 };
+    return {
+      month: mk,
+      bankCard: b.card, miseDinein: m.dinein, cardDiff: m.dinein - b.card,
+      bankDelivery: b.delivery, miseDelivery: m.delivery, deliveryDiff: m.delivery - b.delivery,
+    };
+  });
+}
+
+function BankReconPage({ revenue, expenses, showToast }) {
+  const [parsed, setParsed]   = React.useState(null);   // {txns, errors}
+  const [fileName, setFileName] = React.useState("");
+  const [tab, setTab]         = React.useState("income");
+  const [expFilter, setExpFilter] = React.useState("all");
+
+  const onFile = (ev) => {
+    const f = ev.target.files && ev.target.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const res = parseWestpacCSV(e.target.result);
+      setParsed(res); setFileName(f.name);
+      showToast && showToast(`Loaded ${res.txns.length} transactions`);
+    };
+    reader.readAsText(f);
+  };
+
+  const incomeRows = parsed ? summariseIncome(parsed.txns, revenue) : [];
+  const bankDebits = parsed ? parsed.txns.filter(t => ["expense_bill","expense_card","expense_transfer","payroll","expense_other"].includes(t.bucket)) : [];
+  const expMatch   = parsed ? matchExpenses(bankDebits, expenses) : { results:[], miseOnly:[] };
+
+  const tierBadge = (tier) => {
+    const map = { exact:{c:C.green,t:"Matched"}, likely:{c:C.blue,t:"Likely"}, manual:{c:C.yellow,t:"Review"}, unmatched:{c:C.red,t:"Not found"} };
+    const x = map[tier] || map.unmatched;
+    return <span style={{ fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:20, background:x.c+"22", color:x.c, whiteSpace:"nowrap" }}>{x.t}</span>;
+  };
+
+  const expResults = expMatch.results.filter(r => expFilter === "all" ? true : r.tier === expFilter);
+  const reconciledExp = expMatch.results.filter(r => r.tier === "exact" || r.tier === "likely").length;
+  const expPct = expMatch.results.length ? Math.round(reconciledExp / expMatch.results.length * 100) : 0;
+  const unmatchedDebits = expMatch.results.filter(r => r.tier === "unmatched");
+  const unmatchedAmt = unmatchedDebits.reduce((s,r)=>s+Math.abs(r.txn.amount),0);
+
+  return (
+    <div className="page">
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Bank Reconciliation</h1>
+          <p className="page-sub">Check your bank activity against what you've recorded in Mise — so nothing slips through.</p>
+        </div>
+      </div>
+
+      {/* Upload */}
+      <div className="card" style={{ marginBottom:16 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:14, flexWrap:"wrap" }}>
+          <label className="btn-p" style={{ cursor:"pointer", margin:0 }}>
+            📄 Upload bank statement (CSV)
+            <input type="file" accept=".csv" onChange={onFile} style={{ display:"none" }} />
+          </label>
+          {fileName && <span style={{ fontSize:12, color:C.muted }}>{fileName} · {parsed.txns.length} transactions{parsed.errors? ` · ${parsed.errors} skipped`:""}</span>}
+          {!fileName && <span style={{ fontSize:12, color:C.dim }}>Export from Westpac online banking → Transactions → CSV. Account number and balance columns are ignored.</span>}
+        </div>
+      </div>
+
+      {!parsed && (
+        <div className="card" style={{ textAlign:"center", padding:"40px 20px", color:C.dim }}>
+          <div style={{ fontSize:40, marginBottom:10 }}>🧾</div>
+          <div style={{ fontSize:14, color:C.muted }}>Upload a bank CSV to begin.</div>
+          <div style={{ fontSize:12, marginTop:6 }}>Mise compares it against the sales and expenses you've already recorded.</div>
+        </div>
+      )}
+
+      {parsed && (
+        <>
+          {/* Tabs */}
+          <div style={{ display:"flex", gap:8, marginBottom:16 }}>
+            <button className={tab==="income"?"btn-p":"btn-g"} onClick={()=>setTab("income")} style={{ margin:0 }}>Income (monthly)</button>
+            <button className={tab==="expenses"?"btn-p":"btn-g"} onClick={()=>setTab("expenses")} style={{ margin:0 }}>Expenses (line by line)</button>
+          </div>
+
+          {tab === "income" && (
+            <>
+              <div className="card" style={{ marginBottom:16, background:C.surfaceAlt }}>
+                <div style={{ fontSize:13, color:C.muted, lineHeight:1.6 }}>
+                  Income is compared <b style={{color:C.text}}>by month</b>, not transaction by transaction — because card settlements arrive on a delay and delivery platforms pay weekly. A difference is normal: <b style={{color:C.text}}>cash takings won't appear in the bank</b>, and platforms take a commission.
+                </div>
+              </div>
+              {incomeRows.length === 0 && <div className="card" style={{color:C.dim}}>No income found in this statement period.</div>}
+              {incomeRows.map(row => (
+                <div className="card" key={row.month} style={{ marginBottom:12 }}>
+                  <div style={{ fontWeight:700, fontSize:15, marginBottom:12 }}>{new Date(row.month+"-01").toLocaleDateString("en-AU",{month:"long",year:"numeric"})}</div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                    {/* Card */}
+                    <div style={{ padding:12, background:C.surface, borderRadius:8, border:`1px solid ${C.border}` }}>
+                      <div style={{ fontSize:11, color:C.muted, marginBottom:8, textTransform:"uppercase", letterSpacing:.5 }}>Card / Dine-in</div>
+                      <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:4 }}><span style={{color:C.muted}}>Bank received</span><span>{money(row.bankCard)}</span></div>
+                      <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:8 }}><span style={{color:C.muted}}>Mise recorded</span><span>{money(row.miseDinein)}</span></div>
+                      <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, fontWeight:700, paddingTop:8, borderTop:`1px solid ${C.border}` }}>
+                        <span>Difference</span><span style={{ color: Math.abs(row.cardDiff) < row.miseDinein*0.4 ? C.muted : C.yellow }}>{money(row.cardDiff)}</span>
+                      </div>
+                      {row.cardDiff > 0 && <div style={{ fontSize:10, color:C.dim, marginTop:6 }}>Likely cash takings (not in bank)</div>}
+                    </div>
+                    {/* Delivery */}
+                    <div style={{ padding:12, background:C.surface, borderRadius:8, border:`1px solid ${C.border}` }}>
+                      <div style={{ fontSize:11, color:C.muted, marginBottom:8, textTransform:"uppercase", letterSpacing:.5 }}>Delivery (Uber/DoorDash)</div>
+                      <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:4 }}><span style={{color:C.muted}}>Bank received</span><span>{money(row.bankDelivery)}</span></div>
+                      <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:8 }}><span style={{color:C.muted}}>Mise recorded</span><span>{money(row.miseDelivery)}</span></div>
+                      <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, fontWeight:700, paddingTop:8, borderTop:`1px solid ${C.border}` }}>
+                        <span>Difference</span><span style={{ color: Math.abs(row.deliveryDiff) < Math.max(row.miseDelivery*0.2, 50) ? C.muted : C.yellow }}>{money(row.deliveryDiff)}</span>
+                      </div>
+                      {row.deliveryDiff > 0 && <div style={{ fontSize:10, color:C.dim, marginTop:6 }}>Likely platform commission</div>}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+
+          {tab === "expenses" && (
+            <>
+              {/* Summary */}
+              <div className="card" style={{ marginBottom:16 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                  <div style={{ fontWeight:700, fontSize:15 }}>{expPct}% of bank payments reconciled</div>
+                  <div style={{ fontSize:12, color:C.muted }}>{reconciledExp} of {expMatch.results.length}</div>
+                </div>
+                <div style={{ height:8, background:C.surface, borderRadius:20, overflow:"hidden", marginBottom:14 }}>
+                  <div style={{ height:"100%", width:`${expPct}%`, background:C.green, borderRadius:20 }} />
+                </div>
+                {unmatchedDebits.length > 0 && (
+                  <div style={{ fontSize:13, color:C.muted }}>
+                    🔴 <b style={{color:C.text}}>{unmatchedDebits.length}</b> bank payment{unmatchedDebits.length>1?"s":""} ({money(unmatchedAmt)}) not yet recorded in Mise — these may be expenses you've missed.
+                  </div>
+                )}
+              </div>
+
+              {/* Filter */}
+              <div style={{ display:"flex", gap:6, marginBottom:12, flexWrap:"wrap" }}>
+                {[["all","All"],["exact","Matched"],["likely","Likely"],["manual","Review"],["unmatched","Not found"]].map(([id,lbl])=>(
+                  <button key={id} className={expFilter===id?"btn-p":"btn-g"} onClick={()=>setExpFilter(id)} style={{ margin:0, fontSize:12, padding:"6px 12px" }}>{lbl}</button>
+                ))}
+              </div>
+
+              {/* Rows */}
+              {expResults.length === 0 && <div className="card" style={{color:C.dim}}>Nothing in this filter.</div>}
+              {expResults.map((r,i) => (
+                <div className="card" key={i} style={{ marginBottom:8, padding:"12px 14px" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12 }}>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:13, fontWeight:600, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{r.txn.description}</div>
+                      <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>{r.txn.date} · {money(r.txn.amount)}</div>
+                    </div>
+                    <div style={{ textAlign:"right" }}>
+                      {tierBadge(r.tier)}
+                      {r.matched && <div style={{ fontSize:11, color:C.muted, marginTop:4 }}>→ {r.matched.cat} {money(r.matched.amount)}</div>}
+                    </div>
+                  </div>
+                  {r.tier === "manual" && r.candidates.length > 0 && (
+                    <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${C.border}`, fontSize:11, color:C.muted }}>
+                      Possible matches: {r.candidates.slice(0,3).map((c,j)=>`${c.e.cat} ${money(c.e.amount)} (${c.gap}d)`).join("  ·  ")}
+                    </div>
+                  )}
+                  {r.tier === "unmatched" && (
+                    <div style={{ marginTop:8, fontSize:11, color:C.dim }}>No matching expense in Mise. Add it under Expenses if this is a business cost.</div>
+                  )}
+                </div>
+              ))}
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+
 function ReportsPage({ revenue, expenses, timesheets, employees, insurance, documents, inventory, setInventory, bizName, bizABN }) {
   const [print,   setPrint]   = useState(null);
   const [selQ,    setSelQ]    = useState(BAS_QUARTERS[0]);
@@ -13896,6 +14190,7 @@ const bootFromSession = async (session) => {
           {page === "ias"            && <IASPage        timesheets={timesheets} employees={employees} ias={ias} setIas={setIas} showToast={showToast} bizName={bizName} bizABN={bizABN}/>}
           {page === "documents"      && <DocumentsPage documents={documents} setDocuments={setDocuments} employees={employees} showToast={showToast}/>}
           {page === "bassummary"     && <BASSummaryPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} basHistory={basHistory} setBasHistory={setBasHistory} showToast={showToast} bizName={bizName} bizABN={bizABN} ias={ias} currentRole={currentRole} currentUserEmail={currentUserEmail}/>}
+          {page === "bankrecon"      && <BankReconPage revenue={revenue} expenses={expenses} showToast={showToast}/>}
           {page === "reports"        && <ReportsPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} inventory={inventory} setInventory={setInventory} bizName={bizName} bizABN={bizABN}/>}
           {page === "settings"       && <SettingsPage industry={industry} setIndustry={setIndustry} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN} bizId={bizId} currentRole={currentRole} companyName={companyName} setCompanyName={setCompanyName} bizSettings={bizSettings} updateSetting={updateSetting}/>}
         </main>

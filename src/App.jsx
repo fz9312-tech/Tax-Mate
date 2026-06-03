@@ -12733,52 +12733,185 @@ function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, d
 // ════════════════════════════════════════════════════════════
 
 // ---- Westpac CSV parser (normalises to canonical txns) ----
-function parseWestpacCSV(text) {
-  const splitLine = (line) => {
-    const out = []; let cur = "", inQ = false;
-    for (let i = 0; i < line.length; i++) {
-      const c = line[i];
-      if (c === '"') { if (inQ && line[i+1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
-      else if (c === "," && !inQ) { out.push(cur); cur = ""; }
-      else cur += c;
+// ---- Universal bank CSV parser (auto-detect columns) ----
+// Universal bank CSV parser — auto-detects date/amount/description columns.
+// Supports: single signed amount column OR separate Debit/Credit columns.
+// Returns { txns, errors, mapping, preview } so UI can show/override detection.
+
+function splitLine(line) {
+  const out = []; let cur = "", inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') { if (inQ && line[i+1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
+    else if (c === "," && !inQ) { out.push(cur); cur = ""; }
+    else cur += c;
+  }
+  out.push(cur); return out;
+}
+
+// Try several date formats → YYYY-MM-DD (AU: day-first preferred)
+function parseDateCell(s) {
+  const v = (s||"").trim();
+  let m;
+  if ((m = v.match(/^(\d{4})-(\d{2})-(\d{2})$/)))            return `${m[1]}-${m[2]}-${m[3]}`;            // YYYY-MM-DD
+  if ((m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)))       return `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`; // DD/MM/YYYY
+  if ((m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/)))       return `20${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`; // DD/MM/YY
+  if ((m = v.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/)))         return `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`; // DD-MM-YYYY
+  if ((m = v.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2,4})$/))) { // DD-Mon-YY
+    const mo = {jan:"01",feb:"02",mar:"03",apr:"04",may:"05",jun:"06",jul:"07",aug:"08",sep:"09",oct:"10",nov:"11",dec:"12"}[m[2].toLowerCase()];
+    if (mo) { const yr = m[3].length===2 ? "20"+m[3] : m[3]; return `${yr}-${mo}-${m[1].padStart(2,"0")}`; }
+  }
+  return null;
+}
+
+// Parse a money cell → number or null. Tracks parentheses/minus as negative.
+function parseMoneyCell(s) {
+  const v = (s||"").trim();
+  if (v === "") return null;
+  const neg = v.includes("-") || (/^\(.*\)$/.test(v));
+  const num = parseFloat(v.replace(/[()$,\s]/g,"").replace(/-/g,""));
+  if (isNaN(num)) return null;
+  return neg ? -num : num;
+}
+
+// Decide if a whole column "looks like" dates / money / text
+function profileColumns(rows) {
+  const nCols = Math.max(...rows.map(r => r.length));
+  const prof = [];
+  for (let c = 0; c < nCols; c++) {
+    let dateHits = 0, moneyHits = 0, textLen = 0, nonEmpty = 0;
+    for (const r of rows) {
+      const cell = (r[c]||"").trim();
+      if (!cell) continue;
+      nonEmpty++;
+      if (parseDateCell(cell)) dateHits++;
+      // money: mostly digits with optional $ , . - ( )
+      if (/^[-(]?\$?[\d,]+\.?\d*\)?$/.test(cell) && /\d/.test(cell)) moneyHits++;
+      textLen += cell.length;
     }
-    out.push(cur); return out;
-  };
-  const normDate = (s) => { const m = (s||"").trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/); return m ? `${m[3]}-${m[2]}-${m[1]}` : null; };
-  const normAmt  = (s) => { const neg = (s||"").includes("-"); const n = parseFloat((s||"").replace(/[-$,\s]/g,"")); return isNaN(n) ? null : (neg ? -n : n); };
-  const classify = (desc, amt) => {
-    const d = (desc||"").toUpperCase(); const incoming = amt > 0;
-    if (d.startsWith("MERCHANT SETTLEMENT")) return "income_card";
-    if (d.startsWith("MERCHANT FEES"))       return "fee";
-    if (d.includes("UBER"))                  return "income_uber";
-    if (d.includes("DOORDASH"))              return "income_doordash";
-    if (d.includes("MENULOG"))               return "income_menulog";
-    if ((d.includes("WAGE")||d.includes("PAYROLL")) && !incoming) return "payroll";
-    if (d.startsWith("DIRECT CREDIT"))       return incoming ? "income_other" : "other";
-    if (d.startsWith("OSKO PAYMENT"))        return incoming ? "income_transfer" : "expense_transfer";
-    if (d.startsWith("EFTPOS WDL")||d.startsWith("VISA PURCHASE")) return "expense_card";
-    if (d.startsWith("BPAY")||d.startsWith("DIRECT DEBIT"))        return "expense_bill";
-    if (d.startsWith("INTERNET TRANSFER"))   return "internal";
-    if (d.startsWith("INTERNET EXTERNAL"))   return incoming ? "income_transfer" : "expense_transfer";
-    if (d.startsWith("RETURNED"))            return "reversal";
-    return incoming ? "income_other" : "expense_other";
-  };
-  const lines = (text||"").split(/\r?\n/).filter(l => l.trim().length > 0);
-  const txns = []; let errors = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const cols = splitLine(lines[i]);
-    const date = normDate(cols[0]);
-    if (!date) continue;
-    const amount = normAmt(cols[2]);
-    if (amount === null) { errors++; continue; }
-    txns.push({
-      id: `wp_${i}`, date,
-      description: (cols[1]||"").trim().replace(/\s+/g," "),
-      amount, direction: amount >= 0 ? "credit" : "debit",
-      bucket: classify(cols[1], amount),
+    prof.push({
+      col: c,
+      dateRatio:  nonEmpty ? dateHits/nonEmpty : 0,
+      moneyRatio: nonEmpty ? moneyHits/nonEmpty : 0,
+      avgLen:     nonEmpty ? textLen/nonEmpty : 0,
+      nonEmpty,
     });
   }
-  return { txns, errors };
+  return prof;
+}
+
+function classify(desc, amt) {
+  const d = (desc||"").toUpperCase(); const incoming = amt > 0;
+  if (d.includes("MERCHANT SETTLEMENT")) return "income_card";
+  if (d.includes("MERCHANT FEE"))        return "fee";
+  if (d.includes("UBER"))                return incoming ? "income_uber" : "other";
+  if (d.includes("DOORDASH"))            return incoming ? "income_doordash" : "other";
+  if (d.includes("MENULOG"))             return incoming ? "income_menulog" : "other";
+  if ((d.includes("WAGE")||d.includes("PAYROLL")||d.includes("SALARY")) && !incoming) return "payroll";
+  if (d.includes("EFTPOS")||d.includes("VISA")||d.includes("CARD")||d.includes("PURCHASE")) return incoming ? "income_card" : "expense_card";
+  if (d.includes("BPAY")||d.includes("DIRECT DEBIT")||d.includes("BILL")) return "expense_bill";
+  if (d.includes("INTERNAL")||d.includes("TFR")) return "internal";
+  if (d.includes("OSKO")||d.includes("TRANSFER")||d.includes("PAYMENT")) return incoming ? "income_transfer" : "expense_transfer";
+  if (d.includes("RETURN"))              return "reversal";
+  if (d.includes("DIRECT CREDIT")||d.includes("DEPOSIT")||d.includes("CREDIT")) return incoming ? "income_other" : "other";
+  return incoming ? "income_other" : "expense_other";
+}
+
+// Auto-detect the column mapping from profiled rows
+function detectMapping(rows) {
+  const prof = profileColumns(rows);
+  // date = highest dateRatio (>0.5)
+  const dateCol = prof.filter(p=>p.dateRatio>0.5).sort((a,b)=>b.dateRatio-a.dateRatio)[0];
+  // money columns = moneyRatio>0.6, not the date col
+  const moneyCols = prof.filter(p=>p.moneyRatio>0.6 && (!dateCol||p.col!==dateCol.col)).sort((a,b)=>b.moneyRatio-a.moneyRatio);
+  // description = highest avgLen among non-date, non-money
+  const usedCols = new Set([dateCol?.col, ...moneyCols.map(m=>m.col)].filter(x=>x!=null));
+  const descCol = prof.filter(p=>!usedCols.has(p.col)).sort((a,b)=>b.avgLen-a.avgLen)[0];
+
+  // Decide amount mode: single signed col, or two-column debit/credit.
+  // Heuristic: if >=2 money cols and many rows have exactly one of the two filled → debit/credit pair.
+  let mode = "single", amountCol = null, debitCol = null, creditCol = null, balanceCol = null;
+  if (moneyCols.length >= 2) {
+    // check the top 2 money cols for "mutually exclusive" pattern
+    const [m1, m2] = moneyCols;
+    let exclusive = 0, both = 0, checked = 0;
+    for (const r of rows) {
+      const a = (r[m1.col]||"").trim(), b = (r[m2.col]||"").trim();
+      if (!a && !b) continue;
+      checked++;
+      if ((a&&!b)||(b&&!a)) exclusive++;
+      if (a&&b) both++;
+    }
+    if (checked && exclusive/checked > 0.7) {
+      mode = "debitcredit"; debitCol = m1.col; creditCol = m2.col;
+      // balance = a third money col if present (usually has value on every row)
+      balanceCol = moneyCols[2] ? moneyCols[2].col : null;
+    } else {
+      mode = "single"; amountCol = m1.col; balanceCol = m2.col; // 2nd money col is likely balance
+    }
+  } else if (moneyCols.length === 1) {
+    mode = "single"; amountCol = moneyCols[0].col;
+  }
+
+  return {
+    mode,
+    dateCol: dateCol?.col ?? null,
+    descCol: descCol?.col ?? null,
+    amountCol, debitCol, creditCol, balanceCol,
+    confident: !!(dateCol && (amountCol!=null || (debitCol!=null&&creditCol!=null)) && descCol),
+  };
+}
+
+function parseBankCSV(text, overrideMapping) {
+  const rawLines = (text||"").split(/\r?\n/).filter(l => l.trim().length > 0);
+  const allRows = rawLines.map(splitLine);
+
+  // Find first "data" row: has a parseable date in some column
+  let dataStart = 0;
+  for (let i = 0; i < allRows.length; i++) {
+    if (allRows[i].some(cell => parseDateCell(cell))) { dataStart = i; break; }
+  }
+  const dataRows = allRows.slice(dataStart);
+
+  const mapping = overrideMapping || detectMapping(dataRows);
+  const txns = []; let errors = 0;
+
+  // For debit/credit mode we need to know which is which (debit=out, credit=in).
+  // Disambiguate by sign/label later; default: in detect order we set debitCol first.
+  // We refine using the fact that credits are money IN. We test both assignments and
+  // pick the one where the running pattern matches a balance column if available.
+  let debitCol = mapping.debitCol, creditCol = mapping.creditCol;
+
+  for (let i = 0; i < dataRows.length; i++) {
+    const r = dataRows[i];
+    const date = parseDateCell(r[mapping.dateCol] || "");
+    if (!date) continue;
+    const description = (r[mapping.descCol] || "").trim().replace(/\s+/g," ");
+
+    let amount = null;
+    if (mapping.mode === "single") {
+      amount = parseMoneyCell(r[mapping.amountCol]);
+    } else {
+      const dv = parseMoneyCell(r[debitCol]);
+      const cv = parseMoneyCell(r[creditCol]);
+      if (dv != null && dv !== 0) amount = -Math.abs(dv);      // debit = money out
+      else if (cv != null && cv !== 0) amount = Math.abs(cv);  // credit = money in
+      else amount = 0;
+    }
+    if (amount === null) { errors++; continue; }
+
+    txns.push({
+      id: `bx_${i}`, date, description, amount,
+      direction: amount >= 0 ? "credit" : "debit",
+      bucket: classify(description, amount),
+    });
+  }
+
+  // Build a small preview (first 5 raw rows) for the mapping UI
+  const preview = dataRows.slice(0, 5);
+  const headerRow = dataStart > 0 ? allRows[dataStart-1] : null;
+
+  return { txns, errors, mapping, preview, headerRow, colCount: Math.max(...dataRows.map(r=>r.length)) };
 }
 
 // ---- Expense line-by-line matcher (direction 3) ----
@@ -12851,21 +12984,31 @@ function summariseIncome(bankTxns, revenue) {
 }
 
 function BankReconPage({ revenue, expenses, showToast }) {
-  const [parsed, setParsed]   = React.useState(null);   // {txns, errors}
+  const [parsed, setParsed]   = React.useState(null);   // {txns, errors, mapping, preview, colCount}
+  const [rawText, setRawText] = React.useState("");     // keep raw CSV for re-parse on override
   const [fileName, setFileName] = React.useState("");
   const [tab, setTab]         = React.useState("income");
   const [expFilter, setExpFilter] = React.useState("all");
+  const [showMap, setShowMap] = React.useState(false);  // mapping editor open?
 
   const onFile = (ev) => {
     const f = ev.target.files && ev.target.files[0];
     if (!f) return;
     const reader = new FileReader();
     reader.onload = (e) => {
-      const res = parseWestpacCSV(e.target.result);
-      setParsed(res); setFileName(f.name);
+      const txt = e.target.result;
+      const res = parseBankCSV(txt);
+      setRawText(txt); setParsed(res); setFileName(f.name);
+      setShowMap(!res.mapping.confident || res.txns.length === 0); // auto-open editor if unsure
       showToast && showToast(`Loaded ${res.txns.length} transactions`);
     };
     reader.readAsText(f);
+  };
+
+  const reparseWith = (newMapping) => {
+    const res = parseBankCSV(rawText, newMapping);
+    setParsed(res);
+    showToast && showToast(`Re-parsed: ${res.txns.length} transactions`);
   };
 
   const incomeRows = parsed ? summariseIncome(parsed.txns, revenue) : [];
@@ -12901,9 +13044,66 @@ function BankReconPage({ revenue, expenses, showToast }) {
             <input type="file" accept=".csv" onChange={onFile} style={{ display:"none" }} />
           </label>
           {fileName && <span style={{ fontSize:12, color:C.muted }}>{fileName} · {parsed.txns.length} transactions{parsed.errors? ` · ${parsed.errors} skipped`:""}</span>}
-          {!fileName && <span style={{ fontSize:12, color:C.dim }}>Export from Westpac online banking → Transactions → CSV. Account number and balance columns are ignored.</span>}
+          {!fileName && <span style={{ fontSize:12, color:C.dim }}>Export transactions as CSV from any bank's online banking. Mise auto-detects the columns. Account number and balance are ignored.</span>}
+          {fileName && <button className="btn-g" style={{ margin:0, fontSize:12, padding:"6px 12px", marginLeft:"auto" }} onClick={()=>setShowMap(s=>!s)}>{showMap?"Hide":"Check"} columns</button>}
         </div>
       </div>
+
+      {/* Column mapping confirmation (auto-opens if detection is unsure) */}
+      {parsed && showMap && (
+        <div className="card" style={{ marginBottom:16, border:`1px solid ${parsed.mapping.confident?C.border:C.yellow}` }}>
+          <div style={{ fontSize:13, fontWeight:700, marginBottom:4 }}>
+            {parsed.mapping.confident ? "Columns detected" : "⚠️ Please confirm the columns"}
+          </div>
+          <div style={{ fontSize:12, color:C.muted, marginBottom:12 }}>
+            {parsed.mapping.confident
+              ? "Mise auto-detected these. If anything's wrong, fix it below."
+              : "Mise couldn't be sure which column is which. Pick them below."}
+          </div>
+          {(() => {
+            const m = parsed.mapping;
+            const cols = Array.from({length: parsed.colCount||0}, (_,i)=>i);
+            const sample = (ci) => {
+              const vals = (parsed.preview||[]).map(r=>(r[ci]||"").trim()).filter(Boolean).slice(0,2);
+              return vals.join(" / ") || "—";
+            };
+            const colLabel = (ci) => `Col ${ci+1}: ${sample(ci).slice(0,22)}`;
+            const setField = (field, val) => {
+              const nm = { ...m, [field]: val===""?null:parseInt(val) };
+              reparseWith(nm);
+            };
+            const sel = (label, field, val) => (
+              <div style={{ marginBottom:8 }}>
+                <div style={{ fontSize:11, color:C.muted, marginBottom:3 }}>{label}</div>
+                <select value={val==null?"":val} onChange={e=>setField(field, e.target.value)}
+                  style={{ width:"100%", padding:"8px 10px", background:C.surface, color:C.text, border:`1px solid ${C.border}`, borderRadius:8, fontSize:12 }}>
+                  <option value="">— none —</option>
+                  {cols.map(ci=><option key={ci} value={ci}>{colLabel(ci)}</option>)}
+                </select>
+              </div>
+            );
+            return (
+              <div>
+                <div style={{ marginBottom:10 }}>
+                  <div style={{ fontSize:11, color:C.muted, marginBottom:3 }}>Amount format</div>
+                  <div style={{ display:"flex", gap:6 }}>
+                    <button className={m.mode==="single"?"btn-p":"btn-g"} style={{margin:0,fontSize:11,padding:"5px 10px"}}
+                      onClick={()=>reparseWith({...m, mode:"single", debitCol:null, creditCol:null, amountCol: m.amountCol ?? m.debitCol})}>One column (+/-)</button>
+                    <button className={m.mode==="debitcredit"?"btn-p":"btn-g"} style={{margin:0,fontSize:11,padding:"5px 10px"}}
+                      onClick={()=>reparseWith({...m, mode:"debitcredit", amountCol:null, debitCol: m.debitCol ?? m.amountCol, creditCol: m.creditCol})}>Debit / Credit columns</button>
+                  </div>
+                </div>
+                {sel("Date column", "dateCol", m.dateCol)}
+                {sel("Description column", "descCol", m.descCol)}
+                {m.mode==="single"
+                  ? sel("Amount column (+ in / − out)", "amountCol", m.amountCol)
+                  : (<>{sel("Debit column (money out)", "debitCol", m.debitCol)}{sel("Credit column (money in)", "creditCol", m.creditCol)}</>)}
+                <div style={{ fontSize:11, color:C.dim, marginTop:4 }}>{parsed.txns.length} transactions parsed with current settings.</div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
 
       {!parsed && (
         <div className="card" style={{ textAlign:"center", padding:"40px 20px", color:C.dim }}>

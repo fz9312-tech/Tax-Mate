@@ -13100,15 +13100,99 @@ function BankReconPage({ revenue, expenses, showToast }) {
       )}
 
       {!parsed && (
-        <div className="card" style={{ textAlign:"center", padding:"40px 20px", color:C.dim }}>
-          <div style={{ fontSize:40, marginBottom:10 }}>🧾</div>
-          <div style={{ fontSize:14, color:C.muted }}>Upload a bank CSV to begin.</div>
-          <div style={{ fontSize:12, marginTop:6 }}>Mise compares it against the sales and expenses you've already recorded.</div>
+        <div style={{ marginBottom:8 }}>
+          {/* How it works — 3 steps */}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginBottom:16 }}>
+            {[
+              { n:"1", ico:"📤", ttl:"Upload your bank CSV",
+                dsc:"Export transactions from any bank's online banking — Westpac, CBA, ANZ, NAB, Suncorp and more. Mise auto-detects the columns." },
+              { n:"2", ico:"🔍", ttl:"Mise matches the records",
+                dsc:"Your revenue and expenses already in Mise are compared against what actually hit the bank account — income by month, expenses line by line." },
+              { n:"3", ico:"✅", ttl:"See what's reconciled",
+                dsc:"Matched entries are confirmed. Unmatched ones surface as possible missed records — so nothing slips through before BAS time." },
+            ].map((s,i) => (
+              <div key={i} style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:"18px 16px" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:9, marginBottom:10 }}>
+                  <div style={{ width:24, height:24, borderRadius:"50%", background:C.accent+"22", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:800, color:C.accent }}>{s.n}</div>
+                  <span style={{ fontSize:18 }}>{s.ico}</span>
+                </div>
+                <div style={{ fontSize:13, fontWeight:700, marginBottom:6 }}>{s.ttl}</div>
+                <div style={{ fontSize:12, color:C.muted, lineHeight:1.6 }}>{s.dsc}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Bank compatibility strip */}
+          <div className="card" style={{ padding:"14px 18px" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:12, flexWrap:"wrap" }}>
+              <span style={{ fontSize:11, color:C.dim, whiteSpace:"nowrap" }}>Works with</span>
+              {["Westpac","Commonwealth","ANZ","NAB","Suncorp","Bendigo","Bank of Qld"].map((b,i) => (
+                <span key={i} style={{ fontSize:11, padding:"3px 10px", borderRadius:20, background:C.surfaceAlt, border:`1px solid ${C.border}`, color:C.muted }}>{b}</span>
+              ))}
+              <span style={{ fontSize:11, color:C.dim }}>+ any bank that exports CSV</span>
+            </div>
+          </div>
         </div>
       )}
 
       {parsed && (
         <>
+          {/* ── Global summary strip (peace-of-mind overview) ── */}
+          {(() => {
+            const totalTxns   = parsed.txns.length;
+            const months      = incomeRows.length;
+            const needsAction = expMatch.results.filter(r => r.tier === "unmatched" || r.tier === "manual").length;
+            const incomeOk    = incomeRows.every(r =>
+              Math.abs(r.cardDiff) < r.miseDinein * 0.5 &&
+              Math.abs(r.deliveryDiff) < Math.max(r.miseDelivery * 0.3, 100)
+            );
+            const overall = needsAction === 0 && incomeOk ? "green"
+                          : needsAction <= 3 && incomeOk   ? "yellow"
+                          : "red";
+            const statusMsg = overall === "green"
+              ? { ico:"✓", txt:"Everything looks reconciled", c:C.green }
+              : overall === "yellow"
+              ? { ico:"!", txt:`${needsAction} item${needsAction!==1?"s":""} need your attention`, c:C.yellow }
+              : { ico:"!", txt:`${needsAction} item${needsAction!==1?"s":""} need your attention`, c:C.red };
+            return (
+              <div style={{
+                display:"flex", alignItems:"center", gap:0,
+                background:C.surface, border:`1px solid ${C.border}`,
+                borderRadius:12, overflow:"hidden", marginBottom:16,
+              }}>
+                {/* Status pill */}
+                <div style={{
+                  padding:"14px 20px", background:statusMsg.c+"18",
+                  borderRight:`1px solid ${C.border}`,
+                  display:"flex", alignItems:"center", gap:8, minWidth:0,
+                }}>
+                  <div style={{
+                    width:22, height:22, borderRadius:"50%",
+                    background:statusMsg.c, display:"flex",
+                    alignItems:"center", justifyContent:"center",
+                    fontSize:12, fontWeight:800, color:C.bg, flexShrink:0,
+                  }}>{statusMsg.ico}</div>
+                  <span style={{ fontSize:13, fontWeight:700, color:statusMsg.c, whiteSpace:"nowrap" }}>{statusMsg.txt}</span>
+                </div>
+                {/* Stats */}
+                {[
+                  { val: totalTxns,                    lbl:"transactions" },
+                  { val: months,                       lbl: months===1?"month":"months" },
+                  { val: expPct + "%",                 lbl:"expenses matched" },
+                  { val: needsAction || "—",           lbl:"need review" },
+                ].map((s,i) => (
+                  <div key={i} style={{
+                    flex:1, padding:"10px 0", textAlign:"center",
+                    borderRight: i < 3 ? `1px solid ${C.border}` : "none",
+                  }}>
+                    <div style={{ fontSize:16, fontWeight:800, color:C.accent, letterSpacing:"-0.5px" }}>{s.val}</div>
+                    <div style={{ fontSize:10, color:C.dim, marginTop:2, textTransform:"uppercase", letterSpacing:".4px" }}>{s.lbl}</div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+
           {/* Tabs */}
           <div style={{ display:"flex", gap:8, marginBottom:16 }}>
             <button className={tab==="income"?"btn-p":"btn-g"} onClick={()=>setTab("income")} style={{ margin:0 }}>Income (monthly)</button>

@@ -13207,85 +13207,183 @@ function BankReconPage({ revenue, expenses, showToast }) {
                 </div>
               </div>
               {incomeRows.length === 0 && <div className="card" style={{color:C.dim}}>No income found in this statement period.</div>}
-              {incomeRows.map(row => (
-                <div className="card" key={row.month} style={{ marginBottom:12 }}>
-                  <div style={{ fontWeight:700, fontSize:15, marginBottom:12 }}>{new Date(row.month+"-01").toLocaleDateString("en-AU",{month:"long",year:"numeric"})}</div>
-                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-                    {/* Card */}
-                    <div style={{ padding:12, background:C.surface, borderRadius:8, border:`1px solid ${C.border}` }}>
-                      <div style={{ fontSize:11, color:C.muted, marginBottom:8, textTransform:"uppercase", letterSpacing:.5 }}>Card / Dine-in</div>
-                      <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:4 }}><span style={{color:C.muted}}>Bank received</span><span>{money(row.bankCard)}</span></div>
-                      <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:8 }}><span style={{color:C.muted}}>Mise recorded</span><span>{money(row.miseDinein)}</span></div>
-                      <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, fontWeight:700, paddingTop:8, borderTop:`1px solid ${C.border}` }}>
-                        <span>Difference</span><span style={{ color: Math.abs(row.cardDiff) < row.miseDinein*0.4 ? C.muted : C.yellow }}>{money(row.cardDiff)}</span>
+              {incomeRows.map(row => {
+                // Health logic per channel
+                const cardPct  = row.miseDinein   > 0 ? Math.abs(row.cardDiff)     / row.miseDinein   : 0;
+                const delPct   = row.miseDelivery > 0 ? Math.abs(row.deliveryDiff) / row.miseDelivery : 0;
+                const cardOk   = cardPct  < 0.5;  // <50% diff = expected (cash component)
+                const delOk    = delPct   < 0.25; // <25% diff = expected (commission)
+                const cardHealth  = cardOk  ? { dot:C.green,  msg:"Normal — difference is likely cash takings" }
+                                           : { dot:C.yellow, msg:"Larger than expected — worth a closer look" };
+                const delHealth   = delOk   ? { dot:C.green,  msg:"Normal — likely platform commission" }
+                                           : { dot:C.yellow, msg:"Larger than expected — worth a closer look" };
+                const monthOk  = cardOk && delOk;
+                return (
+                  <div className="card" key={row.month} style={{ marginBottom:12 }}>
+                    {/* Month header with overall indicator */}
+                    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
+                      <div style={{ fontWeight:700, fontSize:15 }}>
+                        {new Date(row.month+"-01").toLocaleDateString("en-AU",{month:"long",year:"numeric"})}
                       </div>
-                      {row.cardDiff > 0 && <div style={{ fontSize:10, color:C.dim, marginTop:6 }}>Likely cash takings (not in bank)</div>}
+                      <div style={{ display:"flex", alignItems:"center", gap:6, fontSize:12,
+                        color: monthOk ? C.green : C.yellow,
+                        background: (monthOk ? C.green : C.yellow)+"18",
+                        padding:"3px 10px", borderRadius:20 }}>
+                        <div style={{ width:7, height:7, borderRadius:"50%", background: monthOk ? C.green : C.yellow }} />
+                        {monthOk ? "Looking good" : "Check differences"}
+                      </div>
                     </div>
-                    {/* Delivery */}
-                    <div style={{ padding:12, background:C.surface, borderRadius:8, border:`1px solid ${C.border}` }}>
-                      <div style={{ fontSize:11, color:C.muted, marginBottom:8, textTransform:"uppercase", letterSpacing:.5 }}>Delivery (Uber/DoorDash)</div>
-                      <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:4 }}><span style={{color:C.muted}}>Bank received</span><span>{money(row.bankDelivery)}</span></div>
-                      <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:8 }}><span style={{color:C.muted}}>Mise recorded</span><span>{money(row.miseDelivery)}</span></div>
-                      <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, fontWeight:700, paddingTop:8, borderTop:`1px solid ${C.border}` }}>
-                        <span>Difference</span><span style={{ color: Math.abs(row.deliveryDiff) < Math.max(row.miseDelivery*0.2, 50) ? C.muted : C.yellow }}>{money(row.deliveryDiff)}</span>
+
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                      {/* Card / Dine-in */}
+                      <div style={{ padding:12, background:C.surface, borderRadius:8,
+                        border:`1px solid ${cardOk ? C.border : C.yellow+"55"}` }}>
+                        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
+                          <div style={{ fontSize:11, color:C.muted, textTransform:"uppercase", letterSpacing:.5 }}>Card / Dine-in</div>
+                          <div style={{ width:8, height:8, borderRadius:"50%", background:cardHealth.dot }} />
+                        </div>
+                        <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:4 }}>
+                          <span style={{color:C.muted}}>Bank received</span><span>{money(row.bankCard)}</span>
+                        </div>
+                        <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:8 }}>
+                          <span style={{color:C.muted}}>Mise recorded</span><span>{money(row.miseDinein)}</span>
+                        </div>
+                        <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, fontWeight:700,
+                          paddingTop:8, borderTop:`1px solid ${C.border}` }}>
+                          <span>Difference</span>
+                          <span style={{ color:cardHealth.dot }}>{money(row.cardDiff)}</span>
+                        </div>
+                        <div style={{ fontSize:10, color:C.dim, marginTop:6 }}>{cardHealth.msg}</div>
                       </div>
-                      {row.deliveryDiff > 0 && <div style={{ fontSize:10, color:C.dim, marginTop:6 }}>Likely platform commission</div>}
+
+                      {/* Delivery */}
+                      <div style={{ padding:12, background:C.surface, borderRadius:8,
+                        border:`1px solid ${delOk ? C.border : C.yellow+"55"}` }}>
+                        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
+                          <div style={{ fontSize:11, color:C.muted, textTransform:"uppercase", letterSpacing:.5 }}>Delivery (Uber/DoorDash)</div>
+                          <div style={{ width:8, height:8, borderRadius:"50%", background:delHealth.dot }} />
+                        </div>
+                        <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:4 }}>
+                          <span style={{color:C.muted}}>Bank received</span><span>{money(row.bankDelivery)}</span>
+                        </div>
+                        <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:8 }}>
+                          <span style={{color:C.muted}}>Mise recorded</span><span>{money(row.miseDelivery)}</span>
+                        </div>
+                        <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, fontWeight:700,
+                          paddingTop:8, borderTop:`1px solid ${C.border}` }}>
+                          <span>Difference</span>
+                          <span style={{ color:delHealth.dot }}>{money(row.deliveryDiff)}</span>
+                        </div>
+                        <div style={{ fontSize:10, color:C.dim, marginTop:6 }}>{delHealth.msg}</div>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </>
           )}
 
           {tab === "expenses" && (
             <>
-              {/* Summary */}
+              {/* Summary bar */}
               <div className="card" style={{ marginBottom:16 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
                   <div style={{ fontWeight:700, fontSize:15 }}>{expPct}% of bank payments reconciled</div>
                   <div style={{ fontSize:12, color:C.muted }}>{reconciledExp} of {expMatch.results.length}</div>
                 </div>
-                <div style={{ height:8, background:C.surface, borderRadius:20, overflow:"hidden", marginBottom:14 }}>
+                <div style={{ height:8, background:C.surface, borderRadius:20, overflow:"hidden" }}>
                   <div style={{ height:"100%", width:`${expPct}%`, background:C.green, borderRadius:20 }} />
                 </div>
-                {unmatchedDebits.length > 0 && (
-                  <div style={{ fontSize:13, color:C.muted }}>
-                    🔴 <b style={{color:C.text}}>{unmatchedDebits.length}</b> bank payment{unmatchedDebits.length>1?"s":""} ({money(unmatchedAmt)}) not yet recorded in Mise — these may be expenses you've missed.
+              </div>
+
+              {/* Grouped view */}
+              {(() => {
+                const actionItems = expMatch.results.filter(r => r.tier === "unmatched" || r.tier === "manual");
+                const matched     = expMatch.results.filter(r => r.tier === "exact"     || r.tier === "likely");
+                const [showMatched, setShowMatched] = React.useState(false);
+
+                const ExpRow = ({ r, idx }) => (
+                  <div style={{
+                    background:C.surface,
+                    border:`1px solid ${r.tier==="unmatched" ? C.red+"44" : C.yellow+"44"}`,
+                    borderRadius:10, padding:"12px 14px", marginBottom:8,
+                  }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12 }}>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontSize:13, fontWeight:600, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{r.txn.description}</div>
+                        <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>{r.txn.date} · {money(r.txn.amount)}</div>
+                      </div>
+                      <div style={{ flexShrink:0 }}>{tierBadge(r.tier)}</div>
+                    </div>
+                    {r.tier === "manual" && r.candidates.length > 0 && (
+                      <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${C.border}`, fontSize:11, color:C.muted }}>
+                        Possible matches: {r.candidates.slice(0,3).map(c=>`${c.e.cat} ${money(c.e.amount)} (${c.gap}d)`).join("  ·  ")}
+                      </div>
+                    )}
+                    {r.tier === "unmatched" && (
+                      <div style={{ marginTop:8, fontSize:11, color:C.dim }}>Not recorded in Mise. If this is a business cost, add it under Expenses.</div>
+                    )}
                   </div>
-                )}
-              </div>
+                );
 
-              {/* Filter */}
-              <div style={{ display:"flex", gap:6, marginBottom:12, flexWrap:"wrap" }}>
-                {[["all","All"],["exact","Matched"],["likely","Likely"],["manual","Review"],["unmatched","Not found"]].map(([id,lbl])=>(
-                  <button key={id} className={expFilter===id?"btn-p":"btn-g"} onClick={()=>setExpFilter(id)} style={{ margin:0, fontSize:12, padding:"6px 12px" }}>{lbl}</button>
-                ))}
-              </div>
-
-              {/* Rows */}
-              {expResults.length === 0 && <div className="card" style={{color:C.dim}}>Nothing in this filter.</div>}
-              {expResults.map((r,i) => (
-                <div className="card" key={i} style={{ marginBottom:8, padding:"12px 14px" }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12 }}>
+                const MatchedRow = ({ r }) => (
+                  <div style={{
+                    display:"flex", justifyContent:"space-between", alignItems:"center",
+                    padding:"10px 14px", borderBottom:`1px solid ${C.border}`, gap:12,
+                  }}>
                     <div style={{ flex:1, minWidth:0 }}>
-                      <div style={{ fontSize:13, fontWeight:600, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{r.txn.description}</div>
-                      <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>{r.txn.date} · {money(r.txn.amount)}</div>
+                      <div style={{ fontSize:12, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{r.txn.description}</div>
+                      <div style={{ fontSize:11, color:C.muted, marginTop:1 }}>{r.txn.date} · {money(r.txn.amount)}</div>
                     </div>
-                    <div style={{ textAlign:"right" }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
+                      {r.matched && <span style={{ fontSize:11, color:C.dim }}>→ {r.matched.cat}</span>}
                       {tierBadge(r.tier)}
-                      {r.matched && <div style={{ fontSize:11, color:C.muted, marginTop:4 }}>→ {r.matched.cat} {money(r.matched.amount)}</div>}
                     </div>
                   </div>
-                  {r.tier === "manual" && r.candidates.length > 0 && (
-                    <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${C.border}`, fontSize:11, color:C.muted }}>
-                      Possible matches: {r.candidates.slice(0,3).map((c,j)=>`${c.e.cat} ${money(c.e.amount)} (${c.gap}d)`).join("  ·  ")}
-                    </div>
-                  )}
-                  {r.tier === "unmatched" && (
-                    <div style={{ marginTop:8, fontSize:11, color:C.dim }}>No matching expense in Mise. Add it under Expenses if this is a business cost.</div>
-                  )}
-                </div>
-              ))}
+                );
+
+                return (
+                  <>
+                    {actionItems.length > 0 ? (
+                      <div style={{ marginBottom:20 }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+                          <div style={{ width:8, height:8, borderRadius:"50%", background:C.red }} />
+                          <span style={{ fontSize:13, fontWeight:700 }}>Needs your attention ({actionItems.length})</span>
+                          <span style={{ fontSize:11, color:C.dim }}>· {money(actionItems.reduce((s,r)=>s+Math.abs(r.txn.amount),0))} total</span>
+                        </div>
+                        {actionItems.map((r,i) => <ExpRow key={i} r={r} idx={i} />)}
+                      </div>
+                    ) : (
+                      <div className="card" style={{ marginBottom:20, textAlign:"center", padding:"18px 14px" }}>
+                        <div style={{ fontSize:22 }}>✅</div>
+                        <div style={{ fontSize:13, fontWeight:700, color:C.green, marginTop:6 }}>All bank payments accounted for</div>
+                        <div style={{ fontSize:12, color:C.dim, marginTop:4 }}>Nothing needs your attention right now.</div>
+                      </div>
+                    )}
+
+                    {matched.length > 0 && (
+                      <div>
+                        <button onClick={()=>setShowMatched(s=>!s)} style={{
+                          display:"flex", alignItems:"center", gap:8, width:"100%",
+                          background:"none", border:`1px solid ${C.border}`,
+                          borderRadius: showMatched ? "10px 10px 0 0" : 10,
+                          padding:"10px 14px", cursor:"pointer", color:C.muted, fontSize:12, fontWeight:600,
+                        }}>
+                          <div style={{ width:8, height:8, borderRadius:"50%", background:C.green }} />
+                          Already matched ({matched.length})
+                          <span style={{ fontSize:11, color:C.dim }}>· {money(matched.reduce((s,r)=>s+Math.abs(r.txn.amount),0))} total</span>
+                          <span style={{ marginLeft:"auto", fontSize:11 }}>{showMatched ? "▲ hide" : "▼ show"}</span>
+                        </button>
+                        {showMatched && (
+                          <div style={{ border:`1px solid ${C.border}`, borderTop:"none", borderRadius:"0 0 10px 10px", overflow:"hidden" }}>
+                            {matched.map((r,i) => <MatchedRow key={i} r={r} />)}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </>
           )}
         </>

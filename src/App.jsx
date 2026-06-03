@@ -12984,6 +12984,7 @@ function BankReconPage({ revenue, expenses, showToast }) {
   const [tab, setTab]         = React.useState("income");
   const [expFilter, setExpFilter] = React.useState("all");
   const [showMap, setShowMap] = React.useState(false);  // mapping editor open?
+  const [showMatched, setShowMatched] = React.useState(false); // expenses matched section
 
   const onFile = (ev) => {
     const f = ev.target.files && ev.target.files[0];
@@ -13300,7 +13301,6 @@ function BankReconPage({ revenue, expenses, showToast }) {
               {(() => {
                 const actionItems = expMatch.results.filter(r => r.tier === "unmatched" || r.tier === "manual");
                 const matched     = expMatch.results.filter(r => r.tier === "exact"     || r.tier === "likely");
-                const [showMatched, setShowMatched] = React.useState(false);
 
                 const ExpRow = ({ r, idx }) => (
                   <div style={{

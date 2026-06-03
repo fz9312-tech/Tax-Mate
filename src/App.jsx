@@ -2984,18 +2984,18 @@ function LandingPage({ onGo }) {
 
   const t = {
     login:      zh ? "登录" : "Log In",
-    getStarted: zh ? "免费开始" : "Get Started Free",
+    getStarted: zh ? "开始使用" : "Get Started",
     badge:      zh ? "🇦🇺 为澳洲餐厅、咖啡馆和酒吧打造" : "🇦🇺 Built for Australian Restaurants, Cafés & Bars",
     heroA:      zh ? "你管前厅，" : "Run your floor.",
     heroB:      zh ? "记账交给我们。" : "We'll run the books.",
     heroSub:    zh
       ? "排班、记录营业额、看懂盈亏、放心报 BAS。Mise 是唯一按餐饮业真实运作方式设计的财务工具 —— 而不是按会计师的想象。"
       : "Roster your staff. Track your takings. Know your P&L. Lodge your BAS with confidence. Mise is the only finance tool built around how hospitality actually works — not how accountants think it should.",
-    ctaStart:   zh ? "免费开始 →" : "Start for Free →",
+    ctaStart:   zh ? "开始使用 →" : "Get Started →",
     ctaDemo:    zh ? "看演示" : "See a Demo",
     stats: zh
-      ? [{ val:"5 分钟", lbl:"完成设置" },{ val:"$0", lbl:"开始使用" },{ val:"一键", lbl:"BAS 汇总" },{ val:"随时", lbl:"符合 ATO" }]
-      : [{ val:"5 min", lbl:"to set up" },{ val:"$0", lbl:"to start" },{ val:"1 click", lbl:"BAS summary" },{ val:"ATO-ready", lbl:"at all times" }],
+      ? [{ val:"5 分钟", lbl:"完成设置" },{ val:"中英", lbl:"双语界面" },{ val:"一键", lbl:"BAS 汇总" },{ val:"随时", lbl:"符合 ATO" }]
+      : [{ val:"5 min", lbl:"to set up" },{ val:"EN/中文", lbl:"bilingual" },{ val:"1 click", lbl:"BAS summary" },{ val:"ATO-ready", lbl:"at all times" }],
     pills: zh
       ? ["🍽️ 餐厅","☕ 咖啡馆","🍺 酒吧","🥡 外卖店","🍕 餐车","🏪 食品零售"]
       : ["🍽️ Restaurants","☕ Cafés","🍺 Bars & Pubs","🥡 Takeaways","🍕 Food Trucks","🏪 Food Retail"],
@@ -3006,11 +3006,14 @@ function LandingPage({ onGo }) {
     whySub:     zh
       ? "Xero 是给会计师的。Mise 是给那个周四营业前、半夜还在算工资的老板的。"
       : "Xero is great for accountants. Mise is for the owner doing payroll at midnight before a Thursday service.",
-    priceLbl:   zh ? "简单定价" : "Simple Pricing",
-    priceTtl:   zh ? "没有意外。就像你的 BAS 该有的样子。" : "No surprises. Just like your BAS should be.",
-    perMonth:   zh ? "/月" : "/month",
-    chooseStart:zh ? "免费开始" : "Get Started Free",
-    choose:     (tier) => zh ? `选择 ${tier}` : `Choose ${tier}`,
+    acctLbl:    zh ? "也欢迎你的会计师" : "Your Accountant's Welcome Too",
+    acctTtl:    zh ? "你记账，会计师审账 —— 在同一个地方。" : "You keep the books. They check them — in the same place.",
+    acctSub:    zh
+      ? "邀请你的会计师或记账员进 Mise。他们能看到整理好的营业额、支出和 BAS 汇总,在一处审核多个客户 —— 不用再来回发邮件、传 Excel、对不上账。"
+      : "Invite your accountant or bookkeeper into Mise. They see clean revenue, expenses and BAS summaries, review multiple clients in one place — no more back-and-forth emails, spreadsheets or mismatched figures.",
+    acctPts:    zh
+      ? ["客户列表中心","只读 / 可编辑权限","BAS 审核与提交状态","会计师资料包 PDF"]
+      : ["Client list hub","View / edit permissions","BAS review & lodge status","Accountant Pack PDF"],
     disclaimer: zh
       ? "⚠️ Mise 仅生成管理汇总，不能替代注册税务代理或会计师。"
       : "⚠️ Mise generates management summaries only. Not a substitute for a registered tax agent or accountant.",
@@ -3029,7 +3032,7 @@ function LandingPage({ onGo }) {
     { ico:"🏛️", ttl:"实时 ATO 税负", dsc:"实时看到你现在欠 ATO 多少 GST + PAYG —— 随你录入营业额每日更新，不用等季末。" },
     { ico:"🧾", ttl:"支出管理", dsc:"分类每一笔成本，自动标记缺失发票，BAS 时不漏任何 GST 抵扣。常用支出自动记住。" },
     { ico:"👤", ttl:"工资单与工时", dsc:"一键生成合规工资单。临时工津贴、加班、周末费率、PAYG 和养老金全部按 ATO 标准计算。" },
-    { ico:"📥", ttl:"POS CSV 导入", dsc:"从 Square、Lightspeed、Kounta 或任何 POS 导出。Mise 自动映射列 —— 30 秒导入一个月数据。" },
+    { ico:"🏦", ttl:"银行对账", dsc:"上传任意银行的 CSV。Mise 自动核对营业额和支出与银行实际进出 —— 按月汇总收入、逐笔核对支出,找出漏记的账。" },
     { ico:"📋", ttl:"BAS 汇总", dsc:"季度 BAS 数字精确筛选到 ATO 日期范围。见税务代理前先审一遍 —— 不再临时手忙脚乱对账。" },
     { ico:"🔔", ttl:"提醒", dsc:"BAS 截止、未付养老金、即将到期的保险、未结清的离职 —— 全在一处，不让任何事漏掉。" },
     { ico:"🔍", ttl:"审计就绪", dsc:"在 ATO 之前先扫描你的记录，找出缺失发票、娱乐支出和养老金缺口。19 类抵扣清单。" },
@@ -3042,7 +3045,7 @@ function LandingPage({ onGo }) {
     { ico:"🏛️", ttl:"Live ATO Liability",    dsc:"See exactly how much GST + PAYG you owe the ATO right now — updated daily as you enter revenue, not just at quarter end." },
     { ico:"🧾", ttl:"Expense Management",    dsc:"Categorise every cost, flag missing invoices automatically, and never lose a GST credit at BAS time. Recurring expenses remembered." },
     { ico:"👤", ttl:"Payslips & Timesheets", dsc:"Generate compliant payslips with one click. Casual loading, OT, weekend rates, PAYG and super all calculated to ATO spec." },
-    { ico:"📥", ttl:"POS CSV Import",        dsc:"Export from Square, Lightspeed, Kounta or any POS. Mise maps your columns automatically — import a month of data in 30 seconds." },
+    { ico:"🏦", ttl:"Bank Reconciliation",  dsc:"Upload a CSV from any bank. Mise checks your revenue and expenses against what actually hit the account — income summarised by month, expenses matched line by line, missing entries surfaced." },
     { ico:"📋", ttl:"BAS Summary",           dsc:"Quarterly BAS figures filtered to the exact ATO date range. Review before you meet your tax agent — no more rushed reconciliation." },
     { ico:"🔔", ttl:"Reminders",             dsc:"BAS deadlines, unpaid super, expiring insurance, unsettled staff exits — all in one place so nothing falls through the cracks." },
     { ico:"🔍", ttl:"Audit Ready",           dsc:"Scans your records for missing invoices, entertainment expenses and super gaps before the ATO does. 19-category deduction checklist." },
@@ -3055,25 +3058,18 @@ function LandingPage({ onGo }) {
     { ico:"📅", ttl:"排班到工资单一站搞定", dsc:"排班、确认工时、生成工资单、导出养老金义务 —— 无需切换工具。" },
     { ico:"📊", ttl:"你的损益，不只是 GST", dsc:"了解毛利率、成本和息税前利润 —— 会计师评估业务健康用的数字。" },
     { ico:"🔔", ttl:"没有遗漏", dsc:"BAS 截止、养老金、保险续期、未结离职的提醒 —— 在它们变成问题前就提醒。" },
-    { ico:"💰", ttl:"只需记账员的零头", dsc:"Mise 免费起步。Pro 每月比一小时记账费还低 —— 而且你始终掌控。" },
+    { ico:"🌐", ttl:"中英双语", dsc:"整个界面一键中英切换。给华人餐饮老板的母语体验 —— 也方便交给说英文的会计师看。" },
   ] : [
     { ico:"⚡", ttl:"Up in 5 minutes",           dsc:"No chart of accounts. No bank reconciliation setup. Open it, enter your takings, and you're done." },
     { ico:"🇦🇺", ttl:"Australian tax law built in",dsc:"GST channels, PAYG Scale 2, SGC super rates, ATO quarter dates and BAS structure — all correct out of the box." },
     { ico:"📅", ttl:"Roster → payslip in one app", dsc:"Roster your staff, confirm hours, generate payslips and export super obligations — without switching tools." },
     { ico:"📊", ttl:"Your P&L, not just your GST", dsc:"Know your gross margin, COGS and EBIT — the numbers your accountant uses to assess business health." },
     { ico:"🔔", ttl:"Nothing slips through",      dsc:"Reminders for BAS deadlines, super payments, insurance renewals and unsettled staff exits — before they become problems." },
-    { ico:"💰", ttl:"A fraction of a bookkeeper", dsc:"Mise starts free. Pro is less per month than one hour of bookkeeping time — and you stay in control." },
+    { ico:"🌐", ttl:"Bilingual, English & 中文", dsc:"Switch the whole interface between English and Chinese in one tap. Native for Chinese-background owners — and easy to hand to an English-speaking accountant." },
   ];
 
-  const plans = zh ? [
-    { tier:"Starter", price:"$0",  hi:false, feats:["营业额追踪（渠道 + CSV 导入）","支出管理 + 自动分类","基础 BAS 预估","最多 3 名员工档案","损益表","所有业务类型"] },
-    { tier:"Pro",     price:"$29", hi:true,  feats:["包含 Starter 全部","无限员工 + 工时","排班含人力成本视图","工资单 + 批量 ZIP 导出","实时 ATO 税负看板","现金流视图","提醒与警示","保险看板","审计就绪扫描","文档中心"] },
-    { tier:"Studio",  price:"$79", hi:false, feats:["包含 Pro 全部","会计师资料包 PDF","BAS 历史 + 报税流程","月度 IAS","年度损益导出","优先支持"] },
-  ] : [
-    { tier:"Starter", price:"$0",  hi:false, feats:["Revenue tracking (channels + CSV import)","Expense management + auto-categorisation","Basic BAS estimate","Up to 3 staff profiles","P&L Statement","All business types"] },
-    { tier:"Pro",     price:"$29", hi:true,  feats:["Everything in Starter","Unlimited staff + timesheets","Roster with labour cost view","Payslips + batch ZIP export","Live ATO liability dashboard","Cash Flow view","Reminders & alerts","Insurance dashboard","Audit Ready scanner","Document Hub"] },
-    { tier:"Studio",  price:"$79", hi:false, feats:["Everything in Pro","Accountant Pack PDF","BAS history + lodge workflow","Monthly IAS","Annual P&L export","Priority support"] },
-  ];
+
+
 
   return (
     <div className="land">
@@ -3194,23 +3190,21 @@ function LandingPage({ onGo }) {
         </div>
       </div>
 
-      {/* Pricing */}
-      <div className="price-sec">
-        <div className="price-lbl">{t.priceLbl}</div>
-        <div className="price-ttl">{t.priceTtl}</div>
-        <div className="price-grid">
-          {plans.map((p,i) => (
-            <div key={i} className={`price-card${p.hi?" hi":""}`}>
-              <div className="p-tier">{p.tier}</div>
-              <div><span className="p-amt">{p.price}</span><span className="p-per">{t.perMonth}</span></div>
-              <ul className="p-list">{p.feats.map((f,j) => <li key={j}>{f}</li>)}</ul>
-              <button className="btn" style={{ marginTop:14, width:"100%" }} onClick={onGo}>
-                {p.tier === "Starter" ? t.chooseStart : t.choose(p.tier)}
-              </button>
-            </div>
-          ))}
+      {/* Accountant collaboration */}
+      <div style={{ padding:"8px 40px 48px", maxWidth:760, margin:"0 auto" }}>
+        <div style={{ background:C.surface, border:`1px solid ${C.border}`, borderRadius:16, padding:"28px 28px", textAlign:"center" }}>
+          <div style={{ fontSize:30, marginBottom:12 }}>{zh ? "🤝" : "🤝"}</div>
+          <div style={{ fontSize:10.5, fontWeight:700, color:C.teal, textTransform:"uppercase", letterSpacing:"1px", marginBottom:8 }}>{t.acctLbl}</div>
+          <div style={{ fontSize:20, fontWeight:700, letterSpacing:"-.5px", fontFamily:"'Fraunces', serif", marginBottom:10 }}>{t.acctTtl}</div>
+          <div style={{ fontSize:13.5, color:C.muted, lineHeight:1.7, maxWidth:560, margin:"0 auto 18px" }}>{t.acctSub}</div>
+          <div style={{ display:"flex", gap:18, justifyContent:"center", flexWrap:"wrap" }}>
+            {t.acctPts.map((p,i) => (
+              <div key={i} style={{ display:"flex", alignItems:"center", gap:7, fontSize:12.5, color:C.text }}>
+                <span style={{ color:C.green }}>✓</span>{p}
+              </div>
+            ))}
+          </div>
         </div>
-        <p style={{ fontSize:10.5, color:C.dim, marginTop:16 }}>{t.disclaimer}</p>
       </div>
 
 

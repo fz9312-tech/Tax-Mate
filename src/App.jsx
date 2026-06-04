@@ -13020,6 +13020,12 @@ function BankReconPage({ revenue, expenses, showToast }) {
     showToast && showToast(`Re-parsed: ${res.txns.length} transactions`);
   };
 
+  const autoDetect = () => {
+    const res = parseBankCSV(rawText); // no override → re-runs auto detection
+    setParsed(res);
+    showToast && showToast(`Auto-detected: ${res.txns.length} transactions`);
+  };
+
   const incomeRows = parsed ? summariseIncome(parsed.txns, revenue) : [];
   const bankDebits = parsed ? parsed.txns.filter(t => ["expense_bill","expense_card","expense_transfer","payroll","expense_other"].includes(t.bucket)) : [];
   const expMatch   = parsed ? matchExpenses(bankDebits, expenses) : { results:[], miseOnly:[] };
@@ -13093,13 +13099,26 @@ function BankReconPage({ revenue, expenses, showToast }) {
             );
             return (
               <div>
+                <button onClick={autoDetect} className="btn-g"
+                  style={{ margin:"0 0 12px", fontSize:11, padding:"6px 12px" }}>
+                  ↺ Reset to auto-detect
+                </button>
                 <div style={{ marginBottom:10 }}>
                   <div style={{ fontSize:11, color:C.muted, marginBottom:3 }}>Amount format</div>
                   <div style={{ display:"flex", gap:6 }}>
                     <button className={m.mode==="single"?"btn-p":"btn-g"} style={{margin:0,fontSize:11,padding:"5px 10px"}}
-                      onClick={()=>reparseWith({...m, mode:"single", debitCol:null, creditCol:null, amountCol: m.amountCol ?? m.debitCol})}>One column (+/-)</button>
+                      onClick={()=>reparseWith({...m, mode:"single", debitCol:null, creditCol:null, amountCol: m.amountCol ?? m.debitCol ?? m.balanceCol})}>One column (+/-)</button>
                     <button className={m.mode==="debitcredit"?"btn-p":"btn-g"} style={{margin:0,fontSize:11,padding:"5px 10px"}}
-                      onClick={()=>reparseWith({...m, mode:"debitcredit", amountCol:null, debitCol: m.debitCol ?? m.amountCol, creditCol: m.creditCol})}>Debit / Credit columns</button>
+                      onClick={()=>{
+                        // Pick two distinct money-ish columns for debit/credit, avoiding date & desc
+                        const taken = new Set([m.dateCol, m.descCol]);
+                        const moneyish = (parsed.preview||[]).length
+                          ? Array.from({length:parsed.colCount}, (_,i)=>i).filter(i=>!taken.has(i))
+                          : [];
+                        const d = m.debitCol ?? m.amountCol ?? moneyish[0] ?? null;
+                        const c = m.creditCol ?? moneyish.find(i=>i!==d) ?? null;
+                        reparseWith({...m, mode:"debitcredit", amountCol:null, debitCol:d, creditCol:c});
+                      }}>Debit / Credit columns</button>
                   </div>
                 </div>
                 {sel("Date column", "dateCol", m.dateCol)}

@@ -12814,45 +12814,58 @@ function classify(desc, amt) {
 // Auto-detect the column mapping from profiled rows
 function detectMapping(rows) {
   const prof = profileColumns(rows);
+  const nCols = prof.length;
+
   // date = highest dateRatio (>0.5)
   const dateCol = prof.filter(p=>p.dateRatio>0.5).sort((a,b)=>b.dateRatio-a.dateRatio)[0];
-  // money columns = moneyRatio>0.6, not the date col
+  // money columns = moneyRatio>0.6, excluding the date col
   const moneyCols = prof.filter(p=>p.moneyRatio>0.6 && (!dateCol||p.col!==dateCol.col)).sort((a,b)=>b.moneyRatio-a.moneyRatio);
-  // description = highest avgLen among non-date, non-money
+  // description = highest avgLen among cols not used as date/money
   const usedCols = new Set([dateCol?.col, ...moneyCols.map(m=>m.col)].filter(x=>x!=null));
-  const descCol = prof.filter(p=>!usedCols.has(p.col)).sort((a,b)=>b.avgLen-a.avgLen)[0];
+  let descCol = prof.filter(p=>!usedCols.has(p.col)).sort((a,b)=>b.avgLen-a.avgLen)[0];
+  // Fallback: if no free column left for description, pick the highest-avgLen non-date, non-amount col
+  if (!descCol) {
+    descCol = prof.filter(p => p.col !== (dateCol?.col) && !moneyCols.slice(0,1).map(m=>m.col).includes(p.col))
+                  .sort((a,b)=>b.avgLen-a.avgLen)[0];
+  }
 
   // Decide amount mode: single signed col, or two-column debit/credit.
-  // Heuristic: if >=2 money cols and many rows have exactly one of the two filled → debit/credit pair.
   let mode = "single", amountCol = null, debitCol = null, creditCol = null, balanceCol = null;
   if (moneyCols.length >= 2) {
-    // check the top 2 money cols for "mutually exclusive" pattern
     const [m1, m2] = moneyCols;
-    let exclusive = 0, both = 0, checked = 0;
+    let exclusive = 0, checked = 0;
     for (const r of rows) {
       const a = (r[m1.col]||"").trim(), b = (r[m2.col]||"").trim();
       if (!a && !b) continue;
       checked++;
       if ((a&&!b)||(b&&!a)) exclusive++;
-      if (a&&b) both++;
     }
     if (checked && exclusive/checked > 0.7) {
       mode = "debitcredit"; debitCol = m1.col; creditCol = m2.col;
-      // balance = a third money col if present (usually has value on every row)
       balanceCol = moneyCols[2] ? moneyCols[2].col : null;
     } else {
-      mode = "single"; amountCol = m1.col; balanceCol = m2.col; // 2nd money col is likely balance
+      mode = "single"; amountCol = m1.col; balanceCol = m2.col;
     }
   } else if (moneyCols.length === 1) {
     mode = "single"; amountCol = moneyCols[0].col;
   }
 
+  // ── Safety: guarantee date/desc/amount are DISTINCT columns ──
+  const dc = dateCol?.col ?? null;
+  let ds = descCol?.col ?? null;
+  // description must not collide with date or amount/debit/credit
+  const moneyUsed = new Set([amountCol, debitCol, creditCol].filter(x=>x!=null));
+  if (ds === dc || moneyUsed.has(ds)) {
+    const free = prof.map(p=>p.col).find(c => c !== dc && !moneyUsed.has(c));
+    ds = free != null ? free : ds;
+  }
+
   return {
     mode,
-    dateCol: dateCol?.col ?? null,
-    descCol: descCol?.col ?? null,
+    dateCol: dc,
+    descCol: ds,
     amountCol, debitCol, creditCol, balanceCol,
-    confident: !!(dateCol && (amountCol!=null || (debitCol!=null&&creditCol!=null)) && descCol),
+    confident: !!(dc != null && (amountCol!=null || (debitCol!=null&&creditCol!=null)) && ds != null && ds !== dc),
   };
 }
 

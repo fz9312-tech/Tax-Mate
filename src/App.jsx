@@ -12745,13 +12745,14 @@ function splitLine(line) {
 
 // Try several date formats → YYYY-MM-DD (AU: day-first preferred)
 function parseDateCell(s) {
-  const v = (s||"").trim();
+  let v = (s||"").trim().replace(/^["']|["']$/g,"").trim(); // strip stray quotes
   let m;
-  if ((m = v.match(/^(\d{4})-(\d{2})-(\d{2})$/)))            return `${m[1]}-${m[2]}-${m[3]}`;            // YYYY-MM-DD
-  if ((m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)))       return `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`; // DD/MM/YYYY
-  if ((m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/)))       return `20${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`; // DD/MM/YY
-  if ((m = v.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/)))         return `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`; // DD-MM-YYYY
-  if ((m = v.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2,4})$/))) { // DD-Mon-YY
+  if ((m = v.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/)))   return `${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`; // YYYY-MM-DD / YYYY/MM/DD
+  if ((m = v.match(/^(\d{1,2})[/.](\d{1,2})[/.](\d{4})$/)))     return `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`; // DD/MM/YYYY DD.MM.YYYY
+  if ((m = v.match(/^(\d{1,2})[/.](\d{1,2})[/.](\d{2})$/)))     return `20${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`; // DD/MM/YY
+  if ((m = v.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/)))           return `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`; // DD-MM-YYYY
+  if ((m = v.match(/^(\d{1,2})-(\d{1,2})-(\d{2})$/)))           return `20${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`; // DD-MM-YY
+  if ((m = v.match(/^(\d{1,2})[-\s]([A-Za-z]{3})[A-Za-z]*[-\s](\d{2,4})$/))) { // DD-Mon-YY / DD Month YYYY
     const mo = {jan:"01",feb:"02",mar:"03",apr:"04",may:"05",jun:"06",jul:"07",aug:"08",sep:"09",oct:"10",nov:"11",dec:"12"}[m[2].toLowerCase()];
     if (mo) { const yr = m[3].length===2 ? "20"+m[3] : m[3]; return `${yr}-${mo}-${m[1].padStart(2,"0")}`; }
   }
@@ -12918,7 +12919,7 @@ function parseBankCSV(text, overrideMapping) {
   const preview = dataRows.slice(0, 5);
   const headerRow = dataStart > 0 ? allRows[dataStart-1] : null;
 
-  return { txns, errors, mapping, preview, headerRow, colCount: Math.max(...dataRows.map(r=>r.length)) };
+  return { txns, errors, mapping, preview, headerRow, colCount: dataRows.length ? Math.max(...dataRows.map(r=>r.length)) : 0 };
 }
 
 // ---- Expense line-by-line matcher (direction 3) ----
@@ -13107,6 +13108,28 @@ function BankReconPage({ revenue, expenses, showToast }) {
                   ? sel("Amount column (+ in / − out)", "amountCol", m.amountCol)
                   : (<>{sel("Debit column (money out)", "debitCol", m.debitCol)}{sel("Credit column (money in)", "creditCol", m.creditCol)}</>)}
                 <div style={{ fontSize:11, color:C.dim, marginTop:4 }}>{parsed.txns.length} transactions parsed with current settings.</div>
+
+                {/* Diagnostic: what Mise actually read from the file */}
+                <details style={{ marginTop:10, fontSize:11, color:C.muted }}>
+                  <summary style={{ cursor:"pointer", color:C.dim }}>🔍 Diagnostic (what Mise sees)</summary>
+                  <div style={{ marginTop:8, padding:10, background:C.bg, borderRadius:8, border:`1px solid ${C.border}`, fontFamily:"monospace", fontSize:10, lineHeight:1.6, overflowX:"auto" }}>
+                    <div>Columns detected: {parsed.colCount}</div>
+                    <div>Rows after header skip: {(parsed.preview||[]).length>0 ? "yes" : "NONE — no date row found"}</div>
+                    <div style={{ marginTop:6, color:C.text }}>First rows (raw):</div>
+                    {(parsed.preview||[]).slice(0,3).map((row,ri)=>(
+                      <div key={ri} style={{ marginTop:4 }}>
+                        {(row||[]).map((cell,ci)=>(
+                          <span key={ci} style={{ marginRight:8 }}>[{ci}]"{String(cell).slice(0,18)}"</span>
+                        ))}
+                      </div>
+                    ))}
+                    {(parsed.preview||[]).length===0 && (
+                      <div style={{ color:C.red, marginTop:6 }}>
+                        ⚠️ No data rows recognised. The file may use a date format Mise doesn't know, or it isn't a transaction CSV. First raw line of the file is shown below — check if column 1 looks like a date.
+                      </div>
+                    )}
+                  </div>
+                </details>
               </div>
             );
           })()}

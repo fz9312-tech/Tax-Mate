@@ -13072,7 +13072,7 @@ function summariseIncome(bankTxns, revenue) {
   });
 }
 
-function BankReconPage({ revenue, expenses, timesheets = [], employees = [], showToast }) {
+function BankReconPage({ revenue, expenses, timesheets = [], employees = [], bizId = null, showToast }) {
   const [parsed, setParsed]   = React.useState(null);   // {txns, errors, mapping, preview, colCount}
   const [rawText, setRawText] = React.useState("");     // keep raw CSV for re-parse on override
   const [fileName, setFileName] = React.useState("");
@@ -13080,6 +13080,36 @@ function BankReconPage({ revenue, expenses, timesheets = [], employees = [], sho
   const [expFilter, setExpFilter] = React.useState("all");
   const [showMap, setShowMap] = React.useState(false);  // mapping editor open?
   const [showMatched, setShowMatched] = React.useState(false); // expenses matched section
+  const [exclusions, setExclusions] = React.useState({}); // txnId -> reason (step 3 will use this)
+
+  // ── Persistence: localStorage scoped by business (same key discipline as usePersisted) ──
+  const lsKey = bizId ? `mise_bankrecon_${bizId}` : null;
+  const saveRecon = (patch) => {
+    if (!lsKey) return;
+    try {
+      const cur = JSON.parse(localStorage.getItem(lsKey) || "{}");
+      localStorage.setItem(lsKey, JSON.stringify({ ...cur, ...patch, savedAt: new Date().toISOString() }));
+    } catch {} // quota/JSON errors — persistence is best-effort
+  };
+  const clearRecon = () => {
+    if (lsKey) { try { localStorage.removeItem(lsKey); } catch {} }
+    setParsed(null); setRawText(""); setFileName(""); setExclusions({}); setShowMap(false);
+    showToast && showToast("Reconciliation cleared");
+  };
+  // Restore last session for this business on mount / business switch
+  React.useEffect(() => {
+    if (!lsKey) return;
+    try {
+      const saved = JSON.parse(localStorage.getItem(lsKey) || "null");
+      if (saved && saved.rawText) {
+        const res = parseBankCSV(saved.rawText, saved.mapping || undefined);
+        setRawText(saved.rawText); setFileName(saved.fileName || "saved statement");
+        setParsed(res); setExclusions(saved.exclusions || {});
+      } else {
+        setParsed(null); setRawText(""); setFileName(""); setExclusions({});
+      }
+    } catch {}
+  }, [lsKey]);
 
   const onFile = (ev) => {
     const f = ev.target.files && ev.target.files[0];
@@ -13089,7 +13119,9 @@ function BankReconPage({ revenue, expenses, timesheets = [], employees = [], sho
       const txt = e.target.result;
       const res = parseBankCSV(txt);
       setRawText(txt); setParsed(res); setFileName(f.name);
+      setExclusions({}); // new statement = fresh marks
       setShowMap(!res.mapping.confident || res.txns.length === 0); // auto-open editor if unsure
+      saveRecon({ fileName: f.name, rawText: txt, mapping: res.mapping, exclusions: {} });
       showToast && showToast(`Loaded ${res.txns.length} transactions`);
     };
     reader.readAsText(f);
@@ -13098,12 +13130,14 @@ function BankReconPage({ revenue, expenses, timesheets = [], employees = [], sho
   const reparseWith = (newMapping) => {
     const res = parseBankCSV(rawText, newMapping);
     setParsed(res);
+    saveRecon({ mapping: res.mapping });
     showToast && showToast(`Re-parsed: ${res.txns.length} transactions`);
   };
 
   const autoDetect = () => {
     const res = parseBankCSV(rawText); // no override → re-runs auto detection
     setParsed(res);
+    saveRecon({ mapping: res.mapping });
     showToast && showToast(`Auto-detected: ${res.txns.length} transactions`);
   };
 
@@ -13146,6 +13180,7 @@ function BankReconPage({ revenue, expenses, timesheets = [], employees = [], sho
             <input type="file" accept=".csv" onChange={onFile} style={{ display:"none" }} />
           </label>
           {fileName && <span style={{ fontSize:12, color:C.muted }}>{fileName} · {parsed.txns.length} transactions{parsed.errors? ` · ${parsed.errors} skipped`:""}</span>}
+          {fileName && <button onClick={clearRecon} title="Clear and start over" style={{ background:"none", border:"none", color:C.dim, cursor:"pointer", fontSize:14, padding:"2px 6px" }}>✕</button>}
           {!fileName && <span style={{ fontSize:12, color:C.dim }}>Export transactions as CSV from any bank's online banking. Mise auto-detects the columns. Account number and balance are ignored.</span>}
           {fileName && <button className="btn-g" style={{ margin:0, fontSize:12, padding:"6px 12px", marginLeft:"auto" }} onClick={()=>setShowMap(s=>!s)}>{showMap?"Hide":"Check"} columns</button>}
         </div>
@@ -14714,7 +14749,7 @@ const bootFromSession = async (session) => {
           {page === "ias"            && <IASPage        timesheets={timesheets} employees={employees} ias={ias} setIas={setIas} showToast={showToast} bizName={bizName} bizABN={bizABN}/>}
           {page === "documents"      && <DocumentsPage documents={documents} setDocuments={setDocuments} employees={employees} showToast={showToast}/>}
           {page === "bassummary"     && <BASSummaryPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} basHistory={basHistory} setBasHistory={setBasHistory} showToast={showToast} bizName={bizName} bizABN={bizABN} ias={ias} currentRole={currentRole} currentUserEmail={currentUserEmail}/>}
-          {page === "bankrecon"      && <BankReconPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} showToast={showToast}/>}
+          {page === "bankrecon"      && <BankReconPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} bizId={bizId} showToast={showToast}/>}
           {page === "reports"        && <ReportsPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} inventory={inventory} setInventory={setInventory} bizName={bizName} bizABN={bizABN}/>}
           {page === "settings"       && <SettingsPage industry={industry} setIndustry={setIndustry} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN} bizId={bizId} currentRole={currentRole} companyName={companyName} setCompanyName={setCompanyName} bizSettings={bizSettings} updateSetting={updateSetting}/>}
         </main>

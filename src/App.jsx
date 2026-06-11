@@ -13399,14 +13399,21 @@ function BankReconPage({ revenue, expenses, timesheets = [], employees = [], biz
               {incomeRows.length === 0 && <div className="card" style={{color:C.dim}}>No income found in this statement period.</div>}
               {incomeRows.map(row => {
                 // Health logic per channel
+                // BLIND-SPOT FIX: bank received money but Mise has NOTHING recorded
+                // is the worst case (whole month missing) — red, never "looking good".
+                const cardMissing = row.miseDinein   <= 0 && row.bankCard     > 0;
+                const delMissing  = row.miseDelivery <= 0 && row.bankDelivery > 0;
                 const cardPct  = row.miseDinein   > 0 ? Math.abs(row.cardDiff)     / row.miseDinein   : 0;
                 const delPct   = row.miseDelivery > 0 ? Math.abs(row.deliveryDiff) / row.miseDelivery : 0;
-                const cardOk   = cardPct  < 0.5;  // <50% diff = expected (cash component)
-                const delOk    = delPct   < 0.25; // <25% diff = expected (commission)
-                const cardHealth  = cardOk  ? { dot:C.green,  msg:"Normal — difference is likely cash takings" }
-                                           : { dot:C.yellow, msg:"Larger than expected — worth a closer look" };
-                const delHealth   = delOk   ? { dot:C.green,  msg:"Normal — likely platform commission" }
-                                           : { dot:C.yellow, msg:"Larger than expected — worth a closer look" };
+                const cardOk   = !cardMissing && cardPct  < 0.5;  // <50% diff = expected (cash component)
+                const delOk    = !delMissing  && delPct   < 0.25; // <25% diff = expected (commission)
+                const cardHealth  = cardMissing ? { dot:C.red,    msg:"Bank received money but nothing is recorded in Mise this month" }
+                                  : cardOk      ? { dot:C.green,  msg:"Normal — difference is likely cash takings" }
+                                                : { dot:C.yellow, msg:"Larger than expected — worth a closer look" };
+                const delHealth   = delMissing  ? { dot:C.red,    msg:"Bank received money but nothing is recorded in Mise this month" }
+                                  : delOk       ? { dot:C.green,  msg:"Normal — likely platform commission" }
+                                                : { dot:C.yellow, msg:"Larger than expected — worth a closer look" };
+                const monthMissing = cardMissing || delMissing;
                 const monthOk  = cardOk && delOk;
                 return (
                   <div className="card" key={row.month} style={{ marginBottom:12 }}>
@@ -13416,11 +13423,11 @@ function BankReconPage({ revenue, expenses, timesheets = [], employees = [], biz
                         {new Date(row.month+"-01").toLocaleDateString("en-AU",{month:"long",year:"numeric"})}
                       </div>
                       <div style={{ display:"flex", alignItems:"center", gap:6, fontSize:12,
-                        color: monthOk ? C.green : C.yellow,
-                        background: (monthOk ? C.green : C.yellow)+"18",
+                        color: monthMissing ? C.red : monthOk ? C.green : C.yellow,
+                        background: (monthMissing ? C.red : monthOk ? C.green : C.yellow)+"18",
                         padding:"3px 10px", borderRadius:20 }}>
-                        <div style={{ width:7, height:7, borderRadius:"50%", background: monthOk ? C.green : C.yellow }} />
-                        {monthOk ? "Looking good" : "Check differences"}
+                        <div style={{ width:7, height:7, borderRadius:"50%", background: monthMissing ? C.red : monthOk ? C.green : C.yellow }} />
+                        {monthMissing ? "Missing records" : monthOk ? "Looking good" : "Check differences"}
                       </div>
                     </div>
 

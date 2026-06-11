@@ -12956,6 +12956,87 @@ function matchExpenses(bankDebits, expenses) {
   return { results, miseOnly };
 }
 
+// ---- Wage matcher (bank pays NET per person; Mise computes GROSS per week) ----
+// Primary signal: employee NAME in bank description. Amount confirms; tolerance is
+// wide because PAYG withholding makes net ≠ gross for higher earners.
+function buildPayRuns(timesheets, employees) {
+  const empById = {};
+  for (const e of (employees||[])) empById[e.id] = e;
+  return (timesheets||[]).map(ts => {
+    const emp = empById[ts.eid];
+    if (!emp || !emp.rate) return null;
+    const gross = emp.rate * ((ts.std_hrs||0) + OT_RATE*(ts.ot_hrs||0) + WKND_RATE*(ts.wknd_hrs||0));
+    if (gross <= 0) return null;
+    return {
+      id: ts.id, type: "payroll",
+      date: weekToDate(ts.week),            // Monday of that week (pay lands within ~2wks)
+      amount: Math.round(gross*100)/100,
+      label: emp.name || "",
+      week: ts.week,
+    };
+  }).filter(Boolean);
+}
+
+function matchWages(bankDebits, payRuns, employees) {
+  const dgap = (a,b) => Math.floor(new Date(a+"T00:00:00")/864e5) - Math.floor(new Date(b+"T00:00:00")/864e5);
+  // employee name tokens (len>=3) for description matching
+  const nameTokens = (employees||[]).map(e => ({
+    emp: e,
+    tokens: String(e.name||"").toLowerCase().split(/\s+/).filter(t=>t.length>=3),
+  })).filter(x => x.tokens.length);
+
+  const findEmpInDesc = (desc) => {
+    const d = (desc||"").toLowerCase();
+    for (const {emp, tokens} of nameTokens) {
+      if (tokens.some(t => d.includes(t))) return emp;
+    }
+    return null;
+  };
+
+  const used = new Set();
+  const results = [];
+  const claimed = new Set();
+
+  for (const txn of bankDebits) {
+    const empHit = findEmpInDesc(txn.description);
+    const isPayrollBucket = txn.bucket === "payroll";
+    if (!empHit && !isPayrollBucket) continue;     // not a wage txn — leave to expense matcher
+
+    claimed.add(txn.id);
+    const amt = Math.abs(txn.amount);
+
+    // candidate pay runs: same employee (if known), pay window weekStart-2 … weekStart+16 days
+    let cands = payRuns.filter(p => !used.has(p.id));
+    if (empHit) cands = cands.filter(p => p.label === empHit.name);
+    cands = cands
+      .map(p => ({ p, gapDays: dgap(txn.date, p.date), diff: Math.abs(amt - p.amount) }))
+      .filter(c => c.gapDays >= -2 && c.gapDays <= 16)
+      .sort((x,y) => (x.diff - y.diff) || (Math.abs(x.gapDays) - Math.abs(y.gapDays)));
+
+    if (cands.length === 0) {
+      results.push({ txn, tier:"unmatched", matched:null, candidates:[], isWage:true,
+        note: empHit ? `Looks like a wage for ${empHit.name}, but no matching timesheet found` : "Wage-like payment with no matching timesheet" });
+      continue;
+    }
+
+    const best = cands[0];
+    const tol = Math.max(80, best.p.amount * 0.15); // net-vs-gross slack
+    if (best.diff < 1) {
+      used.add(best.p.id);
+      results.push({ txn, tier:"exact", matched:best.p, candidates:cands.slice(0,3), isWage:true });
+    } else if (best.diff <= tol) {
+      used.add(best.p.id);
+      results.push({ txn, tier:"likely", matched:best.p, candidates:cands.slice(0,3), isWage:true,
+        note:"Amount differs slightly — likely tax withholding (net vs gross)" });
+    } else {
+      results.push({ txn, tier:"manual", matched:null, candidates:cands.slice(0,3), isWage:true,
+        note: empHit ? `Wage for ${empHit.name}? Amount doesn't match the timesheet` : "Possible wage — please confirm" });
+    }
+  }
+
+  return { results, claimed };
+}
+
 // ---- Income monthly summary (direction 1) ----
 function monthKey(d){ return d.slice(0,7); }
 function summariseIncome(bankTxns, revenue) {
@@ -12991,7 +13072,7 @@ function summariseIncome(bankTxns, revenue) {
   });
 }
 
-function BankReconPage({ revenue, expenses, showToast }) {
+function BankReconPage({ revenue, expenses, timesheets = [], employees = [], showToast }) {
   const [parsed, setParsed]   = React.useState(null);   // {txns, errors, mapping, preview, colCount}
   const [rawText, setRawText] = React.useState("");     // keep raw CSV for re-parse on override
   const [fileName, setFileName] = React.useState("");
@@ -13028,7 +13109,13 @@ function BankReconPage({ revenue, expenses, showToast }) {
 
   const incomeRows = parsed ? summariseIncome(parsed.txns, revenue) : [];
   const bankDebits = parsed ? parsed.txns.filter(t => ["expense_bill","expense_card","expense_transfer","payroll","expense_other"].includes(t.bucket)) : [];
-  const expMatch   = parsed ? matchExpenses(bankDebits, expenses) : { results:[], miseOnly:[] };
+
+  // Wages first (name-based), then expenses on whatever wasn't claimed
+  const payRuns    = React.useMemo(() => buildPayRuns(timesheets, employees), [timesheets, employees]);
+  const wageMatch  = parsed ? matchWages(bankDebits, payRuns, employees) : { results:[], claimed:new Set() };
+  const nonWageDebits = bankDebits.filter(t => !wageMatch.claimed.has(t.id));
+  const expOnly    = parsed ? matchExpenses(nonWageDebits, expenses) : { results:[], miseOnly:[] };
+  const expMatch   = { results: [...wageMatch.results, ...expOnly.results], miseOnly: expOnly.miseOnly };
 
   const tierBadge = (tier) => {
     const map = { exact:{c:C.green,t:"Matched"}, likely:{c:C.blue,t:"Likely"}, manual:{c:C.yellow,t:"Review"}, unmatched:{c:C.red,t:"Not found"} };
@@ -13372,10 +13459,16 @@ function BankReconPage({ revenue, expenses, showToast }) {
                     </div>
                     {r.tier === "manual" && r.candidates.length > 0 && (
                       <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${C.border}`, fontSize:11, color:C.muted }}>
-                        Possible matches: {r.candidates.slice(0,3).map(c=>`${c.e.cat} ${money(c.e.amount)} (${c.gap}d)`).join("  ·  ")}
+                        Possible matches: {r.candidates.slice(0,3).map(c => c.e
+                          ? `${c.e.cat} ${money(c.e.amount)} (${c.gap}d)`
+                          : `👤 ${c.p.label} ${money(c.p.amount)} (wk ${c.p.week||""})`
+                        ).join("  ·  ")}
                       </div>
                     )}
-                    {r.tier === "unmatched" && (
+                    {r.note && (
+                      <div style={{ marginTop:8, fontSize:11, color:C.dim }}>{r.note}</div>
+                    )}
+                    {r.tier === "unmatched" && !r.note && (
                       <div style={{ marginTop:8, fontSize:11, color:C.dim }}>Not recorded in Mise. If this is a business cost, add it under Expenses.</div>
                     )}
                   </div>
@@ -13391,7 +13484,7 @@ function BankReconPage({ revenue, expenses, showToast }) {
                       <div style={{ fontSize:11, color:C.muted, marginTop:1 }}>{r.txn.date} · {money(r.txn.amount)}</div>
                     </div>
                     <div style={{ display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
-                      {r.matched && <span style={{ fontSize:11, color:C.dim }}>→ {r.matched.cat}</span>}
+                      {r.matched && <span style={{ fontSize:11, color:C.dim }}>→ {r.isWage ? `👤 ${r.matched.label} (wage)` : r.matched.cat}</span>}
                       {tierBadge(r.tier)}
                     </div>
                   </div>
@@ -14621,7 +14714,7 @@ const bootFromSession = async (session) => {
           {page === "ias"            && <IASPage        timesheets={timesheets} employees={employees} ias={ias} setIas={setIas} showToast={showToast} bizName={bizName} bizABN={bizABN}/>}
           {page === "documents"      && <DocumentsPage documents={documents} setDocuments={setDocuments} employees={employees} showToast={showToast}/>}
           {page === "bassummary"     && <BASSummaryPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} basHistory={basHistory} setBasHistory={setBasHistory} showToast={showToast} bizName={bizName} bizABN={bizABN} ias={ias} currentRole={currentRole} currentUserEmail={currentUserEmail}/>}
-          {page === "bankrecon"      && <BankReconPage revenue={revenue} expenses={expenses} showToast={showToast}/>}
+          {page === "bankrecon"      && <BankReconPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} showToast={showToast}/>}
           {page === "reports"        && <ReportsPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} inventory={inventory} setInventory={setInventory} bizName={bizName} bizABN={bizABN}/>}
           {page === "settings"       && <SettingsPage industry={industry} setIndustry={setIndustry} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN} bizId={bizId} currentRole={currentRole} companyName={companyName} setCompanyName={setCompanyName} bizSettings={bizSettings} updateSetting={updateSetting}/>}
         </main>

@@ -13015,7 +13015,7 @@ function matchWages(bankDebits, payRuns, employees) {
 
     if (cands.length === 0) {
       results.push({ txn, tier:"unmatched", matched:null, candidates:[], isWage:true,
-        note: empHit ? `Looks like a wage for ${empHit.name}, but no matching timesheet found` : "Wage-like payment with no matching timesheet" });
+        note: empHit ? `Looks like a wage for ${empHit.name}, but no timesheet matches. Add their hours in Roster — Mise will match it. (Wages have no GST; don't add them under Expenses.)` : "Wage-like payment with no matching timesheet. Record hours in Roster — wages have no GST and don't belong in Expenses." });
       continue;
     }
 
@@ -13075,7 +13075,7 @@ function summariseIncome(bankTxns, revenue) {
   });
 }
 
-function BankReconPage({ revenue, expenses, timesheets = [], employees = [], bizId = null, showToast }) {
+function BankReconPage({ revenue, setRevenue = null, expenses, timesheets = [], employees = [], bizId = null, showToast }) {
   const [parsed, setParsed]   = React.useState(null);   // {txns, errors, mapping, preview, colCount}
   const [rawText, setRawText] = React.useState("");     // keep raw CSV for re-parse on override
   const [fileName, setFileName] = React.useState("");
@@ -13170,6 +13170,27 @@ function BankReconPage({ revenue, expenses, timesheets = [], employees = [], biz
   const restoreTxn = (txnId) => {
     const next = { ...exclusions }; delete next[txnId];
     setExclusions(next); saveRecon({ exclusions: next });
+  };
+
+  // ── Backfill: add a month's card settlements into Mise revenue (confirmed, never automatic) ──
+  const backfillCardMonth = (month) => {
+    if (!setRevenue || !parsed) return;
+    const setts = parsed.txns.filter(t => t.bucket === "income_card" && t.date.slice(0,7) === month);
+    if (!setts.length) return;
+    const total = setts.reduce((s,t)=>s+t.amount,0);
+    const ok = window.confirm(
+      `Add ${setts.length} card settlement${setts.length>1?"s":""} (${money(total)}) from ${month} to Mise as revenue?\n\n` +
+      `Each becomes one revenue entry on its bank date, channel "Card takings (bank import)".\n` +
+      `Cash takings are NOT included — add those separately.`
+    );
+    if (!ok) return;
+    const recs = setts.map(t => ({
+      id: Date.now() + Math.random(),
+      date: t.date,
+      channels: [{ name: "Card takings (bank import)", amount: Math.round(t.amount*100)/100, gstInclusive: true }],
+    }));
+    setRevenue(p => [...p, ...recs]);
+    showToast && showToast(`Added ${recs.length} revenue entries from bank settlements`);
   };
 
   const reconciledExp = liveResults.filter(r => r.tier === "exact" || r.tier === "likely").length;
@@ -13451,6 +13472,12 @@ function BankReconPage({ revenue, expenses, timesheets = [], employees = [], biz
                           <span style={{ color:cardHealth.dot }}>{money(row.cardDiff)}</span>
                         </div>
                         <div style={{ fontSize:10, color:C.dim, marginTop:6 }}>{cardHealth.msg}</div>
+                        {cardMissing && setRevenue && (
+                          <button onClick={()=>backfillCardMonth(row.month)} className="btn-g"
+                            style={{ margin:"10px 0 0", width:"100%", fontSize:11, padding:"7px 10px" }}>
+                            ➕ Add these card settlements to Mise revenue
+                          </button>
+                        )}
                       </div>
 
                       {/* Delivery */}
@@ -13472,6 +13499,14 @@ function BankReconPage({ revenue, expenses, timesheets = [], employees = [], biz
                           <span style={{ color:delHealth.dot }}>{money(row.deliveryDiff)}</span>
                         </div>
                         <div style={{ fontSize:10, color:C.dim, marginTop:6 }}>{delHealth.msg}</div>
+                        {delMissing && (
+                          <div style={{ marginTop:8, padding:"8px 10px", background:C.surfaceAlt, borderRadius:6,
+                            fontSize:10, color:C.muted, lineHeight:1.55 }}>
+                            Platform payouts land <b style={{color:C.text}}>net of commission</b> — recording them as revenue
+                            would understate your sales and GST. The right way is importing the platform's own statement
+                            (Uber / DoorDash / HungryPanda), which also captures the <b style={{color:C.text}}>GST on commission you can claim</b>. That import is on the roadmap.
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -14804,7 +14839,7 @@ const bootFromSession = async (session) => {
           {page === "ias"            && <IASPage        timesheets={timesheets} employees={employees} ias={ias} setIas={setIas} showToast={showToast} bizName={bizName} bizABN={bizABN}/>}
           {page === "documents"      && <DocumentsPage documents={documents} setDocuments={setDocuments} employees={employees} showToast={showToast}/>}
           {page === "bassummary"     && <BASSummaryPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} basHistory={basHistory} setBasHistory={setBasHistory} showToast={showToast} bizName={bizName} bizABN={bizABN} ias={ias} currentRole={currentRole} currentUserEmail={currentUserEmail}/>}
-          {page === "bankrecon"      && <BankReconPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} bizId={bizId} showToast={showToast}/>}
+          {page === "bankrecon"      && <BankReconPage revenue={revenue} setRevenue={setRevenue} expenses={expenses} timesheets={timesheets} employees={employees} bizId={bizId} showToast={showToast}/>}
           {page === "reports"        && <ReportsPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} inventory={inventory} setInventory={setInventory} bizName={bizName} bizABN={bizABN}/>}
           {page === "settings"       && <SettingsPage industry={industry} setIndustry={setIndustry} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN} bizId={bizId} currentRole={currentRole} companyName={companyName} setCompanyName={setCompanyName} bizSettings={bizSettings} updateSetting={updateSetting}/>}
         </main>

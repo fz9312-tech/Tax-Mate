@@ -13056,8 +13056,11 @@ function summariseIncome(bankTxns, revenue) {
     mise[mk] = mise[mk] || { dinein:0, delivery:0 };
     for (const ch of (r.channels||[])) {
       const nm = (ch.name||"").toLowerCase();
-      if (nm.includes("delivery") || nm.includes("platform")) mise[mk].delivery += ch.amount;
-      else mise[mk].dinein += ch.amount; // dine-in + takeaway (includes cash)
+      // Delivery platform channel — match EN keywords, platform names, and Chinese (外卖/外送/配送/平台)
+      const isDelivery = ["delivery","platform","uber","doordash","menulog","deliveroo","外卖","外送","配送","平台"]
+        .some(k => nm.includes(k));
+      if (isDelivery) mise[mk].delivery += ch.amount;
+      else mise[mk].dinein += ch.amount; // dine-in + takeaway (includes cash) — 堂食/自取/现金都归这边
     }
   }
   const months = [...new Set([...Object.keys(bank), ...Object.keys(mise)])].sort().reverse();
@@ -13077,7 +13080,6 @@ function BankReconPage({ revenue, expenses, timesheets = [], employees = [], biz
   const [rawText, setRawText] = React.useState("");     // keep raw CSV for re-parse on override
   const [fileName, setFileName] = React.useState("");
   const [tab, setTab]         = React.useState("income");
-  const [expFilter, setExpFilter] = React.useState("all");
   const [showMap, setShowMap] = React.useState(false);  // mapping editor open?
   const [showMatched, setShowMatched] = React.useState(false); // expenses matched section
   const [exclusions, setExclusions] = React.useState({}); // txnId -> reason (step 3 will use this)
@@ -13157,11 +13159,21 @@ function BankReconPage({ revenue, expenses, timesheets = [], employees = [], biz
     return <span style={{ fontSize:10, fontWeight:700, padding:"2px 8px", borderRadius:20, background:x.c+"22", color:x.c, whiteSpace:"nowrap" }}>{x.t}</span>;
   };
 
-  const expResults = expMatch.results.filter(r => expFilter === "all" ? true : r.tier === expFilter);
-  const reconciledExp = expMatch.results.filter(r => r.tier === "exact" || r.tier === "likely").length;
-  const expPct = expMatch.results.length ? Math.round(reconciledExp / expMatch.results.length * 100) : 0;
-  const unmatchedDebits = expMatch.results.filter(r => r.tier === "unmatched");
-  const unmatchedAmt = unmatchedDebits.reduce((s,r)=>s+Math.abs(r.txn.amount),0);
+  // ── Exclusions: split results into live (counted) vs excluded (parked) ──
+  const liveResults = expMatch.results.filter(r => !exclusions[r.txn.id]);
+  const exclResults = expMatch.results.filter(r => exclusions[r.txn.id]);
+  const excludeTxn = (txnId) => {
+    const next = { ...exclusions, [txnId]: "not_business" };
+    setExclusions(next); saveRecon({ exclusions: next });
+    showToast && showToast("Marked as not business — excluded from reconciliation");
+  };
+  const restoreTxn = (txnId) => {
+    const next = { ...exclusions }; delete next[txnId];
+    setExclusions(next); saveRecon({ exclusions: next });
+  };
+
+  const reconciledExp = liveResults.filter(r => r.tier === "exact" || r.tier === "likely").length;
+  const expPct = liveResults.length ? Math.round(reconciledExp / liveResults.length * 100) : 0;
 
   return (
     <div className="page">
@@ -13319,7 +13331,7 @@ function BankReconPage({ revenue, expenses, timesheets = [], employees = [], biz
           {(() => {
             const totalTxns   = parsed.txns.length;
             const months      = incomeRows.length;
-            const needsAction = expMatch.results.filter(r => r.tier === "unmatched" || r.tier === "manual").length;
+            const needsAction = liveResults.filter(r => r.tier === "unmatched" || r.tier === "manual").length;
             const incomeOk    = incomeRows.every(r =>
               Math.abs(r.cardDiff) < r.miseDinein * 0.5 &&
               Math.abs(r.deliveryDiff) < Math.max(r.miseDelivery * 0.3, 100)
@@ -13476,8 +13488,8 @@ function BankReconPage({ revenue, expenses, timesheets = [], employees = [], biz
 
               {/* Grouped view */}
               {(() => {
-                const actionItems = expMatch.results.filter(r => r.tier === "unmatched" || r.tier === "manual");
-                const matched     = expMatch.results.filter(r => r.tier === "exact"     || r.tier === "likely");
+                const actionItems = liveResults.filter(r => r.tier === "unmatched" || r.tier === "manual");
+                const matched     = liveResults.filter(r => r.tier === "exact"     || r.tier === "likely");
 
                 const ExpRow = ({ r, idx }) => (
                   <div style={{
@@ -13490,7 +13502,15 @@ function BankReconPage({ revenue, expenses, timesheets = [], employees = [], biz
                         <div style={{ fontSize:13, fontWeight:600, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{r.txn.description}</div>
                         <div style={{ fontSize:11, color:C.muted, marginTop:2 }}>{r.txn.date} · {money(r.txn.amount)}</div>
                       </div>
-                      <div style={{ flexShrink:0 }}>{tierBadge(r.tier)}</div>
+                      <div style={{ display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
+                        {tierBadge(r.tier)}
+                        <button onClick={()=>excludeTxn(r.txn.id)}
+                          title="This is personal / an internal transfer — exclude it from reconciliation"
+                          style={{ background:"none", border:`1px solid ${C.border}`, borderRadius:8,
+                            color:C.muted, cursor:"pointer", fontSize:10.5, padding:"4px 9px", whiteSpace:"nowrap" }}>
+                          ✕ Not business
+                        </button>
+                      </div>
                     </div>
                     {r.tier === "manual" && r.candidates.length > 0 && (
                       <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${C.border}`, fontSize:11, color:C.muted }}>
@@ -13562,6 +13582,34 @@ function BankReconPage({ revenue, expenses, timesheets = [], employees = [], biz
                             {matched.map((r,i) => <MatchedRow key={i} r={r} />)}
                           </div>
                         )}
+                      </div>
+                    )}
+
+                    {/* Excluded — marked as not business */}
+                    {exclResults.length > 0 && (
+                      <div style={{ marginTop:12 }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
+                          <div style={{ width:8, height:8, borderRadius:"50%", background:C.dim }} />
+                          <span style={{ fontSize:12, fontWeight:600, color:C.dim }}>
+                            Excluded — not business ({exclResults.length})
+                          </span>
+                        </div>
+                        {exclResults.map((r,i) => (
+                          <div key={i} style={{
+                            display:"flex", justifyContent:"space-between", alignItems:"center",
+                            padding:"8px 14px", gap:12, opacity:.6,
+                            borderBottom:`1px solid ${C.border}`,
+                          }}>
+                            <div style={{ flex:1, minWidth:0 }}>
+                              <div style={{ fontSize:12, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", textDecoration:"line-through" }}>{r.txn.description}</div>
+                              <div style={{ fontSize:11, color:C.dim, marginTop:1 }}>{r.txn.date} · {money(r.txn.amount)}</div>
+                            </div>
+                            <button onClick={()=>restoreTxn(r.txn.id)}
+                              style={{ background:"none", border:"none", color:C.muted, cursor:"pointer", fontSize:11, whiteSpace:"nowrap" }}>
+                              ↩ Restore
+                            </button>
+                          </div>
+                        ))}
                       </div>
                     )}
                   </>

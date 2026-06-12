@@ -947,6 +947,50 @@ const money = n =>
   "$" + Math.abs(n).toLocaleString("en-AU",{ minimumFractionDigits:2, maximumFractionDigits:2 });
 
 // ════════════════════════════════════════════════════════════
+//  ERROR BOUNDARY — one page crashing must never white-screen the app.
+//  Wrapped around <main> content, keyed by `page` so navigating resets it.
+// ════════════════════════════════════════════════════════════
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { try { console.error("Mise ErrorBoundary caught:", error, info && info.componentStack); } catch {} }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ maxWidth:560, margin:"60px auto", textAlign:"center", padding:"36px 28px",
+          background:C.surface, border:`1px solid ${C.border}`, borderRadius:16 }}>
+          <div style={{ fontSize:38, marginBottom:12 }}>🛠️</div>
+          <div style={{ fontSize:17, fontWeight:700, marginBottom:8, color:C.text }}>Something went wrong in this section</div>
+          <div style={{ fontSize:13, color:C.muted, lineHeight:1.6, marginBottom:6 }}>
+            The rest of Mise is fine and your data is safe. Try again, or head back to the dashboard.
+          </div>
+          <div style={{ fontSize:11, color:C.dim, marginBottom:20, fontFamily:"monospace", wordBreak:"break-all" }}>
+            {String((this.state.error && this.state.error.message) || this.state.error)}
+          </div>
+          <div style={{ display:"flex", gap:10, justifyContent:"center" }}>
+            <button className="btn-g" style={{ margin:0 }} onClick={() => this.setState({ error:null })}>↺ Try again</button>
+            {this.props.onHome && <button className="btn-p" style={{ margin:0 }}
+              onClick={() => { this.setState({ error:null }); this.props.onHome(); }}>← Back to Dashboard</button>}
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// ── Amount sanity guard: single manual entries above this are almost always typos ──
+const AMOUNT_SANITY_LIMIT = 100000;
+const confirmLargeAmount = (amt, label = "This amount") => {
+  const n = Math.abs(parseFloat(amt) || 0);
+  if (n < AMOUNT_SANITY_LIMIT) return true;
+  return window.confirm(
+    `⚠️ ${label} is $${n.toLocaleString("en-AU")} — unusually large for a single entry.\n\n` +
+    `Double-check you haven't typed an extra digit. Save anyway?`
+  );
+};
+
+// ════════════════════════════════════════════════════════════
 //  AUDIT TRAIL — per-record metadata (Approach A)
 //  Each audited record carries a _meta field:
 //    _meta: {
@@ -4668,6 +4712,8 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
         gstInclusive: !!c.gstInclusive,
       }));
     if (cleanChannels.length === 0) { showToast("Add at least one channel with an amount."); return; }
+    const totalAmt = cleanChannels.reduce((s,c)=>s+c.amount,0);
+    if (!confirmLargeAmount(totalAmt, "This day's takings total")) return;
     const entry = { date:f.date, channels:cleanChannels };
     if (editId) {
       // Preserve record identity but drop any legacy v1 fields by replacing fully
@@ -5636,6 +5682,7 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
 
   const add = () => {
     if (!f.amount || !f.desc) return;
+    if (!confirmLargeAmount(f.amount, "This expense")) return;
     const fullDesc = f.desc + (supplier ? ` — ${supplier}` : "");
     const fp = makeFP(fullDesc, f.cat);
 
@@ -5679,6 +5726,7 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
   // One-click direct add — bypasses form, used by templates & recurring with fixed amounts
   const addDirect = ({ cat, amount, desc, gst, invoice }) => {
     if (!amount || !desc) return;
+    if (!confirmLargeAmount(amount, "This expense")) return;
     setExpenses(p => [...p, {
       id:Date.now(), date:todayStr, cat,
       amount:parseFloat(amount)||0,
@@ -14770,6 +14818,7 @@ const bootFromSession = async (session) => {
       <div className="layout">
         <Sidebar page={page} setPage={setPage} onLogout={async () => { if(window._supabase) await sb().auth.signOut(); try { Object.keys(localStorage).forEach(k => { if (k.startsWith("mise_")) localStorage.removeItem(k); }); } catch {} setScreen("landing"); setBizId(null); setCurrentUserEmail(""); setUserBusinesses([]); }} flagCount={flagCount} industry={industry} companyName={companyName} accountUserType={accountUserType} onBackToHub={() => setAccountantMode("hub")}/>
         <main className="main">
+        <ErrorBoundary key={page} onHome={() => setPage("dashboard")}>
           {/* ── Phase 1 Step 4: Client Switcher (only for users with ≥2 businesses) ── */}
           {userBusinesses.length > 1 && (
             <div style={{
@@ -14842,6 +14891,7 @@ const bootFromSession = async (session) => {
           {page === "bankrecon"      && <BankReconPage revenue={revenue} setRevenue={setRevenue} expenses={expenses} timesheets={timesheets} employees={employees} bizId={bizId} showToast={showToast}/>}
           {page === "reports"        && <ReportsPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} inventory={inventory} setInventory={setInventory} bizName={bizName} bizABN={bizABN}/>}
           {page === "settings"       && <SettingsPage industry={industry} setIndustry={setIndustry} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN} bizId={bizId} currentRole={currentRole} companyName={companyName} setCompanyName={setCompanyName} bizSettings={bizSettings} updateSetting={updateSetting}/>}
+        </ErrorBoundary>
         </main>
         <BottomTabBar page={page} setPage={setPage} flagCount={flagCount}/>
         {toast && <Toast msg={toast} onDone={() => setToast(null)}/>}

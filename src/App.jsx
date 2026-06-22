@@ -979,6 +979,10 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+// ── Delete confirmation: high-value records are irreversible, so confirm first ──
+const confirmDelete = (what = "this record") =>
+  window.confirm(`Delete ${what}?\n\nThis can't be undone.`);
+
 // ── Amount sanity guard: single manual entries above this are almost always typos ──
 const AMOUNT_SANITY_LIMIT = 100000;
 const confirmLargeAmount = (amt, label = "This amount") => {
@@ -4740,7 +4744,7 @@ function RevenuePage({ revenue, setRevenue, showToast }) {
   };
   const cancelEdit = () => { setEditId(null); setF(makeBlank()); };
   const clearForm  = () => { setF(makeBlank()); };
-  const del_ = id => { setRevenue(p => p.filter(x => x.id !== id)); if (editId===id) cancelEdit(); if (expandedId===id) setExpandedId(null); showToast("Deleted."); };
+  const del_ = id => { if (!confirmDelete("this day's takings")) return; setRevenue(p => p.filter(x => x.id !== id)); if (editId===id) cancelEdit(); if (expandedId===id) setExpandedId(null); showToast("Deleted."); };
 
   // ── Aggregated totals for overview cards & history footer ──
   const totalAll = revenue.reduce((s,r) => s + revTotal(r), 0);
@@ -6696,7 +6700,7 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
                         <td>{e.invoice ? <span className="pill pl-g">✅ Yes</span> : <span className="pill pl-r">❌ No</span>}</td>
                         <td style={{whiteSpace:"nowrap"}}>
                           <button className="btn-ic" title="History" onClick={() => setHistoryRec(e)}>📋</button>
-                          <button className="btn-ic" title="Delete" onClick={() => { setExpenses(p => p.filter(x => x.id !== e.id)); showToast("Expense deleted"); }}>🗑️</button>
+                          <button className="btn-ic" title="Delete" onClick={() => { if (!confirmDelete("this expense")) return; setExpenses(p => p.filter(x => x.id !== e.id)); showToast("Expense deleted"); }}>🗑️</button>
                         </td>
                       </tr>
                     );
@@ -8594,7 +8598,7 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster,
     else { setEmployees(p => p.map(e => e.id === emp.id ? emp : e)); showToast(`${emp.name} updated!`); }
     setEmpModal(null);
   };
-  const delEmp   = id  => { setEmployees(p => p.filter(e => e.id !== id)); setTimesheets(p => p.filter(t => t.eid !== id)); setLeave(p => p.filter(l => l.eid !== id)); showToast("Employee removed."); };
+  const delEmp   = id  => { if (!confirmDelete("this employee and all their timesheets & leave records")) return; setEmployees(p => p.filter(e => e.id !== id)); setTimesheets(p => p.filter(t => t.eid !== id)); setLeave(p => p.filter(l => l.eid !== id)); showToast("Employee removed."); };
   const saveTs = ts => {
     if (ts.id && timesheets.find(x => x.id === ts.id)) {
       setTimesheets(p => p.map(x => x.id === ts.id ? ts : x));
@@ -8941,7 +8945,7 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster,
                       </td>
                       <td style={{whiteSpace:"nowrap"}}>
                         <button className="btn-ic" title="Edit" onClick={() => setTsModal(timesheets.find(x => x.id === t.id))}>✏️</button>
-                        <button className="btn-ic" title="Delete" onClick={() => setTimesheets(p => p.filter(x => x.id !== t.id))}>🗑️</button>
+                        <button className="btn-ic" title="Delete" onClick={() => { if (!confirmDelete("this timesheet")) return; setTimesheets(p => p.filter(x => x.id !== t.id)); }}>🗑️</button>
                       </td>
                     </tr>
                   ))
@@ -9238,7 +9242,7 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster,
                           <td style={{ color:C.muted, fontSize:12 }}>{l.notes || "—"}</td>
                           <td style={{ whiteSpace:"nowrap" }}>
                             <button className="btn-ic" title="Edit" onClick={() => setLf({ eid:String(l.eid), type:l.type, date:l.date, hours:String(l.hours), notes:l.notes||"", editId:l.id })}>✏️</button>
-                            <button className="btn-ic" onClick={() => { setLeave(p => p.filter(x => x.id !== l.id)); showToast("Leave record removed."); }}>🗑️</button>
+                            <button className="btn-ic" onClick={() => { if (!confirmDelete("this leave record")) return; setLeave(p => p.filter(x => x.id !== l.id)); showToast("Leave record removed."); }}>🗑️</button>
                           </td>
                         </tr>
                       );
@@ -9964,7 +9968,7 @@ function DayWorkersTab({ showToast, workers, setWorkers }) {
                   <td className="mono" style={{ color:C.blue }}>{money(w.super)}</td>
                   <td className="mono" style={{ color:C.yellow }}>{money(w.payg)}</td>
                   <td style={{ color:C.muted, fontSize:12 }}>{w.notes || "—"}</td>
-                  <td><button className="btn-ic" onClick={() => { setWorkers(p => p.filter(x => x.id !== w.id)); showToast("Record removed."); }}>🗑️</button></td>
+                  <td><button className="btn-ic" onClick={() => { if (!confirmDelete("this day worker record")) return; setWorkers(p => p.filter(x => x.id !== w.id)); showToast("Record removed."); }}>🗑️</button></td>
                 </tr>
               ))
             }
@@ -10253,7 +10257,7 @@ function InsurancePage({ insurance, setInsurance, employees, timesheets, showToa
                   </div>
                   <div style={{ display:"flex", gap:5 }}>
                     <button className="btn-b" onClick={() => startEdit(ins)}>Edit</button>
-                    <button className="btn-r" onClick={() => { setInsurance(p => p.filter(x => x.id !== ins.id)); showToast("Policy removed."); }}>Remove</button>
+                    <button className="btn-r" onClick={() => { if (!confirmDelete("this insurance policy")) return; setInsurance(p => p.filter(x => x.id !== ins.id)); showToast("Policy removed."); }}>Remove</button>
                   </div>
                 </div>
 
@@ -11918,7 +11922,7 @@ function DocumentsPage({ documents, setDocuments, employees, showToast }) {
                             <span style={{ fontSize:10, color:C.dim }}>Demo file</span>
                           )}
                           <button className="btn-b" style={{ fontSize:10, padding:"3px 8px" }} onClick={() => openTag(d)}>Tag</button>
-                          <button className="btn-r" style={{ fontSize:10 }} onClick={() => { setDocuments(p=>p.filter(x=>x.id!==d.id)); showToast("Document removed."); }}>✕</button>
+                          <button className="btn-r" style={{ fontSize:10 }} onClick={() => { if (!confirmDelete("this document")) return; setDocuments(p=>p.filter(x=>x.id!==d.id)); showToast("Document removed."); }}>✕</button>
                         </div>
                       </td>
                     </tr>

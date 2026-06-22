@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import React from "react";
 
 // ════════════════════════════════════════════════════════════
@@ -11974,7 +11974,11 @@ function IASPage({ timesheets, employees, ias, setIas, showToast, bizName, bizAB
     setLocalAdj(found);
   };
 
-  const d = buildIASMonthData(timesheets, employees, selMonth);
+  const d = useMemo(() => buildIASMonthData(timesheets, employees, selMonth), [timesheets, employees, selMonth]);
+  // Memoized per-month data for the history table (was rebuilt on every render, per row)
+  const iasMonthData = useMemo(() => {
+    const o = {}; for (const m of IAS_MONTHS) o[m] = buildIASMonthData(timesheets, employees, m); return o;
+  }, [timesheets, employees]);
   const finalW1 = d.autoW1 + (localAdj.adjustW1 || 0);
   const finalW2 = d.autoW2 + (localAdj.adjustW2 || 0);
 
@@ -12278,7 +12282,7 @@ function IASPage({ timesheets, employees, ias, setIas, showToast, bizName, bizAB
             </thead>
             <tbody>
               {IAS_MONTHS.map(m => {
-                const md   = buildIASMonthData(timesheets, employees, m);
+                const md   = iasMonthData[m];
                 const mrec = ias.find(r => r.month === m);
                 const st   = mrec?.status || "draft";
                 const scfg = IAS_STATUS_CFG[st];
@@ -12323,7 +12327,10 @@ function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, d
   const [editNotes, setEditNotes] = useState(""); // notes when saving
   const [editAgent, setEditAgent] = useState(""); // reviewed-by field
 
-  const d = buildBASData(revenue, expenses, timesheets, employees, insurance, documents, selQ, ias);
+  const d = useMemo(
+    () => buildBASData(revenue, expenses, timesheets, employees, insurance, documents, selQ, ias),
+    [revenue, expenses, timesheets, employees, insurance, documents, selQ, ias]
+  );
 
   // ── History helpers ────────────────────────────────────────
   const STATUS_CFG = {
@@ -13724,9 +13731,11 @@ function ReportsPage({ revenue, expenses, timesheets, employees, insurance, docu
   const [plFY,    setPlFY]    = useState(FIN_YEARS[0]);
   const [stockForm, setStockForm] = useState({ quarter: BAS_QUARTERS[0], opening:"", closing:"", notes:"" });
 
-  const bas    = buildBASData(revenue, expenses, timesheets, employees, insurance, documents, selQ);
-  const annual = buildAnnualData(revenue, expenses, timesheets, employees, insurance, documents);
-  const rows   = annotateTimesheets(employees, timesheets);
+  const bas    = useMemo(() => buildBASData(revenue, expenses, timesheets, employees, insurance, documents, selQ),
+                         [revenue, expenses, timesheets, employees, insurance, documents, selQ]);
+  const annual = useMemo(() => buildAnnualData(revenue, expenses, timesheets, employees, insurance, documents),
+                         [revenue, expenses, timesheets, employees, insurance, documents]);
+  const rows   = useMemo(() => annotateTimesheets(employees, timesheets), [employees, timesheets]);
 
   // ── P&L calculation ────────────────────────────────────────
   const [plDateMode, setPlDateMode] = useState("payment"); // "payment" | "invoice"

@@ -6274,7 +6274,7 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
         {/* Fields — only show once category is selected */}
         <div className="frow2">
           <div className="fg"><label className="flbl">Amount ($)</label>
-            <input id="exp-amount-input" className="inp" type="number" placeholder="0.00" value={f.amount} onChange={e => setF({...f,amount:e.target.value})}/>
+            <input id="exp-amount-input" className="inp" type="number" inputMode="decimal" placeholder="0.00" value={f.amount} onChange={e => setF({...f,amount:e.target.value})}/>
           </div>
           <div className="fg"><label className="flbl">Date</label>
             <input className="inp" type="date" value={f.date} onChange={e => setF({...f,date:e.target.value})}/>
@@ -6988,7 +6988,7 @@ function Pagination({ page, totalPages, pageSize, totalRows, startIdx, endIdx, o
           <>
             <span style={{fontSize:11, color:C.muted}}>Go to:</span>
             <input
-              type="number"
+              type="number" inputMode="numeric"
               min={1}
               max={totalPages}
               placeholder={String(page)}
@@ -7132,7 +7132,7 @@ function EmployeeModal({ emp, onSave, onClose }) {
           </div>
           <div className="fg">
             <label className="flbl">Base Hourly Rate ($)</label>
-            <input className="inp" type="number" placeholder="0.00" value={f.rate} onChange={e => setF({...f,rate:e.target.value})}/>
+            <input className="inp" type="number" inputMode="decimal" placeholder="0.00" value={f.rate} onChange={e => setF({...f,rate:e.target.value})}/>
             {rate > 0 && (
               <span className="fhint">
                 {f.type === "casual"
@@ -7170,7 +7170,7 @@ function EmployeeModal({ emp, onSave, onClose }) {
           </div>
           <div className="fg">
             <label className="flbl">Standard Weekly Hours</label>
-            <input className="inp" type="number" placeholder="e.g. 38" value={f.std_hrs} onChange={e => setF({...f,std_hrs:e.target.value})}/>
+            <input className="inp" type="number" inputMode="decimal" placeholder="e.g. 38" value={f.std_hrs} onChange={e => setF({...f,std_hrs:e.target.value})}/>
             {wkGross > 0 && <span className="fhint">Est. weekly gross: {money(wkGross)}</span>}
           </div>
           <div className="fg"><label className="flbl">Start Date</label><input className="inp" type="date" value={f.start} onChange={e => setF({...f,start:e.target.value})}/></div>
@@ -7202,7 +7202,7 @@ function EmployeeModal({ emp, onSave, onClose }) {
           <div className="frow2" style={{ marginBottom:14 }}>
             <div className="fg">
               <label className="flbl">Fixed Weekly Gross ($)</label>
-              <input className="inp" type="number" placeholder="e.g. 1500.00" value={f.fixed_weekly_gross}
+              <input className="inp" type="number" inputMode="decimal" placeholder="e.g. 1500.00" value={f.fixed_weekly_gross}
                 onChange={e => setF({...f, fixed_weekly_gross:e.target.value})}/>
               {fixedWeekly > 0 && (
                 <span className="fhint">
@@ -7248,7 +7248,7 @@ function EmployeeModal({ emp, onSave, onClose }) {
               Weekly PAYG Withholding
               {f.payg_override === "" ? <span style={{color:C.muted, fontWeight:400}}> — auto</span> : <span style={{color:C.yellow, fontWeight:400}}> — manual</span>}
             </label>
-            <input className="inp" type="number" placeholder="Auto (leave blank)"
+            <input className="inp" type="number" inputMode="decimal" placeholder="Auto (leave blank)"
               value={f.payg_override}
               onChange={e => setF({...f, payg_override:e.target.value})}/>
             <span className="fhint">
@@ -7260,7 +7260,7 @@ function EmployeeModal({ emp, onSave, onClose }) {
               Weekly Super Contribution
               {f.super_override === "" ? <span style={{color:C.muted, fontWeight:400}}> — auto</span> : <span style={{color:C.blue, fontWeight:400}}> — manual</span>}
             </label>
-            <input className="inp" type="number" placeholder="Auto (leave blank)"
+            <input className="inp" type="number" inputMode="decimal" placeholder="Auto (leave blank)"
               value={f.super_override}
               onChange={e => setF({...f, super_override:e.target.value})}/>
             <span className="fhint">
@@ -7414,17 +7414,17 @@ function TimesheetModal({ employees, onSave, onClose, initial }) {
         <div className="frow3">
           <div className="fg">
             <label className="flbl">Standard Hours</label>
-            <input className="inp" type="number" placeholder="e.g. 38" value={f.std_hrs} onChange={e => setF({...f,std_hrs:e.target.value})}/>
+            <input className="inp" type="number" inputMode="decimal" placeholder="e.g. 38" value={f.std_hrs} onChange={e => setF({...f,std_hrs:e.target.value})}/>
             {emp && std > 0 && <span className={`fhint${std > emp.std_hrs ? " y" : ""}`}>{std > emp.std_hrs ? "⚠️ Above standard" : "Within standard"}</span>}
           </div>
           <div className="fg">
             <label className="flbl">Overtime Hours <span style={{ color:C.yellow, fontSize:9.5 }}>×1.5</span></label>
-            <input className="inp" type="number" placeholder="0" value={f.ot_hrs} onChange={e => setF({...f,ot_hrs:e.target.value})}/>
+            <input className="inp" type="number" inputMode="decimal" placeholder="0" value={f.ot_hrs} onChange={e => setF({...f,ot_hrs:e.target.value})}/>
             {emp && ot > 0 && <span className="fhint y">OT pay: {money(effRate(emp)*OT_RATE*ot)}</span>}
           </div>
           <div className="fg">
             <label className="flbl">Weekend / PH Hours <span style={{ color:C.red, fontSize:9.5 }}>×1.75</span></label>
-            <input className="inp" type="number" placeholder="0" value={f.wknd_hrs} onChange={e => setF({...f,wknd_hrs:e.target.value})}/>
+            <input className="inp" type="number" inputMode="decimal" placeholder="0" value={f.wknd_hrs} onChange={e => setF({...f,wknd_hrs:e.target.value})}/>
             {emp && wknd > 0 && <span className="fhint r">PH pay: {money(effRate(emp)*WKND_RATE*wknd)}</span>}
           </div>
         </div>
@@ -7583,7 +7583,7 @@ function ShiftModal({ employees, initial, onSave, onClose, applyOT, applyWknd })
             </div>
             <div className="fg">
               <label className="flbl">Break (mins)</label>
-              <input type="number" className="inp" value={f.break_mins} onChange={upd("break_mins")} min={0} max={120} step={5}/>
+              <input type="number" inputMode="numeric" className="inp" value={f.break_mins} onChange={upd("break_mins")} min={0} max={120} step={5}/>
             </div>
           </div>
           <div className="frow2">
@@ -8199,7 +8199,7 @@ function RosterTab({ employees, roster, setRoster, showToast, revenue = [] }) {
         {editBudget ? (
           <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12, background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:9, padding:"10px 14px" }}>
             <span style={{ fontSize:12, fontWeight:700, color:C.muted, whiteSpace:"nowrap" }}>Weekly Labour Budget $</span>
-            <input className="inp" type="number" placeholder="e.g. 4000" style={{ flex:1, maxWidth:140 }}
+            <input className="inp" type="number" inputMode="decimal" placeholder="e.g. 4000" style={{ flex:1, maxWidth:140 }}
               defaultValue={weekBudget || ""} autoFocus
               onBlur={e => { const v = parseFloat(e.target.value)||0; setWeekBudget(v); localStorage.setItem("mise_week_budget",v); setEditBudget(false); }}
               onKeyDown={e => { if(e.key==="Enter"){ const v=parseFloat(e.target.value)||0; setWeekBudget(v); localStorage.setItem("mise_week_budget",v); setEditBudget(false); } if(e.key==="Escape") setEditBudget(false); }}/>
@@ -9180,7 +9180,7 @@ function WagesPage({ employees, setEmployees, timesheets, setTimesheets, roster,
               </div>
               <div className="fg">
                 <label className="flbl">Hours Taken *</label>
-                <input className="inp" type="number" placeholder="e.g. 7.6" value={lf.hours} onChange={e => setLf({...lf,hours:e.target.value})}/>
+                <input className="inp" type="number" inputMode="decimal" placeholder="e.g. 7.6" value={lf.hours} onChange={e => setLf({...lf,hours:e.target.value})}/>
                 {lf.eid && lf.hours && (
                   <span className="fhint">= {(parseFloat(lf.hours) / hrsPerDay(employees.find(e=>e.id===parseInt(lf.eid)) || {std_hrs:7.6})).toFixed(2)} days</span>
                 )}
@@ -9870,11 +9870,11 @@ function DayWorkersTab({ showToast, workers, setWorkers }) {
           </div>
           <div className="fg">
             <label className="flbl">Hours Worked *</label>
-            <input className="inp" type="number" placeholder="e.g. 6" value={f.hours} onChange={e => setF({...f,hours:e.target.value})}/>
+            <input className="inp" type="number" inputMode="decimal" placeholder="e.g. 6" value={f.hours} onChange={e => setF({...f,hours:e.target.value})}/>
           </div>
           <div className="fg">
             <label className="flbl">Base Hourly Rate ($) *</label>
-            <input className="inp" type="number" placeholder="e.g. 24.00" value={f.rate} onChange={e => setF({...f,rate:e.target.value})}/>
+            <input className="inp" type="number" inputMode="decimal" placeholder="e.g. 24.00" value={f.rate} onChange={e => setF({...f,rate:e.target.value})}/>
             <span className="fhint">Min. casual rate 2025: $24.10/hr (FWC)</span>
           </div>
           <div className="fg">
@@ -10347,7 +10347,7 @@ function InsurancePage({ insurance, setInsurance, employees, timesheets, showToa
           </div>
           <div className="fg">
             <label className="flbl">Annual Premium ($)</label>
-            <input className="inp" type="number" placeholder="0.00" value={f.annual} onChange={e => setF({...f,annual:e.target.value})}/>
+            <input className="inp" type="number" inputMode="decimal" placeholder="0.00" value={f.annual} onChange={e => setF({...f,annual:e.target.value})}/>
             {f.annual && (
               <span className="fhint">
                 Monthly: {money((parseFloat(f.annual)||0)/12)} · Weekly: {money((parseFloat(f.annual)||0)/52)}
@@ -12202,7 +12202,7 @@ function IASPage({ timesheets, employees, ias, setIas, showToast, bizName, bizAB
           <div className="frow2" style={{marginBottom:14}}>
             <div className="fg">
               <label className="flbl">Additional W1 Gross ($)</label>
-              <input type="number" className="inp" min={0} step={0.01}
+              <input type="number" inputMode="decimal" className="inp" min={0} step={0.01}
                 value={localAdj.adjustW1 || ""}
                 onChange={e => saveAdj({adjustW1: parseFloat(e.target.value)||0})}
                 placeholder="0.00"/>
@@ -12210,7 +12210,7 @@ function IASPage({ timesheets, employees, ias, setIas, showToast, bizName, bizAB
             </div>
             <div className="fg">
               <label className="flbl">Additional W2 PAYG ($)</label>
-              <input type="number" className="inp" min={0} step={0.01}
+              <input type="number" inputMode="decimal" className="inp" min={0} step={0.01}
                 value={localAdj.adjustW2 || ""}
                 onChange={e => saveAdj({adjustW2: parseFloat(e.target.value)||0})}
                 placeholder="0.00"/>
@@ -14108,11 +14108,11 @@ function ReportsPage({ revenue, expenses, timesheets, employees, insurance, docu
                   </div>
                   <div className="fg">
                     <label className="flbl">Opening Stock ($)</label>
-                    <input className="inp" type="number" placeholder="0.00" value={stockForm.opening} onChange={e => setStockForm({...stockForm,opening:e.target.value})}/>
+                    <input className="inp" type="number" inputMode="decimal" placeholder="0.00" value={stockForm.opening} onChange={e => setStockForm({...stockForm,opening:e.target.value})}/>
                   </div>
                   <div className="fg">
                     <label className="flbl">Closing Stock ($)</label>
-                    <input className="inp" type="number" placeholder="0.00" value={stockForm.closing} onChange={e => setStockForm({...stockForm,closing:e.target.value})}/>
+                    <input className="inp" type="number" inputMode="decimal" placeholder="0.00" value={stockForm.closing} onChange={e => setStockForm({...stockForm,closing:e.target.value})}/>
                   </div>
                   <div className="fg">
                     <label className="flbl">Notes</label>

@@ -6278,7 +6278,7 @@ function ExpensesPage({ expenses, setExpenses, showToast, industry = "restaurant
         {/* Fields — only show once category is selected */}
         <div className="frow2">
           <div className="fg"><label className="flbl">Amount ($)</label>
-            <input id="exp-amount-input" className="inp" type="number" inputMode="decimal" placeholder="0.00" value={f.amount} onChange={e => setF({...f,amount:e.target.value})}/>
+            <input id="exp-amount-input" className="inp" type="number" inputMode="decimal" placeholder="0.00" value={f.amount} onChange={e => setF({...f,amount:e.target.value})} autoFocus/>
           </div>
           <div className="fg"><label className="flbl">Date</label>
             <input className="inp" type="date" value={f.date} onChange={e => setF({...f,date:e.target.value})}/>
@@ -7418,7 +7418,7 @@ function TimesheetModal({ employees, onSave, onClose, initial }) {
         <div className="frow3">
           <div className="fg">
             <label className="flbl">Standard Hours</label>
-            <input className="inp" type="number" inputMode="decimal" placeholder="e.g. 38" value={f.std_hrs} onChange={e => setF({...f,std_hrs:e.target.value})}/>
+            <input className="inp" type="number" inputMode="decimal" placeholder="e.g. 38" value={f.std_hrs} onChange={e => setF({...f,std_hrs:e.target.value})} autoFocus/>
             {emp && std > 0 && <span className={`fhint${std > emp.std_hrs ? " y" : ""}`}>{std > emp.std_hrs ? "⚠️ Above standard" : "Within standard"}</span>}
           </div>
           <div className="fg">
@@ -7428,7 +7428,7 @@ function TimesheetModal({ employees, onSave, onClose, initial }) {
           </div>
           <div className="fg">
             <label className="flbl">Weekend / PH Hours <span style={{ color:C.red, fontSize:9.5 }}>×1.75</span></label>
-            <input className="inp" type="number" inputMode="decimal" placeholder="0" value={f.wknd_hrs} onChange={e => setF({...f,wknd_hrs:e.target.value})}/>
+            <input className="inp" type="number" inputMode="decimal" placeholder="0" value={f.wknd_hrs} onChange={e => setF({...f,wknd_hrs:e.target.value})} onKeyDown={e => e.key==="Enter" && save()}/>
             {emp && wknd > 0 && <span className="fhint r">PH pay: {money(effRate(emp)*WKND_RATE*wknd)}</span>}
           </div>
         </div>

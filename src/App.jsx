@@ -3582,6 +3582,7 @@ function Sidebar({ page, setPage, onLogout, flagCount, companyName, accountUserT
     { id:"ias",       ico:"🧾", lbl:"Monthly IAS" },
     { id:"bassummary",ico:"📋", lbl:"BAS Summary" },
     { id:"bankrecon", ico:"🏦", lbl:"Bank Reconcile" },
+    { id:"platform",  ico:"🛵", lbl:"Platform Income" },
     { sec:"Reports" },
     { id:"documents", ico:"📁", lbl:"Document Hub" },
     { id:"reports",   ico:"🖨️", lbl:"Reports & P&L" },
@@ -13725,6 +13726,243 @@ function BankReconPage({ revenue, setRevenue = null, expenses, timesheets = [], 
 }
 
 
+// ════════════════════════════════════════════════════════════
+//  PLATFORM INCOME  (Uber Eats payout import)
+//  Bank deposits show only the NET payout. The platform's own CSV
+//  reveals true revenue + the GST on commission you can CLAIM.
+//  Import → backfill TWO Mise records per payout (revenue + commission),
+//  which flow through the existing BAS engine. Confirmed, never automatic.
+// ════════════════════════════════════════════════════════════
+
+function parseUberCSV(text) {
+  const splitL = (line) => {
+    const out = []; let cur = "", inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') { if (inQ && line[i+1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
+      else if (c === "," && !inQ) { out.push(cur); cur = ""; }
+      else cur += c;
+    }
+    out.push(cur); return out;
+  };
+  const num = (s) => { const n = parseFloat(String(s||"").replace(/[$,\s]/g,"")); return isNaN(n) ? 0 : n; };
+  const usDate = (s) => {
+    const m = String(s||"").trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+    if (!m) return null;
+    const yr = m[3].length === 2 ? "20"+m[3] : m[3];
+    return `${yr}-${m[1].padStart(2,"0")}-${m[2].padStart(2,"0")}`;
+  };
+  const lines = String(text||"").split(/\r?\n/).filter(l => l.trim().length > 0);
+  if (!lines.length) return { rows: [], errors: 0 };
+  const header = splitL(lines[0].replace(/^\uFEFF/, ""));
+  const col = (name) => header.findIndex(h => h.trim().toLowerCase() === name.toLowerCase());
+  const idx = {
+    store:    col("Store Name"),
+    salesInc: col("Sales (incl. GST)"),
+    gstSales: col("GST on Sales"),
+    feeInc:   col("Marketplace Fee (incl. GST)"),
+    gstFee:   col("GST on Marketplace Fee"),
+    payout:   col("Total Payout (including GST)"),
+    date:     col("Payout Date"),
+    status:   col("Payout Status"),
+    ref:      col("Payout reference ID"),
+  };
+  if (idx.salesInc < 0 || idx.date < 0) return { rows: [], errors: -1 }; // not an Uber payout file
+  const rows = []; let errors = 0;
+  for (let i = 1; i < lines.length; i++) {
+    const c = splitL(lines[i]);
+    const date = usDate(c[idx.date]);
+    if (!date) { errors++; continue; }
+    const salesInclGst = num(c[idx.salesInc]);
+    const feeInclGst   = Math.abs(num(c[idx.feeInc]));
+    if (salesInclGst === 0 && feeInclGst === 0) { errors++; continue; }
+    rows.push({
+      date,
+      store:        (c[idx.store]||"").trim(),
+      salesInclGst,
+      gstOnSales:   num(c[idx.gstSales]),
+      feeInclGst,
+      gstOnFee:     Math.abs(num(c[idx.gstFee])),
+      payout:       num(c[idx.payout]),
+      status:       (c[idx.status]||"").trim(),
+      ref:          (c[idx.ref]||"").trim(),
+    });
+  }
+  return { rows, errors };
+}
+
+function PlatformIncomePage({ revenue, setRevenue, expenses, setExpenses, bizId = null, showToast }) {
+  const [rows, setRows]       = React.useState(null);
+  const [fileName, setFileName] = React.useState("");
+  const [imported, setImported] = React.useState({}); // payout ref -> true (persisted)
+
+  const lsKey = bizId ? `mise_platform_uber_${bizId}` : null;
+  React.useEffect(() => {
+    if (!lsKey) return;
+    try { setImported(JSON.parse(localStorage.getItem(lsKey) || "{}")); } catch {}
+  }, [lsKey]);
+  const markImported = (refs) => {
+    const next = { ...imported }; refs.forEach(r => next[r] = true);
+    setImported(next);
+    if (lsKey) try { localStorage.setItem(lsKey, JSON.stringify(next)); } catch {}
+  };
+
+  const onFile = (ev) => {
+    const f = ev.target.files && ev.target.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const res = parseUberCSV(e.target.result);
+      if (res.errors === -1) { showToast && showToast("That doesn't look like an Uber payout CSV."); return; }
+      setRows(res.rows); setFileName(f.name);
+      showToast && showToast(`Loaded ${res.rows.length} payouts`);
+    };
+    reader.readAsText(f);
+  };
+
+  // Totals
+  const sum = (k) => (rows||[]).reduce((s,r)=>s+r[k],0);
+  const totSales = sum("salesInclGst"), totGstSales = sum("gstOnSales");
+  const totFee = sum("feeInclGst"), totGstFee = sum("gstOnFee"), totPayout = sum("payout");
+
+  const rowKey = (r) => r.ref || `${r.date}_${r.salesInclGst}`;
+  const pending = (rows||[]).filter(r => !imported[rowKey(r)]);
+
+  // Backfill: one revenue + one commission expense per payout
+  const importRows = (toImport) => {
+    if (!setRevenue || !setExpenses || !toImport.length) return;
+    const ok = window.confirm(
+      `Import ${toImport.length} Uber payout${toImport.length>1?"s":""} into Mise?\n\n` +
+      `For each, Mise adds:\n` +
+      `  • Revenue (Uber Eats channel) — your true sales incl. GST\n` +
+      `  • Expense (Delivery Platform Fees) — Uber's commission incl. GST\n\n` +
+      `This makes your sales and claimable GST correct in BAS. Continue?`
+    );
+    if (!ok) return;
+
+    const newRev = [], newExp = [];
+    for (const r of toImport) {
+      newRev.push({
+        id: Date.now() + Math.random(),
+        date: r.date,
+        channels: [{ name: "Uber Eats", amount: Math.round(r.salesInclGst*100)/100, gstInclusive: true }],
+      });
+      newExp.push({
+        id: Date.now() + Math.random(),
+        date: r.date,
+        cat: "delivery_fees",
+        amount: Math.round(r.feeInclGst*100)/100,
+        gst: true, invoice: true,
+        desc: `Uber Eats commission — payout ${r.date}`,
+      });
+    }
+    setRevenue(p => [...p, ...newRev]);
+    setExpenses(p => [...p, ...newExp]);
+    markImported(toImport.map(rowKey));
+    showToast && showToast(`Imported ${toImport.length} payouts (${newRev.length} revenue + ${newExp.length} commission entries)`);
+  };
+
+  return (
+    <div className="page">
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Platform Income</h1>
+          <p className="page-sub">Import your Uber Eats payout report so your true delivery sales — and the GST you can claim back on commission — land correctly in Mise and BAS.</p>
+        </div>
+      </div>
+
+      {/* Why this matters */}
+      <div className="card" style={{ marginBottom:16, background:C.surfaceAlt }}>
+        <div style={{ fontSize:13, color:C.muted, lineHeight:1.65 }}>
+          Your bank only shows Uber's <b style={{color:C.text}}>net payout</b> — after commission. Recording that as your sales would understate revenue and GST. This report has the real numbers: <b style={{color:C.text}}>true sales</b>, the GST you owe on them, and the <b style={{color:C.green}}>GST on Uber's commission you're entitled to claim back</b>.
+        </div>
+      </div>
+
+      {/* Upload */}
+      <div className="card" style={{ marginBottom:16 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:14, flexWrap:"wrap" }}>
+          <label className="btn-p" style={{ cursor:"pointer", margin:0 }}>
+            📄 Upload Uber payout CSV
+            <input type="file" accept=".csv" onChange={onFile} style={{ display:"none" }} />
+          </label>
+          {fileName
+            ? <span style={{ fontSize:12, color:C.muted }}>{fileName} · {rows.length} payouts</span>
+            : <span style={{ fontSize:12, color:C.dim }}>Uber Eats Manager → Payments → download the payout report (CSV).</span>}
+        </div>
+      </div>
+
+      {!rows && (
+        <div className="card" style={{ textAlign:"center", padding:"36px 20px", color:C.dim }}>
+          <div style={{ fontSize:34, marginBottom:10 }}>🛵</div>
+          <div style={{ fontSize:13, color:C.muted }}>Upload your Uber payout report to begin.</div>
+        </div>
+      )}
+
+      {rows && rows.length > 0 && (
+        <>
+          {/* Summary */}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:12, marginBottom:16 }}>
+            <div className="card" style={{ padding:"16px" }}>
+              <div style={{ fontSize:11, color:C.muted, textTransform:"uppercase", letterSpacing:.5, marginBottom:6 }}>True delivery sales</div>
+              <div style={{ fontSize:22, fontWeight:800, color:C.text }}>{money(totSales)}</div>
+              <div style={{ fontSize:11, color:C.dim, marginTop:4 }}>incl. {money(totGstSales)} GST owed</div>
+            </div>
+            <div className="card" style={{ padding:"16px" }}>
+              <div style={{ fontSize:11, color:C.muted, textTransform:"uppercase", letterSpacing:.5, marginBottom:6 }}>Uber commission</div>
+              <div style={{ fontSize:22, fontWeight:800, color:C.text }}>{money(totFee)}</div>
+              <div style={{ fontSize:11, color:C.green, marginTop:4 }}>incl. {money(totGstFee)} GST you can claim</div>
+            </div>
+            <div className="card" style={{ padding:"16px" }}>
+              <div style={{ fontSize:11, color:C.muted, textTransform:"uppercase", letterSpacing:.5, marginBottom:6 }}>Net paid to bank</div>
+              <div style={{ fontSize:22, fontWeight:800, color:C.text }}>{money(totPayout)}</div>
+              <div style={{ fontSize:11, color:C.dim, marginTop:4 }}>what your statement shows</div>
+            </div>
+          </div>
+
+          {/* Import action */}
+          <div className="card" style={{ marginBottom:16, display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, flexWrap:"wrap" }}>
+            <div style={{ fontSize:13, color:C.muted }}>
+              {pending.length > 0
+                ? <><b style={{color:C.text}}>{pending.length}</b> payout{pending.length>1?"s":""} not yet in Mise.</>
+                : <span style={{color:C.green}}>✓ All payouts in this file are imported.</span>}
+            </div>
+            {pending.length > 0 && (
+              <button className="btn-p" style={{ margin:0 }} onClick={()=>importRows(pending)}>
+                ➕ Import {pending.length} into Mise
+              </button>
+            )}
+          </div>
+
+          {/* Per-payout breakdown */}
+          {rows.map((r,i) => {
+            const done = imported[rowKey(r)];
+            return (
+              <div className="card" key={i} style={{ marginBottom:8, padding:"12px 14px", opacity: done ? .6 : 1 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, flexWrap:"wrap" }}>
+                  <div style={{ fontSize:13, fontWeight:600 }}>
+                    {new Date(r.date+"T00:00:00").toLocaleDateString("en-AU",{day:"numeric",month:"short",year:"numeric"})}
+                    {done && <span style={{ fontSize:10, color:C.green, marginLeft:8 }}>✓ imported</span>}
+                  </div>
+                  <div style={{ display:"flex", gap:18, fontSize:12, flexWrap:"wrap" }}>
+                    <span style={{color:C.muted}}>Sales <b style={{color:C.text}}>{money(r.salesInclGst)}</b></span>
+                    <span style={{color:C.muted}}>Commission <b style={{color:C.text}}>{money(r.feeInclGst)}</b></span>
+                    <span style={{color:C.muted}}>Claimable GST <b style={{color:C.green}}>{money(r.gstOnFee)}</b></span>
+                    <span style={{color:C.muted}}>Paid <b style={{color:C.text}}>{money(r.payout)}</b></span>
+                  </div>
+                  {!done && (
+                    <button className="btn-g" style={{ margin:0, fontSize:11, padding:"5px 10px" }} onClick={()=>importRows([r])}>Import</button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </>
+      )}
+    </div>
+  );
+}
+
+
 function ReportsPage({ revenue, expenses, timesheets, employees, insurance, documents, inventory, setInventory, bizName, bizABN }) {
   const [print,   setPrint]   = useState(null);
   const [selQ,    setSelQ]    = useState(BAS_QUARTERS[0]);
@@ -14902,6 +15140,7 @@ const bootFromSession = async (session) => {
           {page === "documents"      && <DocumentsPage documents={documents} setDocuments={setDocuments} employees={employees} showToast={showToast}/>}
           {page === "bassummary"     && <BASSummaryPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} basHistory={basHistory} setBasHistory={setBasHistory} showToast={showToast} bizName={bizName} bizABN={bizABN} ias={ias} currentRole={currentRole} currentUserEmail={currentUserEmail}/>}
           {page === "bankrecon"      && <BankReconPage revenue={revenue} setRevenue={setRevenue} expenses={expenses} timesheets={timesheets} employees={employees} bizId={bizId} showToast={showToast}/>}
+          {page === "platform"       && <PlatformIncomePage revenue={revenue} setRevenue={setRevenue} expenses={expenses} setExpenses={setExpenses} bizId={bizId} showToast={showToast}/>}
           {page === "reports"        && <ReportsPage revenue={revenue} expenses={expenses} timesheets={timesheets} employees={employees} insurance={insurance} documents={documents} inventory={inventory} setInventory={setInventory} bizName={bizName} bizABN={bizABN}/>}
           {page === "settings"       && <SettingsPage industry={industry} setIndustry={setIndustry} showToast={showToast} bizName={bizName} setBizName={setBizName} bizABN={bizABN} setBizABN={setBizABN} bizId={bizId} currentRole={currentRole} companyName={companyName} setCompanyName={setCompanyName} bizSettings={bizSettings} updateSetting={updateSetting}/>}
         </ErrorBoundary>

@@ -3106,14 +3106,14 @@ function LandingPage({ onGo }) {
     { ico:"📅", ttl:"排班到工资单一站搞定", dsc:"排班、确认工时、生成工资单、导出养老金义务 —— 无需切换工具。" },
     { ico:"📊", ttl:"你的损益，不只是 GST", dsc:"了解毛利率、成本和息税前利润 —— 会计师评估业务健康用的数字。" },
     { ico:"🔔", ttl:"没有遗漏", dsc:"BAS 截止、养老金、保险续期、未结离职的提醒 —— 在它们变成问题前就提醒。" },
-    { ico:"🌐", ttl:"中英双语", dsc:"整个界面一键中英切换。给华人餐饮老板的母语体验 —— 也方便交给说英文的会计师看。" },
+    { ico:"🌐", ttl:"中英双语", dsc:"官网与引导页一键中英切换，App 内双语界面正在逐步推出 —— 为华人餐饮老板打造，也方便交给说英文的会计师看。" },
   ] : [
     { ico:"⚡", ttl:"Up in 5 minutes",           dsc:"No chart of accounts. No bank reconciliation setup. Open it, enter your takings, and you're done." },
     { ico:"🇦🇺", ttl:"Australian tax law built in",dsc:"GST channels, PAYG Scale 2, SGC super rates, ATO quarter dates and BAS structure — all correct out of the box." },
     { ico:"📅", ttl:"Roster → payslip in one app", dsc:"Roster your staff, confirm hours, generate payslips and export super obligations — without switching tools." },
     { ico:"📊", ttl:"Your P&L, not just your GST", dsc:"Know your gross margin, COGS and EBIT — the numbers your accountant uses to assess business health." },
     { ico:"🔔", ttl:"Nothing slips through",      dsc:"Reminders for BAS deadlines, super payments, insurance renewals and unsettled staff exits — before they become problems." },
-    { ico:"🌐", ttl:"Bilingual, English & 中文", dsc:"Switch the whole interface between English and Chinese in one tap. Native for Chinese-background owners — and easy to hand to an English-speaking accountant." },
+    { ico:"🌐", ttl:"Bilingual, English & 中文", dsc:"Bilingual landing and onboarding today, with in-app Chinese rolling out — built for Chinese-background owners, easy to hand to an English-speaking accountant." },
   ];
 
 
@@ -3753,6 +3753,33 @@ function DashboardPage({ revenue, expenses, employees, timesheets, insurance, se
   // Missing invoices
   const missingInv = analyseExpenses(expenses).filter(e=>e.gstStatus==="missing-invoice").length;
   if (missingInv > 0) reminders.push({ type:"invoice", ico:"🧾", col:"y", title:`${missingInv} expense${missingInv>1?"s":""} missing invoices`, sub:"GST credits at risk — add invoices in Expenses", action:()=>setPage("expenses") });
+
+  // ── Data-health care: notice problems the owner hasn't noticed ──
+  // 1) Expenses recorded this month but NO revenue at all → probably forgot to log takings
+  {
+    const thisMonth = todayStr.slice(0,7);
+    const monthExp = expenses.filter(e => (e.date||"").slice(0,7) === thisMonth);
+    const monthRev = revenue.filter(r => (r.date||"").slice(0,7) === thisMonth);
+    const expTotal = monthExp.reduce((s,e)=>s+(e.amount||0),0);
+    if (monthExp.length >= 3 && monthRev.length === 0 && expTotal > 500) {
+      reminders.push({ type:"datahealth", ico:"💡", col:"y",
+        title:"Expenses recorded this month, but no takings yet",
+        sub:`${money(expTotal)} of expenses logged — if the shop's been trading, your revenue might be missing. Bank Reconcile can backfill card takings in one click.`,
+        action:()=>setPage("revenue") });
+    }
+    // 2) Nothing recorded anywhere for 14+ days → gentle check-in (only for businesses with history)
+    const allDates = [...revenue.map(r=>r.date), ...expenses.map(e=>e.date)].filter(Boolean).sort();
+    if (allDates.length >= 10) {
+      const lastEntry = allDates[allDates.length-1];
+      const daysSince = Math.floor((new Date(todayStr) - new Date(lastEntry)) / 86400000);
+      if (daysSince >= 14) {
+        reminders.push({ type:"datahealth", ico:"📭", col:"y",
+          title:`No entries for ${daysSince} days`,
+          sub:"Everything OK? If the shop's been trading, the books are falling behind — little and often beats a big catch-up.",
+          action:()=>setPage("revenue") });
+      }
+    }
+  }
 
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const monthOptions = Array.from({length:18},(_,i)=>{ const d=new Date(today.getFullYear(),today.getMonth()-i,1); const val=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; return {val,lbl:d.toLocaleString("en-AU",{month:"short"}),yr:d.getFullYear()}; }).reverse();
@@ -12331,6 +12358,7 @@ function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, d
   const [tab,     setTab]     = useState("summary"); // "summary" | "history"
   const [editNotes, setEditNotes] = useState(""); // notes when saving
   const [editAgent, setEditAgent] = useState(""); // reviewed-by field
+  const [celebrate, setCelebrate] = useState(false); // shown right after lodging
 
   const d = useMemo(
     () => buildBASData(revenue, expenses, timesheets, employees, insurance, documents, selQ, ias),
@@ -12439,7 +12467,7 @@ function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, d
     );
     if (receipt === null) return; // user cancelled
     upsertHistoryWithStatus("lodged", { atoReceipt: receipt.trim() });
-    showToast(`${selQ} marked as lodged`);
+    setCelebrate(true);
   };
 
   const undoStatus = () => {
@@ -12505,6 +12533,21 @@ function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, d
 
   return (
     <>
+      {celebrate && (
+        <div onClick={() => setCelebrate(false)} style={{ position:"fixed", inset:0, zIndex:1000,
+          background:"rgba(0,0,0,.6)", display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+          <div onClick={e=>e.stopPropagation()} style={{ background:C.surface, border:`1px solid ${C.green}44`,
+            borderRadius:18, padding:"38px 34px", maxWidth:420, textAlign:"center",
+            boxShadow:"0 20px 60px rgba(0,0,0,.5)" }}>
+            <div style={{ fontSize:52, marginBottom:14 }}>🎉</div>
+            <div style={{ fontSize:19, fontWeight:800, color:C.text, marginBottom:8 }}>{selQ} lodged with the ATO</div>
+            <div style={{ fontSize:13.5, color:C.muted, lineHeight:1.7, marginBottom:22 }}>
+              That's the quarter wrapped up. Nothing more to do here — go run the shop. 🍜
+            </div>
+            <button className="btn" style={{ margin:0, minWidth:120 }} onClick={() => setCelebrate(false)}>Done</button>
+          </div>
+        </div>
+      )}
       {print && <PrintModal title="BAS Support Summary" onClose={() => setPrint(false)}
         onExport={() => renderBASSummaryPDF({d, quarter:selQ})}><PrintContent/></PrintModal>}
 

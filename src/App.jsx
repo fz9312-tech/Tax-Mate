@@ -983,6 +983,65 @@ class ErrorBoundary extends React.Component {
 const confirmDelete = (what = "this record") =>
   window.confirm(`Delete ${what}?\n\nThis can't be undone.`);
 
+// ════════════════════════════════════════════════════════════
+//  TERM HELP — plain-language, bilingual explanations of tax jargon.
+//  For owners who aren't accountants. Anxiety-reducing, not textbook.
+// ════════════════════════════════════════════════════════════
+const TERM_HELP = {
+  bas:    { ttl:"BAS — Business Activity Statement",
+            en:"The quarterly form you send the ATO. It sums up the GST you collected, the GST you can claim back, and the tax you withheld from wages. Mise prepares all these numbers for you.",
+            zh:"每季度交给税局的申报表：汇总你代收的 GST、能抵扣的 GST、以及从员工工资里代扣的税。Mise 帮你把数字都算好。" },
+  g1:     { ttl:"Total Sales (G1)",
+            en:"Everything customers paid you this quarter, including GST.",
+            zh:"本季度顾客付给你的全部金额（含 GST）。" },
+  gst1a:  { ttl:"GST on Sales (1A)",
+            en:"Of every $11 customers pay, $1 is GST you're holding for the ATO. This is that total for the quarter.",
+            zh:"顾客每付 $11，其中 $1 是你替税局代收的 GST。这里是本季度的总数。" },
+  gst1b:  { ttl:"GST Credits (1B)",
+            en:"The GST you already paid inside your business purchases — the ATO takes it off your bill. Keep invoices to claim it.",
+            zh:"你进货、付账单时已经付出去的 GST —— 税局会从你要交的钱里扣掉。保留发票才能抵扣。" },
+  netgst: { ttl:"Net GST Payable",
+            en:"What you actually owe: GST collected minus GST credits. If it's negative, the ATO refunds you.",
+            zh:"实际要交的钱 = 代收的 GST − 可抵扣的 GST。如果是负数，税局反而退钱给你。" },
+  w1:     { ttl:"Gross Wages (W1)",
+            en:"Total wages before tax this quarter. It's reported to the ATO, but it isn't itself a tax you pay.",
+            zh:"本季度税前工资总额。只是申报给税局的数字，本身不是一笔要交的税。" },
+  w2:     { ttl:"PAYG Withheld (W2)",
+            en:"Tax you took out of staff pay on the ATO's behalf. You hold it, then hand it over with the BAS.",
+            zh:"你从员工工资里替税局代扣的税：先由你保管，随 BAS 一起交上去。" },
+  super:  { ttl:"Super (SGC)",
+            en:"12% of ordinary earnings, paid into each employee's super fund — not to the ATO. Paying late triggers penalties, so it's tracked here.",
+            zh:"员工正常工资的 12%，存入各自的养老金账户（付给基金，不是税局）。迟交会有罚款，所以在这里帮你盯着。" },
+};
+
+function InfoTip({ term }) {
+  const [open, setOpen] = React.useState(false);
+  const t = TERM_HELP[term];
+  if (!t) return null;
+  return (
+    <span style={{ position:"relative", display:"inline-block" }}>
+      <span onClick={(e)=>{ e.stopPropagation(); setOpen(o=>!o); }}
+        title="What does this mean?"
+        style={{ cursor:"pointer", color:C.dim, fontSize:9.5, fontWeight:700, marginLeft:5,
+          border:`1px solid ${C.border}`, borderRadius:"50%", width:14, height:14,
+          display:"inline-flex", alignItems:"center", justifyContent:"center", lineHeight:1,
+          userSelect:"none", verticalAlign:"middle" }}>i</span>
+      {open && (
+        <>
+          <div onClick={(e)=>{ e.stopPropagation(); setOpen(false); }} style={{ position:"fixed", inset:0, zIndex:998 }} />
+          <div style={{ position:"absolute", zIndex:999, left:0, top:20, width:270,
+            background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:10,
+            padding:"11px 13px", boxShadow:"0 10px 28px rgba(0,0,0,.45)", textAlign:"left" }}>
+            <div style={{ fontSize:12, fontWeight:700, color:C.text, marginBottom:5 }}>{t.ttl}</div>
+            <div style={{ fontSize:11.5, color:C.muted, lineHeight:1.55, marginBottom:7 }}>{t.en}</div>
+            <div style={{ fontSize:11.5, color:C.muted, lineHeight:1.65 }}>{t.zh}</div>
+          </div>
+        </>
+      )}
+    </span>
+  );
+}
+
 // ── Amount sanity guard: single manual entries above this are almost always typos ──
 const AMOUNT_SANITY_LIMIT = 100000;
 const confirmLargeAmount = (amt, label = "This amount") => {
@@ -12552,7 +12611,7 @@ function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, d
         onExport={() => renderBASSummaryPDF({d, quarter:selQ})}><PrintContent/></PrintModal>}
 
       <div className="hdr">
-        <div className="hdr-left"><div className="ptitle">📋 BAS Summary</div><div className="psub">Quarterly BAS support summary — for review before lodgment</div></div>
+        <div className="hdr-left"><div className="ptitle">📋 BAS Summary<InfoTip term="bas"/></div><div className="psub">Quarterly BAS support summary — for review before lodgment</div></div>
         <div className="hdr-right">
           <select className="sel" value={selQ} onChange={e => setSelQ(e.target.value)} style={{ width:210 }}>
             {BAS_QUARTERS.map(q => <option key={q} value={q}>{quarterLabel(q)}</option>)}
@@ -12678,19 +12737,19 @@ function BASSummaryPage({ revenue, expenses, timesheets, employees, insurance, d
           <div className="g2">
             <div className="bc">
               <div className="bctit">GST Position</div>
-              <div className="bas-row"><span className="bas-lbl">Total Sales (incl. GST) <span style={{color:C.dim,fontSize:10}}>(G1)</span></span><span className="bas-val">{money(d.totalRev)}</span></div>
-              <div className="bas-row"><span className="bas-lbl">GST on Sales (÷11) <span style={{color:C.dim,fontSize:10}}>(1A)</span></span><span className="bas-val" style={{ color:C.red }}>{money(d.gstColl)}</span></div>
-              <div className="bas-row"><span className="bas-lbl">GST Credits on Purchases <span style={{color:C.dim,fontSize:10}}>(1B)</span></span><span className="bas-val" style={{ color:C.green }}>− {money(d.gstCreds)}</span></div>
-              <div className="bas-tot"><span className="bas-tot-lbl">Net GST Payable <span style={{color:C.dim,fontSize:10,fontWeight:400}}>(1A − 1B)</span></span><span className="bas-tot-val">{money(d.netGST)}</span></div>
+              <div className="bas-row"><span className="bas-lbl">Total Sales (incl. GST) <span style={{color:C.dim,fontSize:10}}>(G1)</span><InfoTip term="g1"/></span><span className="bas-val">{money(d.totalRev)}</span></div>
+              <div className="bas-row"><span className="bas-lbl">GST on Sales (÷11) <span style={{color:C.dim,fontSize:10}}>(1A)</span><InfoTip term="gst1a"/></span><span className="bas-val" style={{ color:C.red }}>{money(d.gstColl)}</span></div>
+              <div className="bas-row"><span className="bas-lbl">GST Credits on Purchases <span style={{color:C.dim,fontSize:10}}>(1B)</span><InfoTip term="gst1b"/></span><span className="bas-val" style={{ color:C.green }}>− {money(d.gstCreds)}</span></div>
+              <div className="bas-tot"><span className="bas-tot-lbl">Net GST Payable <span style={{color:C.dim,fontSize:10,fontWeight:400}}>(1A − 1B)</span><InfoTip term="netgst"/></span><span className="bas-tot-val">{money(d.netGST)}</span></div>
             </div>
             <div className="bc">
               <div className="bctit">Wages & Employment</div>
-              <div className="bas-row"><span className="bas-lbl">Total Gross Wages <span style={{color:C.dim,fontSize:10}}>(W1)</span></span><span className="bas-val">{money(d.totalWages)}</span></div>
-              <div className="bas-row"><span className="bas-lbl">PAYG Withheld (ATO Scale 2) <span style={{color:C.dim,fontSize:10}}>(W2)</span></span><span className="bas-val" style={{ color:C.yellow }}>{money(d.totalPayg)}</span></div>
+              <div className="bas-row"><span className="bas-lbl">Total Gross Wages <span style={{color:C.dim,fontSize:10}}>(W1)</span><InfoTip term="w1"/></span><span className="bas-val">{money(d.totalWages)}</span></div>
+              <div className="bas-row"><span className="bas-lbl">PAYG Withheld (ATO Scale 2) <span style={{color:C.dim,fontSize:10}}>(W2)</span><InfoTip term="w2"/></span><span className="bas-val" style={{ color:C.yellow }}>{money(d.totalPayg)}</span></div>
               {d.iasPrePaidPAYG > 0 && (
                 <div className="bas-row"><span className="bas-lbl" style={{color:C.green}}>Less: Pre-paid via Monthly IAS</span><span className="bas-val" style={{color:C.green}}>− {money(d.iasPrePaidPAYG)}</span></div>
               )}
-              <div className="bas-row"><span className="bas-lbl">Super (SGC — OTE basis)</span><span className="bas-val" style={{ color:C.blue }}>{money(d.totalSuper)}</span></div>
+              <div className="bas-row"><span className="bas-lbl">Super (SGC — OTE basis)<InfoTip term="super"/></span><span className="bas-val" style={{ color:C.blue }}>{money(d.totalSuper)}</span></div>
               <div className="bas-row"><span className="bas-lbl">Quarterly Insurance</span><span className="bas-val" style={{ color:C.purple }}>{money(d.totalIns)}</span></div>
               <div className="bas-tot"><span className="bas-tot-lbl">Total Employment Cost</span><span className="bas-tot-val">{money(d.totalWages+d.totalPayg+d.totalSuper)}</span></div>
             </div>

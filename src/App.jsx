@@ -36,8 +36,8 @@ const GST_THRESHOLD   = 82.50;
 // ── Tax rate versioning ────────────────────────────────────────
 // Bump this string when any rate changes (SGC, PAYG brackets, etc.)
 // App compares against localStorage to detect "user hasn't seen new rates"
-const TAX_RATE_VERSION  = "2025-07-01"; // SGC → 12.0%, Stage 3 PAYG cuts active
-const TAX_RATE_NOTES    = "SGC rate increased to 12.0% from 1 Jul 2025. PAYG Stage 3 tax cuts applied.";
+const TAX_RATE_VERSION  = "2026-07-01"; // FY2026-27: 15% bracket cut + Payday Super live, SGC stays 12%
+const TAX_RATE_NOTES    = "FY2026-27: PAYG updated for the 16%→15% tax cut. Payday Super is live — super is now due within 7 business days of each payday. SGC unchanged at 12%.";
 const checkRateVersion  = () => localStorage.getItem("mise_rate_version") === TAX_RATE_VERSION;
 const dismissRateAlert  = () => localStorage.setItem("mise_rate_version", TAX_RATE_VERSION);
 
@@ -55,16 +55,33 @@ const getSuperRate = (weekStr) => {
 // "Calculated" method: annualise → brackets → LITO → Medicare → divide by 52
 // Ref: NAT 3539 / ATO Tax Withheld Calculator 2024-25
 
-// Tax brackets 2024-25 (Stage 3 cuts applied)
-const _annualTax = (income) => {
+// Tax brackets — DATE-AWARE (mirrors getSuperRate pattern).
+// FY2024-25 & 2025-26 (Stage 3):        16% / 30% / 37% / 45%
+// FY2026-27 (from 1 Jul 2026, law):     15% / 30% / 37% / 45%  ← 16%→15% cut
+// (FY2027-28 legislated: 14% — update next July.)
+const _fyAnchor = (weekOrDate) => {
+  // Accepts "YYYY-Www", "YYYY-MM-DD", or nothing (→ today). Returns a date string.
+  if (!weekOrDate) return todayStr;
+  if (/^\d{4}-W\d{1,2}$/.test(weekOrDate)) return weekToDate(weekOrDate);
+  return weekOrDate;
+};
+const _annualTax = (income, anchorDate) => {
+  const fy27 = (anchorDate || todayStr) >= "2026-07-01"; // string compare is safe for ISO dates
   if (income <= 18200)   return 0;
-  if (income <= 45000)   return (income - 18200) * 0.19;
-  if (income <= 135000)  return 5092 + (income - 45000) * 0.325;
-  if (income <= 190000)  return 34162 + (income - 135000) * 0.37;
-  return 54532 + (income - 190000) * 0.45;
+  if (fy27) {
+    if (income <= 45000)   return (income - 18200) * 0.15;
+    if (income <= 135000)  return 4020  + (income - 45000)  * 0.30;
+    if (income <= 190000)  return 31020 + (income - 135000) * 0.37;
+    return 51370 + (income - 190000) * 0.45;
+  }
+  // Stage 3 (1 Jul 2024 – 30 Jun 2026)
+  if (income <= 45000)   return (income - 18200) * 0.16;
+  if (income <= 135000)  return 4288  + (income - 45000)  * 0.30;
+  if (income <= 190000)  return 31288 + (income - 135000) * 0.37;
+  return 51638 + (income - 190000) * 0.45;
 };
 
-// Low Income Tax Offset (LITO) 2024-25
+// Low Income Tax Offset (LITO) — unchanged for 2026-27
 const _lito = (income) => {
   if (income <= 37500)  return 700;
   if (income <= 45000)  return 700 - (income - 37500) * 0.05;
@@ -72,20 +89,23 @@ const _lito = (income) => {
   return 0;
 };
 
-// Medicare Levy 2% — shade-in $26,000–$33,333, full 2% above
+// Medicare Levy 2% — low-income shade-in (single, 2024-25 indexed values;
+// indexed annually — revisit when ATO publishes 2026-27 thresholds)
 const _medicare = (income) => {
-  if (income <= 26000)  return 0;
-  if (income <= 33333)  return (income - 26000) * 0.1;
+  if (income <= 27222)  return 0;
+  if (income <= 34027)  return (income - 27222) * 0.1;
   return income * 0.02;
 };
 
 // Weekly PAYG — Scale 2 (resident with TFN + tax-free threshold)
 // hasTFN=false → 47% flat (ATO no-TFN rule)
+// weekOrDate: pass ts.week for historical accuracy; omit = today's rates
 // Returns whole dollars (ATO: truncate, not round)
-const calcWeeklyPAYG = (weeklyGross, hasTFN) => {
+const calcWeeklyPAYG = (weeklyGross, hasTFN, weekOrDate) => {
   if (!hasTFN) return Math.floor(weeklyGross * 0.47);
+  const anchor = _fyAnchor(weekOrDate);
   const annual = weeklyGross * 52;
-  const tax = Math.max(0, _annualTax(annual) - _lito(annual) + _medicare(annual));
+  const tax = Math.max(0, _annualTax(annual, anchor) - _lito(annual) + _medicare(annual));
   return Math.floor(tax / 52);
 };
 
@@ -545,12 +565,16 @@ const DOC_CATEGORIES = [
   "Invoice","Receipt","Insurance Document","Payroll Report",
   "Bank Statement","POS Export","BAS Notice","Accountant Note","Contract","Other",
 ];
-const BAS_QUARTERS = ["Q1 FY2026","Q2 FY2026","Q3 FY2026","Q4 FY2026","Q1 FY2025","Q2 FY2025","Q3 FY2025","Q4 FY2025"];
-const FIN_YEARS    = ["FY2026","FY2025","FY2024"];
+const BAS_QUARTERS = ["Q1 FY2027","Q2 FY2027","Q3 FY2027","Q4 FY2027","Q1 FY2026","Q2 FY2026","Q3 FY2026","Q4 FY2026","Q1 FY2025","Q2 FY2025","Q3 FY2025","Q4 FY2025"];
+const FIN_YEARS    = ["FY2027","FY2026","FY2025","FY2024"];
 
 // ATO quarter date ranges (Australian financial year: Jul–Jun)
 // Q1=Jul-Sep, Q2=Oct-Dec, Q3=Jan-Mar, Q4=Apr-Jun
 const QUARTER_DATES = {
+  "Q1 FY2027": { from:"2026-07-01", to:"2026-09-30" },
+  "Q2 FY2027": { from:"2026-10-01", to:"2026-12-31" },
+  "Q3 FY2027": { from:"2027-01-01", to:"2027-03-31" },
+  "Q4 FY2027": { from:"2027-04-01", to:"2027-06-30" },
   "Q1 FY2026": { from:"2025-07-01", to:"2025-09-30" },
   "Q2 FY2026": { from:"2025-10-01", to:"2025-12-31" },
   "Q3 FY2026": { from:"2026-01-01", to:"2026-03-31" },
@@ -1010,8 +1034,8 @@ const TERM_HELP = {
             en:"Tax you took out of staff pay on the ATO's behalf. You hold it, then hand it over with the BAS.",
             zh:"你从员工工资里替税局代扣的税：先由你保管，随 BAS 一起交上去。" },
   super:  { ttl:"Super (SGC)",
-            en:"12% of ordinary earnings, paid into each employee's super fund — not to the ATO. Paying late triggers penalties, so it's tracked here.",
-            zh:"员工正常工资的 12%，存入各自的养老金账户（付给基金，不是税局）。迟交会有罚款，所以在这里帮你盯着。" },
+            en:"12% of earnings, paid into each employee's super fund — not to the ATO. Under Payday Super (from 1 Jul 2026) it's due within 7 business days of every payday; late payment triggers penalties.",
+            zh:"员工工资的 12%，存入各自的养老金账户（付给基金，不是税局）。Payday Super 新规（2026年7月起）：每次发薪后 7 个工作日内必须到账，迟交有罚款。" },
 };
 
 function InfoTip({ term }) {
@@ -2303,7 +2327,7 @@ const annotateTimesheets = (employees, timesheets) => {
     // Apply PAYG override if set (including 0 — "no tax withheld")
     const payg = hasPaygOverride(emp)
       ? (parseFloat(emp.payg_override) || 0)
-      : calcWeeklyPAYG(gross, emp.tfn);
+      : calcWeeklyPAYG(gross, emp.tfn, ts.week);
 
     return { ...ts, emp, gross, super: super_, superOTE, superR, payg,
              ote, labour: gross + super_,
@@ -2519,7 +2543,7 @@ function buildIASMonthData(timesheets, employees, month) {
     const empTs = timesheets.filter(ts => ts.eid === emp.id && weekToMonth(ts.week) === month);
     if (empTs.length === 0) return null;
     const gross  = empTs.reduce((s,ts) => s + calcGross(emp, ts), 0);
-    const payg   = empTs.reduce((s,ts) => s + calcWeeklyPAYG(calcGross(emp, ts), emp.tfn), 0);
+    const payg   = empTs.reduce((s,ts) => s + calcWeeklyPAYG(calcGross(emp, ts), emp.tfn, ts.week), 0);
     const super_ = empTs.reduce((s,ts) => s + calcGross(emp, ts) * getSuperRate(ts.week), 0);
     return { emp, weeks: empTs.length, gross, payg, super: super_, noTFN: !emp.tfn };
   }).filter(Boolean);
@@ -7533,7 +7557,7 @@ function TimesheetModal({ employees, onSave, onClose, initial }) {
             <div style={{ fontSize:10, fontWeight:700, color:C.muted, textTransform:"uppercase", letterSpacing:".8px", marginBottom:9 }}>This Week's Costs</div>
             <div className="frow4">
               {(() => {
-                const tsPayg  = calcWeeklyPAYG(gross, emp?.tfn === "yes");
+                const tsPayg  = calcWeeklyPAYG(gross, emp?.tfn === "yes", f.week);
                 const superR  = getSuperRate(f.week || todayWeekStr);
                 const oteBase = (std + wknd) * (emp ? effRate(emp) : 0) + ot * (emp ? effRate(emp) : 0);
                 const tsSuper = oteBase * superR;
@@ -8147,7 +8171,7 @@ function RosterTab({ employees, roster, setRoster, showToast, revenue = [] }) {
     // PAYG: respect payg_override if set, else ATO Scale 2
     const payg = hasPaygOverride(emp)
       ? (parseFloat(emp.payg_override) || 0)
-      : calcWeeklyPAYG(gross, emp.tfn);
+      : calcWeeklyPAYG(gross, emp.tfn, weekStr);
 
     const net       = gross - payg;
     const labour    = gross + super_;
@@ -9381,7 +9405,7 @@ function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, biz
       const empRows = empTs.map(ts => {
         const gross  = calcGross(e, ts);
         const superR = getSuperRate(ts.week);
-        const payg   = calcWeeklyPAYG(gross, e.tfn);
+        const payg   = calcWeeklyPAYG(gross, e.tfn, ts.week);
         const net    = gross - payg;
         return { ...ts, gross, super: (effRate(e)*(ts.std_hrs+ts.wknd_hrs+ts.ot_hrs))*superR, superR, payg, net };
       });
@@ -9429,7 +9453,7 @@ function PayslipTab({ employees, timesheets, showToast, bizName, setBizName, biz
     const superR  = getSuperRate(ts.week);
     const otePs   = effRate(emp) * (ts.std_hrs + ts.wknd_hrs + ts.ot_hrs);
     const super_  = otePs * superR;
-    const payg    = calcWeeklyPAYG(gross, emp?.tfn);
+    const payg    = calcWeeklyPAYG(gross, emp?.tfn, ts.week);
     const net     = gross - payg;
     const effR    = effRate(emp);
     return { ...ts, gross, super:super_, superR, payg, net, effR };
@@ -9851,7 +9875,7 @@ function DayWorkersTab({ showToast, workers, setWorkers }) {
     const wkStr = `${dt.getFullYear()}-W${String(wk).padStart(2,'0')}`;
     const superR  = getSuperRate(wkStr);
     const super_  = gross * superR;
-    const payg    = calcWeeklyPAYG(gross, hasTFN);  // ATO Scale 2 or 47% no-TFN
+    const payg    = calcWeeklyPAYG(gross, hasTFN, wkStr);  // ATO Scale 2 or 47% no-TFN
     return { gross, super:super_, superR, payg, effR };
   };
 
@@ -9999,7 +10023,7 @@ function DayWorkersTab({ showToast, workers, setWorkers }) {
               {[
                 { lbl:"Effective Rate",                                      val:`${money(preview.effR)}/hr`, col:C.text,   sub: f.isWeekend ? "×1.75 weekend" : "+25% casual" },
                 { lbl:"Gross Pay",                                           val:money(preview.gross),        col:C.accent, sub:`${f.hours}h × ${money(preview.effR)}` },
-                { lbl:`Super (SGC ${(preview.superR*100).toFixed(1)}%)`,     val:money(preview.super),        col:C.blue,   sub:"Must be paid quarterly" },
+                { lbl:`Super (SGC ${(preview.superR*100).toFixed(1)}%)`,     val:money(preview.super),        col:C.blue,   sub:"Due within 7 business days of payday (Payday Super)" },
                 { lbl:`PAYG (ATO Scale 2${!f.hasTFN?" — 47%":""})`,         val:money(preview.payg),         col:C.yellow, sub:"Withhold from gross pay" },
               ].map((s,i) => (
                 <div key={i}>

@@ -14797,6 +14797,13 @@ export default function App() {
     const isViewOnlyRef = React.useRef(false);
     React.useEffect(() => { isViewOnlyRef.current = currentRole === "accountant_view"; }, [currentRole]);
 
+    // ── Load-failure guard (layer 4 — anti-overwrite) ──────────
+    // This table's rows are stored as ONE jsonb array per business, so every save
+    // replaces the whole array. If the read failed we are holding an empty array
+    // that is NOT the truth — saving from that state would wipe every record.
+    // Block writes until a read has actually succeeded for this business.
+    const loadFailedRef = React.useRef(false);
+
     // Load from Supabase whenever bizId changes (login, account switch).
     // CRITICAL: clear stale state immediately when bizId changes, then load fresh,
     // so a new account never momentarily shows the previous account's data.
@@ -14810,17 +14817,27 @@ export default function App() {
         setVal(cached ? JSON.parse(cached) : emptySeed);
       } catch { setVal(emptySeed); }
 
+      loadFailedRef.current = true;   // pessimistic until a read succeeds
       sb().from(table).select("data").eq("business_id", bizId).limit(1)
         .then(({ data, error }) => {
-          if (error) { console.warn("Supabase read error:", table, error.message); return; }
+          if (error) {
+            console.warn("Supabase read error:", table, error.message);
+            loadFailedRef.current = true;     // keep writes blocked
+            return;
+          }
+          loadFailedRef.current = false;      // genuine answer from the server
           if (data && data.length > 0) {
             setVal(data[0].data);
             try { localStorage.setItem(cachedKey, JSON.stringify(data[0].data)); } catch {}
           } else {
-            // No data for this business — start fresh
+            // No data for this business — genuinely a fresh business
             setVal(emptySeed);
             try { localStorage.setItem(cachedKey, JSON.stringify(emptySeed)); } catch {}
           }
+        }, (err) => {
+          // Network rejection (DNS/offline) — never silently treat as "no data"
+          console.warn("Supabase read failed:", table, err && err.message);
+          loadFailedRef.current = true;
         });
     }, [bizId]);
 
@@ -14828,6 +14845,16 @@ export default function App() {
       // ── HARD GUARD: view-only accountants cannot write ──
       if (isViewOnlyRef.current) {
         showToast("View only — ask the owner to make changes");
+        return;
+      }
+      // ── HARD GUARD: no business resolved → nothing to save against ──
+      if (!bizIdRef.current) {
+        showToast("Not connected to a business yet — refresh before making changes");
+        return;
+      }
+      // ── HARD GUARD: this table never loaded → saving would wipe it ──
+      if (loadFailedRef.current) {
+        showToast("Can't save — your records haven't loaded yet. Refresh and try again.");
         return;
       }
       setVal(prev => {
@@ -14880,11 +14907,20 @@ export default function App() {
   // Fields: company_name, gst_reg, bas_freq, payday, agent_lodge, owner_email, state,
   //         bas_reserve, week_budget
   const [bizSettings, setBizSettings] = useState({});
+  // True only once settings have actually been read from Supabase for this business.
+  // Guards updateSetting against overwriting the stored JSONB with a blank object.
+  const settingsLoadedRef = React.useRef(false);
   // companyName is derived from settings for convenience (used by Sidebar)
   const companyName = bizSettings.company_name || "";
 
-  // Update a single setting → optimistic state + persist whole JSONB to Supabase
+  // Update a single setting → optimistic state + persist whole JSONB to Supabase.
+  // The whole object is replaced on save, so writing before settings have loaded
+  // would blank every other field (this is how a saved company_name got lost).
   const updateSetting = (key, value) => {
+    if (!settingsLoadedRef.current) {
+      showToast("Settings haven't loaded yet — refresh before changing them");
+      return;
+    }
     setBizSettings(prev => {
       const next = { ...prev, [key]: value };
       if (bizId && window._supabase) {
@@ -14973,6 +15009,8 @@ const bootFromSession = async (session) => {
         setIndustryRaw(biz.industry || "restaurant");
         setUserBusinesses([{ ...biz, role: "owner" }]);
         setCurrentRole("owner");
+        setBizSettings(biz.settings || {});
+        settingsLoadedRef.current = true;
         localStorage.setItem("mise_biz_name", biz.name || "My Restaurant");
         localStorage.setItem("mise_biz_abn",  biz.abn  || "");
       }
@@ -15040,6 +15078,7 @@ const bootFromSession = async (session) => {
       setBizABNRaw(first.abn  || "");
       setIndustryRaw(first.industry || "restaurant");
       setBizSettings(first.settings || {});  // load this business's settings from Supabase
+      settingsLoadedRef.current = true;      // safe to persist settings from here on
       localStorage.setItem("mise_biz_name", first.name || "My Restaurant");
       localStorage.setItem("mise_biz_abn",  first.abn  || "");
       // Persist the active bizId so next-load uses the same one (Step 4 will let user pick)
@@ -15055,7 +15094,16 @@ const bootFromSession = async (session) => {
         setScreen("accountant-empty");
         return;
       }
+      // ── CRITICAL: never render a working-looking app with no business. ──
+      // Previously this only logged, then fell through to setScreen("app"), so a
+      // flaky network at login produced an app with bizId=null: every page empty,
+      // "0/5 done", $0 everywhere — indistinguishable from data loss, and one
+      // entry away from overwriting the real records.
       console.error("bootFromSession: could not resolve any business for user", session.user.id);
+      setBizId(null);
+      setDbReady(true);
+      setScreen("load-failed");
+      return;
     }
     setDbReady(true);
     setScreen("app");
@@ -15086,6 +15134,7 @@ const bootFromSession = async (session) => {
     setBizABNRaw(target.abn || "");
     setIndustryRaw(target.industry || "restaurant");
     setBizSettings(target.settings || {});  // load target business's settings
+    settingsLoadedRef.current = true;       // settings came from the server with the list
     setAccountantMode("client");  // entering a specific client's view
     setPage("dashboard");          // start in dashboard when switching client
     localStorage.setItem("mise_active_biz_id", target.id);
@@ -15112,6 +15161,35 @@ const bootFromSession = async (session) => {
 
   if (screen === "landing") return (<><style>{CSS}</style><LandingPage onGo={() => setScreen("auth")}/></>);
   if (screen === "auth")    return (<><style>{CSS}</style><AuthPage onLogin={() => {}}/></>);
+  // Couldn't load this account's business — show it plainly instead of an empty app.
+  if (screen === "load-failed") return (
+    <><style>{CSS}</style>
+    <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:C.bg, padding:20 }}>
+      <div style={{ maxWidth:440, width:"100%", textAlign:"center", background:C.surface, border:`1px solid ${C.border}`, borderRadius:18, padding:"40px 32px" }}>
+        <div style={{ fontSize:48, marginBottom:16 }}>📡</div>
+        <div style={{ fontSize:22, fontWeight:700, marginBottom:10, fontFamily:"'Fraunces',serif", color:C.text }}>Couldn't load your books</div>
+        <div style={{ fontSize:13.5, color:C.muted, lineHeight:1.7, marginBottom:20 }}>
+          We reached Mise but couldn't fetch your business just now — usually a patchy connection.
+          <b style={{ color:C.text }}> Your records are safe and untouched.</b> Nothing has been changed.
+        </div>
+        <div style={{ background:C.surfaceAlt, border:`1px solid ${C.border}`, borderRadius:11, padding:"14px 16px", textAlign:"left", marginBottom:22 }}>
+          <div style={{ fontSize:12.5, color:C.text, lineHeight:1.9 }}>
+            1. Check you're online (try mobile data)<br/>
+            2. Tap <strong>Try again</strong><br/>
+            3. Still stuck? Log out and back in
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:10 }}>
+          <button className="btn-p" style={{ flex:1, margin:0 }} onClick={() => window.location.reload()}>↻ Try again</button>
+          <button className="btn-g" style={{ flex:1, margin:0 }} onClick={async () => {
+            if (window._supabase) await sb().auth.signOut();
+            try { Object.keys(localStorage).forEach(k => { if (k.startsWith("mise_")) localStorage.removeItem(k); }); } catch {}
+            setScreen("landing"); setBizId(null); setCurrentUserEmail(""); setUserBusinesses([]);
+          }}>Log out</button>
+        </div>
+      </div>
+    </div></>
+  );
   // Accountant with no client invitations yet — friendly waiting state
   if (screen === "accountant-empty") return (
     <><style>{CSS}</style>
